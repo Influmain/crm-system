@@ -68,6 +68,7 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
         </svg>
       )
     },
+   
     {
       href: '/admin/analytics',
       label: '전체 분석',

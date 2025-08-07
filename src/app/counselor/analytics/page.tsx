@@ -1,9 +1,9 @@
-import AdminLayout from '@/components/layout/AdminLayout'
+import CounselorLayout from '@/components/layout/CounselorLayout'
 import { designSystem } from '@/lib/design-system'
 
-export default function AdminConselors() {
+export default function CounselorAnalytics() {
   return (
-    <AdminLayout>
+    <CounselorLayout>
       <div className="mb-8">
         <h1 className={designSystem.components.typography.h2}>페이지 제목</h1>
         <p className={designSystem.components.typography.bodySm}>페이지 설명</p>
@@ -20,6 +20,6 @@ export default function AdminConselors() {
           <p className={designSystem.components.typography.bodySm}>곧 출시될 예정입니다.</p>
         </div>
       </div>
-    </AdminLayout>
+    </CounselorLayout>
   )
 }
