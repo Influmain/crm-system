@@ -1,24 +1,27 @@
-import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
-import './globals.css'
+// 파일 경로: src/app/layout.tsx
+// 🔄 ThemeProvider 제거 - 원래 상태로 복원
 
-const inter = Inter({ subsets: ['latin'] })
+import { AuthProvider, AuthDebugInfo } from '@/lib/auth/AuthContext';
+import './globals.css';
 
-export const metadata: Metadata = {
-  title: 'CRM Lead Management System',
-  description: '리드 관리를 위한 전문 CRM 시스템',
-}
+export const metadata = {
+  title: 'CRM 시스템',
+  description: '리드 관리 및 상담원 배정 시스템',
+};
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
   return (
-    <html lang="ko" suppressHydrationWarning>
-      <body className={`${inter.className} antialiased`} suppressHydrationWarning>
-        {children}
+    <html lang="ko">
+      <body>
+        <AuthProvider>
+          {children}
+          <AuthDebugInfo />
+        </AuthProvider>
       </body>
     </html>
-  )
+  );
 }

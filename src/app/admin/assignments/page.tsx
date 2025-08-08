@@ -5,6 +5,7 @@ import AdminLayout from '@/components/layout/AdminLayout';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
 import { supabase, leadAssignmentService, leadPoolService } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth/AuthContext'; // ✅ 추가된 import
 import NotionStyleTable from '@/components/ui/SmartTable';
 import { Users, UserCheck, Check, X, RefreshCw, Mail } from 'lucide-react';
 
@@ -41,6 +42,9 @@ interface Assignment {
 }
 
 export default function AssignmentsPage() {
+  // ✅ useAuth 훅 추가
+  const { user } = useAuth();
+  
   // 📊 기본 데이터 상태
   const [availableLeads, setAvailableLeads] = useState<Lead[]>([]);
   const [counselors, setCounselors] = useState<Counselor[]>([]);
@@ -353,17 +357,24 @@ export default function AssignmentsPage() {
     );
   };
 
-  // 📋 배정 실행
+  // 📋 배정 실행 - ✅ 수정된 버전
   const handleAssign = async () => {
     if (!selectedCounselor || selectedLeads.length === 0) {
       alert('상담원과 리드를 선택해주세요.');
       return;
     }
 
+    // ✅ 추가: 현재 로그인한 사용자 확인
+    if (!user?.id) {
+      alert('로그인이 필요합니다.');
+      return;
+    }
+
     setActionLoading(true);
     try {
       for (const leadId of selectedLeads) {
-        await leadAssignmentService.assign(leadId, selectedCounselor, 'admin-user');
+        // ✅ 수정: 실제 사용자 ID 사용 (기존: 'admin-user')
+        await leadAssignmentService.assign(leadId, selectedCounselor, user.id);
       }
 
       alert(`${selectedLeads.length}개의 리드가 성공적으로 배정되었습니다.`);
@@ -374,7 +385,7 @@ export default function AssignmentsPage() {
 
     } catch (error) {
       console.error('배정 실패:', error);
-      alert('배정 중 오류가 발생했습니다.');
+      alert(`배정 실패: ${error.message || '알 수 없는 오류'}`);
     } finally {
       setActionLoading(false);
     }

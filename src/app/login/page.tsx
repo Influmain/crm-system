@@ -1,223 +1,183 @@
-'use client'
+// 파일 경로: src/app/login/page.tsx
+// 📋 5단계: 로그인 페이지 생성
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { useTheme } from '@/hooks/useTheme'
-import { designSystem } from '@/lib/design-system'
+'use client';
+
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth/AuthContext';
+import { designSystem } from '@/lib/design-system';
+import { businessIcons } from '@/lib/design-system/icons';
 
 export default function LoginPage() {
-  const { isDark, toggle: toggleTheme } = useTheme()
-  const router = useRouter()
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-    userType: 'counselor' // counselor 또는 admin
-  })
-  const [isLoading, setIsLoading] = useState(false)
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  
+  const { signIn } = useAuth();
+  const router = useRouter();
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    })
-  }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
+    console.log('로그인 폼 제출:', { email, password: '***' });
 
-    // 임시 로그인 로직 (실제로는 API 호출)
-    setTimeout(() => {
-      if (formData.userType === 'admin') {
-        router.push('/admin/dashboard')
-      } else {
-        router.push('/counselor/dashboard')
-      }
-      setIsLoading(false)
-    }, 1000)
-  }
+    const { error } = await signIn(email, password);
+    
+    if (error) {
+      console.error('로그인 실패:', error);
+      setError('이메일 또는 비밀번호가 올바르지 않습니다.');
+      setLoading(false);
+    } else {
+      console.log('로그인 성공, 대시보드로 이동');
+      // 로그인 성공 시 역할에 따라 리다이렉트
+      router.push('/dashboard');
+    }
+  };
+
+  // 테스트 계정으로 자동 입력
+  const fillTestAccount = (type: 'admin' | 'counselor') => {
+    if (type === 'admin') {
+      setEmail('admin@company.com');
+      setPassword('admin123');
+    } else {
+      setEmail('counselor1@company.com');
+      setPassword('counselor123');
+    }
+  };
 
   return (
-    <div className={designSystem.components.layout.page}>
-      <div className="min-h-screen flex">
-        {/* 왼쪽 브랜딩 영역 */}
-        <div className="hidden lg:flex lg:w-1/2 bg-accent relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-br from-accent to-accent-hover"></div>
-          <div className="relative z-10 flex flex-col justify-center px-12 text-white">
-            <div className="mb-8">
-              <div className="w-16 h-16 bg-white bg-opacity-20 rounded-2xl flex items-center justify-center mb-6">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-              <h1 className="text-4xl font-bold mb-4">Lead Management</h1>
-              <p className="text-xl opacity-90">
-                리드 관리부터 상담까지<br />
-                하나의 플랫폼으로
-              </p>
+    <div className="min-h-screen bg-bg-secondary flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md w-full space-y-8">
+        {/* 헤더 */}
+        <div>
+          <div className="mx-auto h-12 w-12 bg-accent rounded-lg flex items-center justify-center">
+            {businessIcons.contact && <businessIcons.contact className="h-8 w-8 text-white" />}
+          </div>
+          <h2 className="mt-6 text-center text-3xl font-bold text-text-primary">
+            CRM 시스템 로그인
+          </h2>
+          <p className="mt-2 text-center text-sm text-text-secondary">
+            관리자 또는 상담원 계정으로 로그인하세요
+          </p>
+        </div>
+        
+        {/* 로그인 폼 */}
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-text-primary">
+                이메일 주소
+              </label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 border border-border-primary rounded-md shadow-sm bg-bg-primary text-text-primary focus:outline-none focus:ring-accent focus:border-accent"
+                placeholder="your@email.com"
+              />
             </div>
-            <div className="space-y-4 text-lg opacity-80">
-              <div className="flex items-center gap-3">
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                효율적인 리드 관리
-              </div>
-              <div className="flex items-center gap-3">
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                실시간 상담 추적
-              </div>
-              <div className="flex items-center gap-3">
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                성과 분석 및 보고
-              </div>
+            
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-text-primary">
+                비밀번호
+              </label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 border border-border-primary rounded-md shadow-sm bg-bg-primary text-text-primary focus:outline-none focus:ring-accent focus:border-accent"
+                placeholder="비밀번호를 입력하세요"
+              />
             </div>
           </div>
-        </div>
 
-        {/* 오른쪽 로그인 폼 영역 */}
-        <div className="flex-1 flex flex-col justify-center px-8 lg:px-12">
-          {/* 상단 테마 토글 */}
-          <div className="absolute top-8 right-8">
+          {/* 에러 메시지 */}
+          {error && (
+            <div className="bg-error-light border border-error rounded-md p-3">
+              <p className="text-sm text-error">{error}</p>
+            </div>
+          )}
+
+          {/* 로그인 버튼 */}
+          <div>
             <button
-              onClick={toggleTheme}
-              className={designSystem.utils.cn(
-                'w-12 h-12 rounded-xl flex items-center justify-center transition-colors',
-                'bg-bg-tertiary hover:bg-bg-hover text-text-secondary'
-              )}
+              type="submit"
+              disabled={loading}
+              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-accent hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isDark ? (
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clipRule="evenodd" />
-                </svg>
-              ) : (
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
-                </svg>
-              )}
+              {loading ? '로그인 중...' : '로그인'}
             </button>
           </div>
+        </form>
 
-          <div className="w-full max-w-md mx-auto">
-            {/* 로고 (작은 화면용) */}
-            <div className="lg:hidden mb-8 text-center">
-              <div className="w-16 h-16 bg-accent rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
+        {/* 테스트 계정 안내 */}
+        <div className="mt-6 p-4 bg-bg-primary border border-border-primary rounded-lg">
+          <h3 className="text-sm font-medium text-text-primary mb-3">🧪 테스트 계정</h3>
+          
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-2 bg-bg-secondary rounded border border-border-primary">
+              <div className="text-xs">
+                <div className="font-medium text-text-primary">관리자</div>
+                <div className="text-text-tertiary">admin@company.com / admin123</div>
               </div>
-              <h1 className={designSystem.components.typography.h3}>Lead Management</h1>
-            </div>
-
-            {/* 로그인 헤더 */}
-            <div className="mb-8">
-              <h2 className={designSystem.components.typography.h2}>로그인</h2>
-              <p className={designSystem.components.typography.bodySm}>
-                계정에 로그인하여 시작하세요
-              </p>
-            </div>
-
-            {/* 로그인 폼 */}
-            <form onSubmit={handleLogin} className="space-y-6">
-              {/* 사용자 유형 선택 */}
-              <div>
-                <label className={designSystem.utils.cn(designSystem.components.typography.bodySm, 'block mb-3 font-medium')}>
-                  사용자 유형
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, userType: 'counselor' })}
-                    className={designSystem.utils.cn(
-                      'p-3 rounded-lg border-2 transition-colors text-sm font-medium',
-                      formData.userType === 'counselor'
-                        ? 'border-accent bg-accent-light text-accent'
-                        : 'border-border-primary bg-bg-primary text-text-secondary hover:border-border-secondary'
-                    )}
-                  >
-                    상담사
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, userType: 'admin' })}
-                    className={designSystem.utils.cn(
-                      'p-3 rounded-lg border-2 transition-colors text-sm font-medium',
-                      formData.userType === 'admin'
-                        ? 'border-accent bg-accent-light text-accent'
-                        : 'border-border-primary bg-bg-primary text-text-secondary hover:border-border-secondary'
-                    )}
-                  >
-                    관리자
-                  </button>
-                </div>
-              </div>
-
-              {/* 이메일 */}
-              <div>
-                <label htmlFor="email" className={designSystem.utils.cn(designSystem.components.typography.bodySm, 'block mb-2 font-medium')}>
-                  이메일
-                </label>
-                <input
-                  type="email"
-                  id="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className={designSystem.components.input.base}
-                  placeholder="이메일을 입력하세요"
-                  required
-                />
-              </div>
-
-              {/* 비밀번호 */}
-              <div>
-                <label htmlFor="password" className={designSystem.utils.cn(designSystem.components.typography.bodySm, 'block mb-2 font-medium')}>
-                  비밀번호
-                </label>
-                <input
-                  type="password"
-                  id="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  className={designSystem.components.input.base}
-                  placeholder="비밀번호를 입력하세요"
-                  required
-                />
-              </div>
-
-              {/* 로그인 버튼 */}
               <button
-                type="submit"
-                disabled={isLoading}
-                className={designSystem.utils.cn(
-                  designSystem.components.button.primary,
-                  designSystem.components.button.full,
-                  designSystem.components.button.lg,
-                  isLoading && 'opacity-50 cursor-not-allowed'
-                )}
+                type="button"
+                onClick={() => fillTestAccount('admin')}
+                className="px-2 py-1 text-xs bg-accent text-white rounded hover:bg-accent/90"
               >
-                {isLoading ? '로그인 중...' : '로그인'}
+                자동입력
               </button>
-            </form>
-
-            {/* 하단 링크 */}
-            <div className="mt-8 text-center">
-              <Link 
-                href="/" 
-                className={designSystem.utils.cn(designSystem.components.typography.bodySm, designSystem.colors.text.secondary, 'hover:text-text-primary transition-colors')}
-              >
-                ← 홈페이지로 돌아가기
-              </Link>
             </div>
+            
+            <div className="flex items-center justify-between p-2 bg-bg-secondary rounded border border-border-primary">
+              <div className="text-xs">
+                <div className="font-medium text-text-primary">상담원</div>
+                <div className="text-text-tertiary">counselor1@company.com / counselor123</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => fillTestAccount('counselor')}
+                className="px-2 py-1 text-xs bg-accent text-white rounded hover:bg-accent/90"
+              >
+                자동입력
+              </button>
+            </div>
+          </div>
+          
+          <div className="mt-3 text-xs text-text-tertiary">
+            💡 자동입력 버튼을 클릭하면 테스트 계정 정보가 자동으로 입력됩니다
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }
+
+/*
+📝 사용법:
+1. src/app/login/ 폴더 생성
+2. src/app/login/page.tsx 파일 생성 후 위 코드 복사
+3. 브라우저에서 http://localhost:3000/login 접속
+4. 테스트 계정 자동입력 버튼 클릭 후 로그인 시도
+
+🧪 테스트 시나리오:
+1. 테스트 계정 자동입력 → 로그인 시도 → 성공/실패 확인
+2. 잘못된 계정 입력 → 에러 메시지 확인
+3. 로그인 성공 시 /dashboard로 리다이렉트 확인
+
+📊 예상 결과:
+- 로그인 성공 시: Auth Debug에서 User/Profile 정보 표시
+- 로그인 실패 시: 에러 메시지 표시
+*/

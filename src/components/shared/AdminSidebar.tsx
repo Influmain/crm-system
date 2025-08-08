@@ -1,9 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'  // ✅ useRouter 추가
 import { useState } from 'react'
 import { useTheme } from '@/hooks/useTheme'
+import { useAuth } from '@/lib/auth/AuthContext'  // ✅ AuthContext 추가
 import { designSystem } from '@/lib/design-system'
 import { businessIcons } from '@/lib/design-system/icons'
 import { 
@@ -24,8 +25,10 @@ interface AdminSidebarProps {
 
 export default function AdminSidebar({ className }: AdminSidebarProps) {
   const { isDark, toggle: toggleTheme } = useTheme()
+  const { user, userProfile, signOut } = useAuth()  // ✅ 실제 사용자 정보 가져오기
   const [isProfileOpen, setIsProfileOpen] = useState(false)
   const pathname = usePathname()
+  const router = useRouter()  // ✅ 라우터 추가
 
   // ✅ businessIcons 시스템 활용한 네비게이션 메뉴
   const navigationItems = [
@@ -97,20 +100,37 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
     return <span className={badgeClass}>{badge}</span>
   }
 
+  // ✅ 사용자 이름 표시 로직 (안전한 fallback)
+  const displayName = userProfile?.full_name || user?.email?.split('@')[0] || '관리자'
+  const displayRole = userProfile?.role === 'admin' ? '시스템 관리자' : userProfile?.department || '관리자'
+
+  // ✅ 로그아웃 핸들러 - 로그인 페이지로 리다이렉트
+  const handleLogout = async () => {
+    setIsProfileOpen(false)
+    try {
+      await signOut()  // AuthContext의 signOut 실행
+      router.push('/login')  // 로그인 페이지로 리다이렉트
+    } catch (error) {
+      console.error('로그아웃 오류:', error)
+      // 오류가 발생해도 로그인 페이지로 이동
+      router.push('/login')
+    }
+  }
+
   return (
     <aside className={designSystem.utils.cn('w-72 bg-bg-secondary border-r border-border-primary flex-shrink-0 h-screen fixed left-0 top-0 flex flex-col', className)}>
       {/* 로고 섹션 */}
       <div className="p-6 border-b border-border-primary flex-shrink-0">
-        <Link href="/" className="flex items-center gap-3">
+        <Link href="/admin/dashboard" className="flex items-center gap-3">
           <div className="w-10 h-10 bg-accent rounded-lg flex items-center justify-center shadow-sm">
             <Shield className="w-6 h-6 text-white" />
           </div>
           <div>
             <h1 className={designSystem.components.typography.h5}>
-              관리자 대시보드
+              관리자 시스템
             </h1>
             <p className={designSystem.components.typography.caption}>
-              전체 시스템 관리
+              System Management
             </p>
           </div>
         </Link>
@@ -155,7 +175,7 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
           <span className="text-xs bg-warning text-white px-2 py-0.5 rounded-full min-w-[20px] text-center">3</span>
         </button>
 
-        {/* 프로필 메뉴 */}
+        {/* 프로필 메뉴 - ✅ 실제 사용자 정보 연동 */}
         <div className="relative">
           {/* 프로필 버튼 */}
           <button 
@@ -166,8 +186,12 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
               <Shield className="w-5 h-5" />
             </div>
             <div className="flex-1 min-w-0 text-left">
-              <div className={designSystem.utils.cn('text-sm font-medium truncate', designSystem.colors.text.primary)}>김관리</div>
-              <div className={designSystem.utils.cn('text-xs', designSystem.colors.text.tertiary)}>시스템 관리자</div>
+              <div className={designSystem.utils.cn('text-sm font-medium truncate', designSystem.colors.text.primary)}>
+                {displayName}  {/* ✅ 실제 사용자 이름 */}
+              </div>
+              <div className={designSystem.utils.cn('text-xs', designSystem.colors.text.tertiary)}>
+                {displayRole}  {/* ✅ 실제 사용자 역할 */}
+              </div>
             </div>
             <ChevronRight 
               className={designSystem.utils.cn('w-4 h-4 flex-shrink-0 transition-transform', isProfileOpen && 'rotate-90')} 
@@ -225,10 +249,10 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
               {/* 구분선 */}
               <div className="mx-6 border-t border-border-primary my-2"></div>
 
-              {/* 로그아웃 */}
+              {/* 로그아웃 - ✅ 실제 로그아웃 기능 연동 */}
               <button 
                 className={designSystem.utils.cn('flex items-center gap-3 px-6 py-2 text-sm transition-colors w-full text-left', designSystem.colors.status.error.text, 'hover:bg-bg-hover')}
-                onClick={() => setIsProfileOpen(false)}
+                onClick={handleLogout}
               >
                 <LogOut className="w-4 h-4" />
                 로그아웃
