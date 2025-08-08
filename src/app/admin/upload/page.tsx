@@ -4,6 +4,8 @@ import { useState, useCallback, useRef } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
 import { designSystem } from '@/lib/design-system';
 import { Upload, FileText, CheckCircle, AlertCircle, X, Eye, EyeOff, ArrowRight, ArrowLeft } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { supabase } from '@/lib/supabase';
 
 // 업로드 단계 타입
 type UploadStep = 'upload' | 'preview' | 'mapping' | 'validation' | 'processing' | 'complete';
@@ -27,19 +29,19 @@ interface DuplicateResult {
   internalDuplicates: any[];
   dbDuplicates: any[];
   uniqueRecords: any[];
+  uploadedCount?: number;
+  errorCount?: number;
 }
 
-// DB 필드 목록
+// DB 필드 목록 (실제 업무 구조 반영)
 const DB_FIELDS = [
   { key: '', label: '매핑하지 않음', required: false },
-  { key: 'name', label: '이름', required: true },
-  { key: 'phone', label: '전화번호', required: true },
-  { key: 'email', label: '이메일', required: false },
-  { key: 'age', label: '나이', required: false },
-  { key: 'gender', label: '성별', required: false },
-  { key: 'address', label: '주소', required: false },
-  { key: 'interest_product', label: '관심상품', required: false },
-  { key: 'source', label: '출처', required: false },
+  { key: 'phone', label: '📞 전화번호 (중복검사 기준)', required: true },
+  { key: 'contact_name', label: '🎭 전문가 (상담원이 사용할 이름)', required: true },
+  { key: 'data_source', label: '🏢 DB업체 (제공업체명)', required: false },
+  { key: 'contact_script', label: '💬 관심내용 (접근 스크립트)', required: false },
+  { key: 'data_date', label: '📅 일시 (데이터 생성일)', required: false },
+  { key: 'extra_info', label: '📝 기타정보', required: false },
 ];
 
 export default function LeadUploadPage() {
@@ -72,27 +74,66 @@ export default function LeadUploadPage() {
     setIsDragOver(false);
   }, []);
 
-  // 파일 업로드 핸들러
-  const handleFileUpload = (file: File) => {
+  // 파일 업로드 핸들러 (실제 파일 파싱)
+  const handleFileUpload = async (file: File) => {
     const fileType = file.name.endsWith('.xlsx') ? 'xlsx' : 'csv';
     
-    // TODO: 실제 파일 파싱 로직
-    const mockData: FileData = {
-      fileName: file.name,
-      fileType,
-      headers: ['이름', '연락처', '이메일', '나이', '성별', '관심분야', '주소'],
-      data: [
-        { '이름': '김철수', '연락처': '010-1234-5678', '이메일': 'kim@test.com', '나이': '35', '성별': '남성', '관심분야': '투자', '주소': '서울시 강남구' },
-        { '연락처': '010-9876-5432', '이메일': 'park@test.com', '나이': '28', '성별': '여성', '관심분야': '보험', '주소': '서울시 서초구' },
-        { '이름': '이민수', '연락처': '010-5555-1234', '이메일': 'lee@test.com', '나이': '42', '성별': '남성', '관심분야': '펀드', '주소': '경기도 성남시' },
-        { '이름': '최영수', '연락처': '010-1111-2222', '이메일': 'choi@test.com', '나이': '31', '성별': '남성', '관심분야': '적금', '주소': '인천시 연수구' },
-        { '이름': '정미라', '연락처': '010-3333-4444', '이메일': 'jung@test.com', '나이': '26', '성별': '여성', '관심분야': '보험', '주소': '부산시 해운대구' },
-      ],
-      totalRows: 5
-    };
-
-    setFileData(mockData);
-    setCurrentStep('preview');
+    try {
+      let parsedData: FileData;
+      
+      if (fileType === 'xlsx') {
+        // Excel 파일 파싱
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer);
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        
+        // 헤더와 데이터 추출
+        const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+        const headers = rawData[0] || [];
+        const dataRows = rawData.slice(1);
+        
+        // JSON 형태로 변환
+        const jsonData = dataRows.map(row => {
+          const obj: Record<string, any> = {};
+          headers.forEach((header, index) => {
+            obj[header] = row[index] || '';
+          });
+          return obj;
+        });
+        
+        parsedData = {
+          fileName: file.name,
+          fileType,
+          headers,
+          data: jsonData,
+          totalRows: dataRows.length
+        };
+      } else {
+        // CSV 파일 파싱
+        const text = await file.text();
+        const Papa = await import('papaparse');
+        const result = Papa.parse(text, {
+          header: true,
+          skipEmptyLines: true,
+          dynamicTyping: false
+        });
+        
+        parsedData = {
+          fileName: file.name,
+          fileType,
+          headers: result.meta.fields || [],
+          data: result.data,
+          totalRows: result.data.length
+        };
+      }
+      
+      setFileData(parsedData);
+      setCurrentStep('preview');
+      
+    } catch (error) {
+      console.error('파일 파싱 오류:', error);
+      alert('파일을 읽는 중 오류가 발생했습니다. 파일 형식을 확인해주세요.');
+    }
   };
 
   // 파일 선택 버튼 클릭
@@ -108,37 +149,302 @@ export default function LeadUploadPage() {
     }));
   };
 
-  // 매핑 완료 및 검증 시작
-  const handleMappingComplete = () => {
-    const mockDuplicates: DuplicateResult = {
-      internalDuplicates: [
-        { '이름': '김철수', '연락처': '010-1234-5678', rowIndex: 1 }
-      ],
-      dbDuplicates: [
-        { '이름': '이민수', '연락처': '010-5555-1234', reason: 'DB에 이미 존재하는 번호' }
-      ],
-      uniqueRecords: fileData?.data.slice(0, 3) || []
-    };
+  // 매핑 완료 및 검증 시작 (수정된 중복 처리 로직)
+  const handleMappingComplete = async () => {
+    if (!fileData) {
+      alert('파일 데이터가 없습니다.');
+      return;
+    }
 
-    setDuplicateResult(mockDuplicates);
-    setCurrentStep('validation');
+    // 매핑된 전화번호 필드 찾기
+    const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone');
+    if (!phoneField) {
+      alert('전화번호 매핑이 필요합니다.');
+      return;
+    }
+
+    try {
+      // 실제 파일에서 전화번호 추출
+      const phoneNumbers = fileData.data
+        .map(row => row[phoneField])
+        .filter(phone => phone && phone.toString().trim())
+        .map(phone => phone.toString().trim());
+
+      console.log('추출된 전화번호:', phoneNumbers.slice(0, 5)); // 디버깅용
+
+      // 파일 내 중복 검사 (첫 번째 발생은 유지, 나머지만 중복으로 처리)
+      const phoneFirstOccurrence: Record<string, number> = {};
+      const internalDuplicates = [];
+      
+      fileData.data.forEach((row, index) => {
+        const phone = row[phoneField]?.toString().trim();
+        if (!phone) return;
+        
+        if (phoneFirstOccurrence[phone] === undefined) {
+          // 첫 번째 발생 - 인덱스 저장
+          phoneFirstOccurrence[phone] = index;
+        } else {
+          // 두 번째 이후 발생 - 중복으로 처리
+          const duplicateData: any = { ...row };
+          duplicateData.rowIndex = index + 2; // Excel 행 번호
+          internalDuplicates.push(duplicateData);
+        }
+      });
+
+      console.log('파일 내 중복 (첫 번째 제외):', internalDuplicates.length); // 디버깅용
+
+      // 실제 DB 중복 검사 (Supabase 연결 문제 해결)
+      let dbDuplicates = [];
+      
+      if (phoneNumbers.length > 0) {
+        console.log('DB 중복 검사 시작...'); // 디버깅용
+        
+        try {
+          // Supabase 연결 테스트
+          const { data: testConnection } = await supabase
+            .from('lead_pool')
+            .select('count')
+            .limit(1);
+          
+          console.log('DB 연결 테스트:', testConnection); // 디버깅용
+
+          // 실제 중복 검사 (더 안전한 방식)
+          const uniquePhones = [...new Set(phoneNumbers)];
+          console.log('중복 검사할 유니크 번호들:', uniquePhones.length);
+
+          const { data: existingLeads, error } = await supabase
+            .from('lead_pool')
+            .select('phone')
+            .in('phone', uniquePhones);
+
+          if (error) {
+            console.error('Supabase 오류 상세:', error);
+            console.error('오류 메시지:', error.message);
+            console.error('오류 상세:', error.details);
+            throw error;
+          }
+
+          console.log('DB 조회 결과:', existingLeads); // 디버깅용
+
+          // DB 중복 데이터 찾기 (첫 번째 발생만 중복으로 표시)
+          const existingPhones = new Set(existingLeads?.map(lead => lead.phone) || []);
+          
+          const seenInFile = new Set<string>();
+          dbDuplicates = fileData.data.filter(row => {
+            const phone = row[phoneField]?.toString().trim();
+            if (!phone || !existingPhones.has(phone)) return false;
+            
+            // 파일 내에서 첫 번째 발생만 DB 중복으로 표시
+            if (seenInFile.has(phone)) return false;
+            seenInFile.add(phone);
+            return true;
+          }).map(row => ({
+            ...row,
+            reason: 'DB에 이미 존재하는 번호'
+          }));
+
+          console.log('DB 중복 발견:', dbDuplicates.length); // 디버깅용
+
+        } catch (dbError) {
+          console.warn('DB 중복 검사 실패, 계속 진행:', dbError);
+          // RLS 문제일 가능성 - 임시로 비활성화 안내
+          alert('DB 접근 권한 문제가 있습니다. RLS 정책을 확인해주세요.');
+          dbDuplicates = [];
+        }
+      }
+
+      // 최종 유니크 레코드 계산 (올바른 로직)
+      const dbDuplicatePhones = new Set(dbDuplicates.map(d => d[phoneField]?.toString().trim()));
+      const internalDuplicateIndexes = new Set(internalDuplicates.map(d => 
+        fileData.data.findIndex(row => row === fileData.data[d.rowIndex - 2])
+      ));
+
+      const uniqueRecords = fileData.data.filter((row, index) => {
+        const phone = row[phoneField]?.toString().trim();
+        if (!phone) return false;
+        
+        // DB에 있는 번호는 제외
+        if (dbDuplicatePhones.has(phone)) return false;
+        
+        // 파일 내 중복에서 첫 번째가 아닌 것들 제외
+        if (internalDuplicateIndexes.has(index)) return false;
+        
+        return true;
+      });
+
+      console.log('최종 업로드 가능 레코드:', uniqueRecords.length); // 디버깅용
+      console.log('계산 검증:', {
+        총_데이터: fileData.data.length,
+        파일내_중복_제외: internalDuplicates.length,
+        DB_중복_제외: dbDuplicates.length,
+        최종_업로드: uniqueRecords.length
+      });
+
+      const duplicateResult: DuplicateResult = {
+        internalDuplicates,
+        dbDuplicates,
+        uniqueRecords
+      };
+
+      setDuplicateResult(duplicateResult);
+      setCurrentStep('validation');
+
+    } catch (error) {
+      console.error('중복 검사 전체 오류:', error);
+      
+      // 오류가 발생해도 기본 로직으로 진행
+      const seenPhones = new Set<string>();
+      const uniqueRecords = fileData.data.filter(row => {
+        const phone = row[phoneField]?.toString().trim();
+        if (!phone || seenPhones.has(phone)) {
+          return false;
+        }
+        seenPhones.add(phone);
+        return true;
+      });
+
+      const fallbackResult: DuplicateResult = {
+        internalDuplicates: [],
+        dbDuplicates: [],
+        uniqueRecords
+      };
+
+      setDuplicateResult(fallbackResult);
+      setCurrentStep('validation');
+      
+      alert('중복 검사 중 오류가 발생했지만 기본 처리로 진행합니다.');
+    }
   };
 
-  // 최종 업로드 실행
-  const handleFinalUpload = () => {
+  // 최종 업로드 실행 (실제 Supabase 업로드)
+  const handleFinalUpload = async () => {
+    if (!fileData || !duplicateResult) {
+      alert('업로드할 데이터가 없습니다.');
+      return;
+    }
+
     setCurrentStep('processing');
-    
-    // 진행률 시뮬레이션
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += 20;
-      setUploadProgress(progress);
-      
-      if (progress >= 100) {
-        clearInterval(interval);
-        setCurrentStep('complete');
+    setUploadProgress(0);
+
+    try {
+      // 1단계: 업로드 배치 생성
+      const batchData = {
+        file_name: fileData.fileName,
+        file_type: fileData.fileType,
+        total_rows: fileData.totalRows,
+        column_mapping: columnMapping,
+        upload_status: 'processing' as const
+      };
+
+      const { data: batch, error: batchError } = await supabase
+        .from('upload_batches')
+        .insert(batchData)
+        .select()
+        .single();
+
+      if (batchError) {
+        throw new Error(`배치 생성 실패: ${batchError.message}`);
       }
-    }, 500);
+
+      setUploadProgress(20);
+
+      // 2단계: 리드 데이터 변환
+      const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone');
+      const contactNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_name');
+      const dataSourceField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_source');
+      const contactScriptField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_script');
+      const dataDateField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_date');
+      const extraInfoField = Object.keys(columnMapping).find(key => columnMapping[key] === 'extra_info');
+
+      if (!phoneField) {
+        throw new Error('전화번호 필드가 매핑되지 않았습니다.');
+      }
+
+      const leadsToInsert = duplicateResult.uniqueRecords.map(row => {
+        // 안전한 데이터 변환
+        const phone = row[phoneField]?.toString().trim();
+        const contactName = contactNameField ? row[contactNameField]?.toString().trim() : null;
+        const dataSource = dataSourceField ? row[dataSourceField]?.toString().trim() : null;
+        const contactScript = contactScriptField ? row[contactScriptField]?.toString().trim() : null;
+        const extraInfo = extraInfoField ? row[extraInfoField]?.toString().trim() : null;
+        
+        // 데이터 검증 및 길이 제한
+        return {
+          upload_batch_id: batch.id,
+          phone: phone && phone.length <= 20 ? phone : null,
+          name: '미상', // 기본값
+          contact_name: contactName && contactName.length <= 255 ? contactName : null,
+          data_source: dataSource && dataSource.length <= 255 ? dataSource : null,
+          contact_script: contactScript && contactScript.length <= 1000 ? contactScript : null,
+          extra_info: extraInfo && extraInfo.length <= 1000 ? extraInfo : null,
+          data_date: null, // 일단 null로 설정
+          status: 'available' as const
+        };
+      }).filter(lead => lead.phone && lead.phone.match(/^010-[0-9]{4}-[0-9]{4}$/)); // 전화번호 형식 검증
+
+      setUploadProgress(40);
+
+      // 3단계: 리드 데이터 삽입 (배치로 처리)
+      const batchSize = 100;
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (let i = 0; i < leadsToInsert.length; i += batchSize) {
+        const batchLeads = leadsToInsert.slice(i, i + batchSize);
+        
+        const { error } = await supabase
+          .from('lead_pool')
+          .insert(batchLeads);
+
+        if (error) {
+          console.error('리드 삽입 오류:', error);
+          errorCount += batchLeads.length;
+        } else {
+          successCount += batchLeads.length;
+        }
+
+        // 진행률 업데이트
+        const progress = 40 + ((i + batchLeads.length) / leadsToInsert.length) * 50;
+        setUploadProgress(Math.min(progress, 90));
+      }
+
+      setUploadProgress(95);
+
+      // 4단계: 배치 상태 업데이트
+      const { error: updateError } = await supabase
+        .from('upload_batches')
+        .update({
+          processed_rows: successCount,
+          error_rows: errorCount,
+          upload_status: errorCount > 0 ? 'completed_with_errors' : 'completed',
+          completed_at: new Date().toISOString()
+        })
+        .eq('id', batch.id);
+
+      if (updateError) {
+        console.error('배치 업데이트 오류:', updateError);
+      }
+
+      setUploadProgress(100);
+
+      // 성공 메시지 표시
+      setTimeout(() => {
+        setCurrentStep('complete');
+      }, 500);
+
+      // 결과 통계 업데이트
+      setDuplicateResult(prev => prev ? {
+        ...prev,
+        uploadedCount: successCount,
+        errorCount: errorCount
+      } : null);
+
+    } catch (error) {
+      console.error('업로드 오류:', error);
+      alert(`업로드 중 오류가 발생했습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+      setCurrentStep('validation');
+      setUploadProgress(0);
+    }
   };
 
   // 단계별 렌더링
@@ -325,6 +631,24 @@ export default function LeadUploadPage() {
                     );
                   })}
                 </div>
+
+                {/* 매핑 미리보기 */}
+                <div className="mt-4 pt-4 border-t">
+                  <h5 className="text-sm font-medium mb-2">매핑 미리보기</h5>
+                  <div className="text-xs text-text-light space-y-1">
+                    {Object.entries(columnMapping).map(([csvCol, dbField]) => {
+                      if (!dbField) return null;
+                      const fieldInfo = DB_FIELDS.find(f => f.key === dbField);
+                      return (
+                        <div key={csvCol} className="flex justify-between">
+                          <span>📄 {csvCol}</span>
+                          <span>→</span>
+                          <span>🗃️ {fieldInfo?.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -338,7 +662,7 @@ export default function LeadUploadPage() {
               </button>
               <button 
                 onClick={handleMappingComplete}
-                disabled={!Object.values(columnMapping).includes('name') || !Object.values(columnMapping).includes('phone')}
+                disabled={!Object.values(columnMapping).includes('phone') || !Object.values(columnMapping).includes('contact_name')}
                 className={designSystem.components.button.primary}
               >
                 중복 검사 시작
@@ -359,20 +683,20 @@ export default function LeadUploadPage() {
               {/* 통계 요약 */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 <div className="p-4 bg-success-light rounded-lg">
-                  <div className="text-2xl font-bold text-success">{duplicateResult?.uniqueRecords.length}</div>
+                  <div className="text-2xl font-bold text-success">{duplicateResult?.uniqueRecords.length || 0}</div>
                   <div className="text-sm text-success">업로드 가능</div>
                 </div>
                 <div className="p-4 bg-warning-light rounded-lg">
-                  <div className="text-2xl font-bold text-warning">{duplicateResult?.internalDuplicates.length}</div>
+                  <div className="text-2xl font-bold text-warning">{duplicateResult?.internalDuplicates.length || 0}</div>
                   <div className="text-sm text-warning">파일 내 중복</div>
                 </div>
                 <div className="p-4 bg-error-light rounded-lg">
-                  <div className="text-2xl font-bold text-error">{duplicateResult?.dbDuplicates.length}</div>
+                  <div className="text-2xl font-bold text-error">{duplicateResult?.dbDuplicates.length || 0}</div>
                   <div className="text-sm text-error">DB 중복</div>
                 </div>
               </div>
 
-              {/* 중복 데이터 상세 */}
+              {/* DB 중복 데이터 */}
               {duplicateResult && duplicateResult.dbDuplicates.length > 0 && (
                 <div className="mb-6">
                   <h4 className="font-medium mb-3 text-error">DB 중복 데이터</h4>
@@ -380,19 +704,20 @@ export default function LeadUploadPage() {
                     <table className="w-full text-sm">
                       <thead className="bg-error-light">
                         <tr>
-                          <th className="px-4 py-2 text-left">이름</th>
                           <th className="px-4 py-2 text-left">전화번호</th>
                           <th className="px-4 py-2 text-left">사유</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {duplicateResult.dbDuplicates.map((item, index) => (
-                          <tr key={index} className="border-t">
-                            <td className="px-4 py-2">{item['이름']}</td>
-                            <td className="px-4 py-2">{item['연락처']}</td>
-                            <td className="px-4 py-2 text-error">{item.reason}</td>
-                          </tr>
-                        ))}
+                        {duplicateResult.dbDuplicates.map((item, index) => {
+                          const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone') || 'phone';
+                          return (
+                            <tr key={index} className="border-t">
+                              <td className="px-4 py-2">{item[phoneField] || Object.values(item)[0]}</td>
+                              <td className="px-4 py-2 text-error">{item.reason}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -407,22 +732,35 @@ export default function LeadUploadPage() {
                     <table className="w-full text-sm">
                       <thead className="bg-warning-light">
                         <tr>
-                          <th className="px-4 py-2 text-left">이름</th>
                           <th className="px-4 py-2 text-left">전화번호</th>
                           <th className="px-4 py-2 text-left">행 번호</th>
+                          <th className="px-4 py-2 text-left">기타 정보</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {duplicateResult.internalDuplicates.map((item, index) => (
-                          <tr key={index} className="border-t">
-                            <td className="px-4 py-2">{item['이름']}</td>
-                            <td className="px-4 py-2">{item['연락처']}</td>
-                            <td className="px-4 py-2">{item.rowIndex}</td>
-                          </tr>
-                        ))}
+                        {duplicateResult.internalDuplicates.map((item, index) => {
+                          const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone') || 'phone';
+                          const contactField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_name');
+                          return (
+                            <tr key={index} className="border-t">
+                              <td className="px-4 py-2">{item[phoneField]}</td>
+                              <td className="px-4 py-2">{item.rowIndex}</td>
+                              <td className="px-4 py-2">{contactField ? item[contactField] : '-'}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {/* 중복이 없는 경우 */}
+              {duplicateResult && duplicateResult.internalDuplicates.length === 0 && duplicateResult.dbDuplicates.length === 0 && (
+                <div className="p-4 bg-success-light rounded-lg text-center">
+                  <CheckCircle className="w-8 h-8 text-success mx-auto mb-2" />
+                  <p className="text-success font-medium">중복된 데이터가 없습니다!</p>
+                  <p className="text-success text-sm">모든 데이터를 안전하게 업로드할 수 있습니다.</p>
                 </div>
               )}
             </div>
@@ -440,7 +778,7 @@ export default function LeadUploadPage() {
                 disabled={!duplicateResult?.uniqueRecords.length}
                 className={designSystem.components.button.primary}
               >
-                {duplicateResult?.uniqueRecords.length}개 데이터 업로드
+                {duplicateResult?.uniqueRecords.length || 0}개 데이터 업로드
                 <ArrowRight className="w-4 h-4 ml-2" />
               </button>
             </div>
@@ -485,7 +823,10 @@ export default function LeadUploadPage() {
               </h3>
               
               <p className={designSystem.utils.cn(designSystem.components.typography.bodySm, 'mb-6')}>
-                {duplicateResult?.uniqueRecords.length}개의 리드가 성공적으로 업로드되었습니다.
+                {duplicateResult?.uploadedCount || duplicateResult?.uniqueRecords.length || 0}개의 리드가 성공적으로 업로드되었습니다.
+                {duplicateResult?.errorCount && duplicateResult.errorCount > 0 && (
+                  <span className="text-error"> ({duplicateResult.errorCount}개 오류 발생)</span>
+                )}
               </p>
               
               <div className="flex gap-3 justify-center">
