@@ -434,10 +434,15 @@ export default function LeadUploadPage() {
     }
   };
 
-  // 최종 업로드 실행
+  // 최종 업로드 실행 (실제 Supabase 업로드 구현)
   const handleFinalUpload = async () => {
     if (!fileData || !duplicateResult) {
       alert('업로드할 데이터가 없습니다.');
+      return;
+    }
+
+    if (!duplicateResult.uniqueRecords || duplicateResult.uniqueRecords.length === 0) {
+      alert('업로드할 수 있는 유니크 레코드가 없습니다.');
       return;
     }
 
@@ -445,24 +450,208 @@ export default function LeadUploadPage() {
     setUploadProgress(0);
 
     try {
-      // 업로드 로직은 기존과 동일...
-      console.log('업로드 시작...');
-      setUploadProgress(100);
+      console.log('=== 실제 업로드 시작 ===');
+      console.log('업로드할 레코드 수:', duplicateResult.uniqueRecords.length);
+      console.log('칼럼 매핑:', columnMapping);
+
+      // 1. 업로드 배치 생성
+      console.log('1. 업로드 배치 생성 중...');
+      const batchId = crypto.randomUUID();
+      const { error: batchError } = await supabase
+        .from('upload_batches')
+        .insert({
+          id: batchId,
+          file_name: fileData.fileName,
+          uploaded_by: null, // TODO: 실제 로그인 시스템 구현 후 현재 사용자 ID로 변경
+          total_rows: duplicateResult.uniqueRecords.length,
+          created_at: new Date().toISOString()
+        });
+
+      if (batchError) {
+        console.error('배치 생성 실패:', batchError);
+        throw new Error(`배치 생성 실패: ${batchError.message}`);
+      }
+
+      setUploadProgress(10);
+      console.log('✅ 배치 생성 완료:', batchId);
+
+      // 2. 데이터 변환 및 검증
+      console.log('2. 데이터 변환 중...');
+      const recordsToInsert = duplicateResult.uniqueRecords.map((record, index) => {
+        try {
+          // 필수 필드 매핑
+          const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone');
+          const contactNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_name');
+          
+          if (!phoneField || !contactNameField) {
+            throw new Error(`필수 필드 매핑 누락: phone=${phoneField}, contact_name=${contactNameField}`);
+          }
+
+          const phone = record[phoneField]?.toString().trim();
+          const contactName = record[contactNameField]?.toString().trim();
+
+          if (!phone || !contactName) {
+            throw new Error(`레코드 ${index + 1}: 필수 데이터 누락 - phone: "${phone}", contact_name: "${contactName}"`);
+          }
+
+          // 선택적 필드 매핑
+          const dataSourceField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_source');
+          const contactScriptField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_script');
+          const dataDateField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_date');
+          const extraInfoField = Object.keys(columnMapping).find(key => columnMapping[key] === 'extra_info');
+
+          const transformedRecord = {
+            id: crypto.randomUUID(),
+            phone: phone,
+            contact_name: contactName,
+            data_source: dataSourceField ? (record[dataSourceField]?.toString().trim() || null) : null,
+            contact_script: contactScriptField ? (record[contactScriptField]?.toString().trim() || null) : null,
+            data_date: dataDateField ? (record[dataDateField] ? new Date(record[dataDateField]).toISOString() : null) : null,
+            extra_info: extraInfoField ? (record[extraInfoField]?.toString().trim() || null) : null,
+            status: 'available',
+            upload_batch_id: batchId,
+            created_at: new Date().toISOString()
+          };
+
+          console.log(`레코드 ${index + 1} 변환 완료:`, {
+            phone: transformedRecord.phone,
+            contact_name: transformedRecord.contact_name,
+            data_source: transformedRecord.data_source
+          });
+
+          return transformedRecord;
+
+        } catch (recordError) {
+          console.error(`레코드 ${index + 1} 변환 실패:`, recordError);
+          throw new Error(`레코드 ${index + 1} 변환 실패: ${recordError.message}`);
+        }
+      });
+
+      setUploadProgress(30);
+      console.log('✅ 데이터 변환 완료. 변환된 레코드 수:', recordsToInsert.length);
+
+      // 3. 배치 업로드 (청크 단위로 처리)
+      const BATCH_SIZE = 100; // 한 번에 100개씩 업로드
+      let uploadedCount = 0;
+      let errorCount = 0;
+      const errors: string[] = [];
+
+      console.log('3. 배치 업로드 시작...');
       
-      setTimeout(() => {
-        setCurrentStep('complete');
-        setDuplicateResult(prev => prev ? {
-          ...prev,
-          uploadedCount: duplicateResult.uniqueRecords.length,
-          errorCount: 0
-        } : null);
-      }, 1000);
+      for (let i = 0; i < recordsToInsert.length; i += BATCH_SIZE) {
+        const chunk = recordsToInsert.slice(i, i + BATCH_SIZE);
+        const chunkNumber = Math.floor(i / BATCH_SIZE) + 1;
+        const totalChunks = Math.ceil(recordsToInsert.length / BATCH_SIZE);
+        
+        console.log(`청크 ${chunkNumber}/${totalChunks} 업로드 중... (${chunk.length}개 레코드)`);
+
+        try {
+          const { data: insertedData, error: insertError } = await supabase
+            .from('lead_pool')
+            .insert(chunk)
+            .select('id');
+
+          if (insertError) {
+            console.error(`청크 ${chunkNumber} 업로드 실패:`, insertError);
+            
+            // 개별 레코드 업로드 시도
+            for (const record of chunk) {
+              try {
+                const { error: singleError } = await supabase
+                  .from('lead_pool')
+                  .insert([record]);
+                
+                if (singleError) {
+                  console.error(`개별 레코드 업로드 실패 (${record.phone}):`, singleError);
+                  errors.push(`${record.phone}: ${singleError.message}`);
+                  errorCount++;
+                } else {
+                  uploadedCount++;
+                }
+              } catch (singleRecordError) {
+                console.error(`개별 레코드 처리 실패 (${record.phone}):`, singleRecordError);
+                errors.push(`${record.phone}: ${singleRecordError.message}`);
+                errorCount++;
+              }
+            }
+          } else {
+            uploadedCount += insertedData?.length || chunk.length;
+            console.log(`✅ 청크 ${chunkNumber} 업로드 완료: ${insertedData?.length || chunk.length}개`);
+          }
+
+        } catch (chunkError) {
+          console.error(`청크 ${chunkNumber} 처리 실패:`, chunkError);
+          errorCount += chunk.length;
+          errors.push(`청크 ${chunkNumber}: ${chunkError.message}`);
+        }
+
+        // 진행률 업데이트 (30% ~ 90%)
+        const progress = 30 + Math.floor((i + chunk.length) / recordsToInsert.length * 60);
+        setUploadProgress(progress);
+        
+        // UI 업데이트를 위한 잠시 대기
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      setUploadProgress(95);
+
+      // 4. 결과 처리 및 배치 정보 업데이트
+      console.log('4. 업로드 결과 처리 중...');
+      
+      // upload_batches 테이블 구조에 맞게 업데이트 (존재하는 칼럼만 사용)
+      const { error: batchUpdateError } = await supabase
+        .from('upload_batches')
+        .update({
+          total_rows: uploadedCount, // 실제 업로드된 개수로 업데이트
+          created_at: new Date().toISOString() // 완료 시간으로 업데이트
+        })
+        .eq('id', batchId);
+
+      if (batchUpdateError) {
+        console.warn('배치 정보 업데이트 실패 (무시해도 됨):', batchUpdateError);
+      } else {
+        console.log('✅ 배치 정보 업데이트 완료');
+      }
+
+      setUploadProgress(100);
+
+      // 5. 최종 결과 설정
+      setDuplicateResult(prev => prev ? {
+        ...prev,
+        uploadedCount: uploadedCount,
+        errorCount: errorCount
+      } : null);
+
+      console.log('=== 업로드 완료 ===');
+      console.log(`성공: ${uploadedCount}개, 실패: ${errorCount}개`);
+      
+      if (errors.length > 0) {
+        console.log('오류 목록:', errors.slice(0, 10)); // 처음 10개만 로그
+      }
+
+      // 결과에 따른 메시지 표시
+      if (errorCount === 0) {
+        setTimeout(() => {
+          setCurrentStep('complete');
+          alert(`🎉 업로드 완료!\n성공: ${uploadedCount}개 리드가 업로드되었습니다.`);
+        }, 500);
+      } else if (uploadedCount > 0) {
+        setTimeout(() => {
+          setCurrentStep('complete');
+          alert(`⚠️ 부분 업로드 완료\n성공: ${uploadedCount}개\n실패: ${errorCount}개\n\n일부 레코드에서 오류가 발생했습니다.`);
+        }, 500);
+      } else {
+        throw new Error('모든 레코드 업로드에 실패했습니다.');
+      }
 
     } catch (error) {
-      console.error('업로드 오류:', error);
-      alert(`업로드 중 오류가 발생했습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+      console.error('업로드 전체 실패:', error);
+      
       setCurrentStep('validation');
       setUploadProgress(0);
+      
+      const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
+      alert(`❌ 업로드 실패\n\n${errorMessage}\n\n다시 시도해주세요.`);
     }
   };
 
