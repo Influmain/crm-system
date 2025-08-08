@@ -462,8 +462,14 @@ export default function LeadUploadPage() {
         .insert({
           id: batchId,
           file_name: fileData.fileName,
-          uploaded_by: null, // TODO: 실제 로그인 시스템 구현 후 현재 사용자 ID로 변경
+          file_type: fileData.fileType,            // ✅ 실제 필드: csv 또는 xlsx
           total_rows: duplicateResult.uniqueRecords.length,
+          processed_rows: 0,                       // ✅ 실제 필드: 초기값 0
+          duplicate_rows: duplicateResult.internalDuplicates.length + duplicateResult.dbDuplicates.length, // ✅ 실제 필드
+          error_rows: 0,                           // ✅ 실제 필드: 초기값 0
+          column_mapping: columnMapping,           // ✅ 실제 필드: JSONB로 매핑 정보 저장
+          upload_status: 'processing',             // ✅ 실제 필드: 처리 중 상태
+          uploaded_by: null,                       // TODO: 실제 로그인 시스템 구현 후 현재 사용자 ID로 변경
           created_at: new Date().toISOString()
         });
 
@@ -598,19 +604,25 @@ export default function LeadUploadPage() {
       // 4. 결과 처리 및 배치 정보 업데이트
       console.log('4. 업로드 결과 처리 중...');
       
-      // upload_batches 테이블 구조에 맞게 업데이트 (존재하는 칼럼만 사용)
+      // 실제 upload_batches 테이블 구조에 맞게 업데이트
       const { error: batchUpdateError } = await supabase
         .from('upload_batches')
         .update({
-          total_rows: uploadedCount, // 실제 업로드된 개수로 업데이트
-          created_at: new Date().toISOString() // 완료 시간으로 업데이트
+          processed_rows: uploadedCount,           // ✅ 실제 처리된 행 수
+          error_rows: errorCount,                  // ✅ 오류 발생 행 수
+          upload_status: 'completed',              // ✅ 업로드 상태
+          completed_at: new Date().toISOString(),  // ✅ 완료 시간
+          column_mapping: columnMapping            // ✅ 사용된 칼럼 매핑 저장
         })
         .eq('id', batchId);
 
       if (batchUpdateError) {
-        console.warn('배치 정보 업데이트 실패 (무시해도 됨):', batchUpdateError);
+        console.warn('배치 정보 업데이트 실패:', batchUpdateError);
       } else {
         console.log('✅ 배치 정보 업데이트 완료');
+        console.log(`- 처리된 행: ${uploadedCount}`);
+        console.log(`- 오류 행: ${errorCount}`);
+        console.log('- 상태: completed');
       }
 
       setUploadProgress(100);
