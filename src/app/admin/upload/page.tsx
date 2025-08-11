@@ -5,6 +5,7 @@ import AdminLayout from '@/components/layout/AdminLayout';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons, getColumnIcon } from '@/lib/design-system/icons';
 import SmartTable from '@/components/ui/SmartTable';
+import { useToastHelpers } from '@/components/ui/Toast'; // ✅ 토스트 시스템 추가
 import { Upload, FileText, CheckCircle, AlertCircle, X, Eye, EyeOff, ArrowRight, ArrowLeft, RefreshCw, Check, AlertTriangle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
@@ -47,6 +48,8 @@ const DB_FIELDS = [
 ];
 
 export default function LeadUploadPage() {
+  const toast = useToastHelpers(); // ✅ 토스트 헬퍼 추가
+  
   const [currentStep, setCurrentStep] = useState<UploadStep>('upload');
   const [fileData, setFileData] = useState<FileData | null>(null);
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({});
@@ -88,6 +91,39 @@ export default function LeadUploadPage() {
   // 파일 업로드 핸들러 (실제 파일 파싱)
   const handleFileUpload = async (file: File) => {
     const fileType = file.name.endsWith('.xlsx') ? 'xlsx' : 'csv';
+    
+    // ✅ 파일 형식 검증 토스트
+    if (!file.name.match(/\.(xlsx|csv)$/i)) {
+      toast.error(
+        '파일 형식 오류',
+        '지원되는 파일 형식: Excel (.xlsx) 또는 CSV (.csv)',
+        {
+          action: {
+            label: '다시 선택',
+            onClick: () => fileInputRef.current?.click()
+          }
+        }
+      );
+      return;
+    }
+
+    // ✅ 파일 크기 검증 (10MB 제한)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.warning(
+        '파일 크기 초과',
+        '파일 크기가 10MB를 초과합니다. 더 작은 파일을 선택해주세요.',
+        {
+          action: {
+            label: '다른 파일 선택',
+            onClick: () => fileInputRef.current?.click()
+          }
+        }
+      );
+      return;
+    }
+
+    // ✅ 파일 읽기 시작 토스트
+    toast.info('파일 읽기 시작', `${file.name} 파일을 분석하고 있습니다...`);
     
     try {
       let parsedData: FileData;
@@ -134,12 +170,35 @@ export default function LeadUploadPage() {
         };
       }
       
+      // ✅ 파일 읽기 성공 토스트
+      toast.success(
+        '파일 읽기 완료',
+        `${parsedData.totalRows}개 행, ${parsedData.headers.length}개 칼럼이 감지되었습니다.`,
+        {
+          action: {
+            label: '데이터 확인',
+            onClick: () => setCurrentStep('preview')
+          }
+        }
+      );
+      
       setFileData(parsedData);
       setCurrentStep('preview');
       
     } catch (error) {
       console.error('파일 파싱 오류:', error);
-      alert('파일을 읽는 중 오류가 발생했습니다. 파일 형식을 확인해주세요.');
+      
+      // ✅ alert() → toast.error()로 변경
+      toast.error(
+        '파일 읽기 실패',
+        `파일을 읽는 중 오류가 발생했습니다. 파일 형식을 확인해주세요.\n\n오류: ${error.message || '알 수 없는 오류'}`,
+        {
+          action: {
+            label: '다른 파일 선택',
+            onClick: () => fileInputRef.current?.click()
+          }
+        }
+      );
     }
   };
 
@@ -157,6 +216,28 @@ export default function LeadUploadPage() {
         [csvColumn]: dbField
       };
       console.log('업데이트된 매핑:', newMapping);
+      
+      // ✅ 토스트 호출을 비동기로 처리하여 렌더링 사이클 분리
+      setTimeout(() => {
+        const phoneField = Object.values(newMapping).includes('phone');
+        const contactField = Object.values(newMapping).includes('contact_name');
+        
+        if (phoneField && contactField) {
+          toast.success(
+            '필수 매핑 완료',
+            '전화번호와 연락정보 매핑이 완료되었습니다. 중복 검사를 진행할 수 있습니다.',
+            { duration: 3000 }
+          );
+        } else if (phoneField || contactField) {
+          const remaining = !phoneField ? '전화번호' : '연락정보';
+          toast.info(
+            '매핑 진행 중',
+            `${remaining} 매핑이 필요합니다.`,
+            { duration: 2000 }
+          );
+        }
+      }, 0);
+      
       return newMapping;
     });
   };
@@ -273,7 +354,8 @@ export default function LeadUploadPage() {
   // 매핑 완료 및 검증 시작
   const handleMappingComplete = async () => {
     if (!fileData) {
-      alert('파일 데이터가 없습니다.');
+      // ✅ alert() → toast.error()로 변경
+      toast.error('데이터 오류', '파일 데이터가 없습니다. 파일을 다시 업로드해주세요.');
       return;
     }
 
@@ -289,14 +371,57 @@ export default function LeadUploadPage() {
     console.log('매핑된 연락정보 필드:', contactNameField);
     
     if (!phoneField) {
-      alert('전화번호 매핑이 필요합니다.');
+      // ✅ alert() → toast.warning()으로 변경
+      toast.warning(
+        '필수 매핑 누락',
+        '전화번호 매핑이 필요합니다. 중복 검사를 위해 반드시 전화번호 필드를 매핑해주세요.',
+        {
+          action: {
+            label: '매핑 설정',
+            onClick: () => {
+              // 전화번호 같은 필드를 자동으로 찾아서 제안
+              const phoneHeaderSuggestion = fileData.headers.find(h => 
+                h.toLowerCase().includes('phone') || h.includes('전화') || h.includes('번호')
+              );
+              if (phoneHeaderSuggestion) {
+                toast.info('자동 제안', `"${phoneHeaderSuggestion}" 필드를 전화번호로 매핑하는 것을 권장합니다.`);
+              }
+            }
+          }
+        }
+      );
       return;
     }
 
     if (!contactNameField) {
-      alert('연락정보 매핑이 필요합니다.');
+      // ✅ alert() → toast.warning()으로 변경
+      toast.warning(
+        '필수 매핑 누락',
+        '연락정보 매핑이 필요합니다. 상담원이 고객을 식별할 수 있는 이름 필드를 매핑해주세요.',
+        {
+          action: {
+            label: '매핑 설정',
+            onClick: () => {
+              // 이름 같은 필드를 자동으로 찾아서 제안
+              const nameHeaderSuggestion = fileData.headers.find(h => 
+                h.toLowerCase().includes('name') || h.includes('이름') || h.includes('성명')
+              );
+              if (nameHeaderSuggestion) {
+                toast.info('자동 제안', `"${nameHeaderSuggestion}" 필드를 연락정보로 매핑하는 것을 권장합니다.`);
+              }
+            }
+          }
+        }
+      );
       return;
     }
+
+    // ✅ 중복 검사 시작 토스트
+    toast.info(
+      '중복 검사 시작',
+      `${fileData.totalRows}개 레코드의 중복 검사를 시작합니다. 잠시만 기다려주세요...`,
+      { duration: 0 } // 검사 완료까지 유지
+    );
 
     try {
       // 실제 데이터에서 전화번호 추출 테스트
@@ -376,7 +501,14 @@ export default function LeadUploadPage() {
 
         } catch (dbError) {
           console.warn('DB 중복 검사 실패, 계속 진행:', dbError);
-          alert('DB 접근 권한 문제가 있습니다. RLS 정책을 확인해주세요.');
+          
+          // ✅ alert() → toast.warning()으로 변경
+          toast.warning(
+            'DB 접근 제한',
+            'DB 접근 권한 문제가 있습니다. RLS 정책을 확인해주세요. 파일 내 중복만 검사합니다.',
+            { duration: 5000 }
+          );
+          
           dbDuplicates = [];
         }
       }
@@ -408,6 +540,32 @@ export default function LeadUploadPage() {
       setDuplicateResult(duplicateResult);
       setCurrentStep('validation');
 
+      // ✅ 중복 검사 완료 토스트
+      const totalDuplicates = internalDuplicates.length + dbDuplicates.length;
+      if (totalDuplicates === 0) {
+        toast.success(
+          '중복 검사 완료',
+          `🎉 중복된 데이터가 없습니다!\n${uniqueRecords.length}개 레코드를 모두 업로드할 수 있습니다.`,
+          {
+            action: {
+              label: '업로드 진행',
+              onClick: () => handleFinalUpload()
+            }
+          }
+        );
+      } else {
+        toast.warning(
+          '중복 데이터 발견',
+          `파일 내 중복: ${internalDuplicates.length}개\nDB 중복: ${dbDuplicates.length}개\n업로드 가능: ${uniqueRecords.length}개`,
+          {
+            action: {
+              label: '결과 확인',
+              onClick: () => {} // 이미 validation 단계로 이동됨
+            }
+          }
+        );
+      }
+
     } catch (error) {
       console.error('중복 검사 전체 오류:', error);
       
@@ -430,24 +588,52 @@ export default function LeadUploadPage() {
       setDuplicateResult(fallbackResult);
       setCurrentStep('validation');
       
-      alert('중복 검사 중 오류가 발생했지만 기본 처리로 진행합니다.');
+      // ✅ alert() → toast.error()로 변경
+      toast.error(
+        '중복 검사 실패',
+        `중복 검사 중 오류가 발생했지만 기본 처리로 진행합니다.\n\n오류: ${error.message || '알 수 없는 오류'}`,
+        {
+          action: {
+            label: '계속 진행',
+            onClick: () => {} // 이미 validation으로 이동됨
+          }
+        }
+      );
     }
   };
 
   // 최종 업로드 실행 (실제 Supabase 업로드 구현)
   const handleFinalUpload = async () => {
     if (!fileData || !duplicateResult) {
-      alert('업로드할 데이터가 없습니다.');
+      // ✅ alert() → toast.error()로 변경
+      toast.error('업로드 오류', '업로드할 데이터가 없습니다. 파일을 다시 선택해주세요.');
       return;
     }
 
     if (!duplicateResult.uniqueRecords || duplicateResult.uniqueRecords.length === 0) {
-      alert('업로드할 수 있는 유니크 레코드가 없습니다.');
+      // ✅ alert() → toast.warning()으로 변경
+      toast.warning(
+        '업로드 불가',
+        '업로드할 수 있는 유니크 레코드가 없습니다. 중복 검사 결과를 다시 확인해주세요.',
+        {
+          action: {
+            label: '중복 검사 재실행',
+            onClick: () => handleMappingComplete()
+          }
+        }
+      );
       return;
     }
 
     setCurrentStep('processing');
     setUploadProgress(0);
+
+    // ✅ 업로드 시작 토스트
+    toast.info(
+      '업로드 시작',
+      `${duplicateResult.uniqueRecords.length}개 레코드 업로드를 시작합니다. 잠시만 기다려주세요...`,
+      { duration: 0 } // 업로드 완료까지 유지
+    );
 
     try {
       console.log('=== 실제 업로드 시작 ===');
@@ -462,14 +648,14 @@ export default function LeadUploadPage() {
         .insert({
           id: batchId,
           file_name: fileData.fileName,
-          file_type: fileData.fileType,            // ✅ 실제 필드: csv 또는 xlsx
+          file_type: fileData.fileType,
           total_rows: duplicateResult.uniqueRecords.length,
-          processed_rows: 0,                       // ✅ 실제 필드: 초기값 0
-          duplicate_rows: duplicateResult.internalDuplicates.length + duplicateResult.dbDuplicates.length, // ✅ 실제 필드
-          error_rows: 0,                           // ✅ 실제 필드: 초기값 0
-          column_mapping: columnMapping,           // ✅ 실제 필드: JSONB로 매핑 정보 저장
-          upload_status: 'processing',             // ✅ 실제 필드: 처리 중 상태
-          uploaded_by: null,                       // TODO: 실제 로그인 시스템 구현 후 현재 사용자 ID로 변경
+          processed_rows: 0,
+          duplicate_rows: duplicateResult.internalDuplicates.length + duplicateResult.dbDuplicates.length,
+          error_rows: 0,
+          column_mapping: columnMapping,
+          upload_status: 'processing',
+          uploaded_by: null,
           created_at: new Date().toISOString()
         });
 
@@ -480,6 +666,9 @@ export default function LeadUploadPage() {
 
       setUploadProgress(10);
       console.log('✅ 배치 생성 완료:', batchId);
+
+      // ✅ 진행상황 토스트 업데이트
+      toast.info('배치 생성 완료', '업로드 배치가 생성되었습니다. 데이터 변환 중...', { duration: 2000 });
 
       // 2. 데이터 변환 및 검증
       console.log('2. 데이터 변환 중...');
@@ -536,6 +725,9 @@ export default function LeadUploadPage() {
       setUploadProgress(30);
       console.log('✅ 데이터 변환 완료. 변환된 레코드 수:', recordsToInsert.length);
 
+      // ✅ 데이터 변환 완료 토스트
+      toast.info('데이터 변환 완료', '레코드 변환이 완료되었습니다. 데이터베이스 업로드 중...', { duration: 2000 });
+
       // 3. 배치 업로드 (청크 단위로 처리)
       const BATCH_SIZE = 100; // 한 번에 100개씩 업로드
       let uploadedCount = 0;
@@ -550,6 +742,15 @@ export default function LeadUploadPage() {
         const totalChunks = Math.ceil(recordsToInsert.length / BATCH_SIZE);
         
         console.log(`청크 ${chunkNumber}/${totalChunks} 업로드 중... (${chunk.length}개 레코드)`);
+
+        // ✅ 청크별 진행상황 토스트
+        if (totalChunks > 1) {
+          toast.info(
+            `업로드 진행 중 (${chunkNumber}/${totalChunks})`,
+            `${chunk.length}개 레코드를 업로드하고 있습니다...`,
+            { duration: 1000 }
+          );
+        }
 
         try {
           const { data: insertedData, error: insertError } = await supabase
@@ -604,15 +805,14 @@ export default function LeadUploadPage() {
       // 4. 결과 처리 및 배치 정보 업데이트
       console.log('4. 업로드 결과 처리 중...');
       
-      // 실제 upload_batches 테이블 구조에 맞게 업데이트
       const { error: batchUpdateError } = await supabase
         .from('upload_batches')
         .update({
-          processed_rows: uploadedCount,           // ✅ 실제 처리된 행 수
-          error_rows: errorCount,                  // ✅ 오류 발생 행 수
-          upload_status: 'completed',              // ✅ 업로드 상태
-          completed_at: new Date().toISOString(),  // ✅ 완료 시간
-          column_mapping: columnMapping            // ✅ 사용된 칼럼 매핑 저장
+          processed_rows: uploadedCount,
+          error_rows: errorCount,
+          upload_status: 'completed',
+          completed_at: new Date().toISOString(),
+          column_mapping: columnMapping
         })
         .eq('id', batchId);
 
@@ -620,9 +820,6 @@ export default function LeadUploadPage() {
         console.warn('배치 정보 업데이트 실패:', batchUpdateError);
       } else {
         console.log('✅ 배치 정보 업데이트 완료');
-        console.log(`- 처리된 행: ${uploadedCount}`);
-        console.log(`- 오류 행: ${errorCount}`);
-        console.log('- 상태: completed');
       }
 
       setUploadProgress(100);
@@ -636,21 +833,37 @@ export default function LeadUploadPage() {
 
       console.log('=== 업로드 완료 ===');
       console.log(`성공: ${uploadedCount}개, 실패: ${errorCount}개`);
-      
-      if (errors.length > 0) {
-        console.log('오류 목록:', errors.slice(0, 10)); // 처음 10개만 로그
-      }
 
-      // 결과에 따른 메시지 표시
+      // ✅ 최종 결과 토스트
       if (errorCount === 0) {
         setTimeout(() => {
           setCurrentStep('complete');
-          alert(`🎉 업로드 완료!\n성공: ${uploadedCount}개 리드가 업로드되었습니다.`);
+          toast.success(
+            '🎉 업로드 완료!',
+            `${uploadedCount}개 리드가 성공적으로 업로드되었습니다.\n\n이제 상담원에게 배정할 수 있습니다.`,
+            {
+              action: {
+                label: '배정 관리로 이동',
+                onClick: () => window.location.href = '/admin/assignments'
+              },
+              duration: 0
+            }
+          );
         }, 500);
       } else if (uploadedCount > 0) {
         setTimeout(() => {
           setCurrentStep('complete');
-          alert(`⚠️ 부분 업로드 완료\n성공: ${uploadedCount}개\n실패: ${errorCount}개\n\n일부 레코드에서 오류가 발생했습니다.`);
+          toast.warning(
+            '⚠️ 부분 업로드 완료',
+            `성공: ${uploadedCount}개\n실패: ${errorCount}개\n\n일부 레코드에서 오류가 발생했습니다.`,
+            {
+              action: {
+                label: '결과 확인',
+                onClick: () => {}
+              },
+              duration: 0
+            }
+          );
         }, 500);
       } else {
         throw new Error('모든 레코드 업로드에 실패했습니다.');
@@ -663,7 +876,19 @@ export default function LeadUploadPage() {
       setUploadProgress(0);
       
       const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
-      alert(`❌ 업로드 실패\n\n${errorMessage}\n\n다시 시도해주세요.`);
+      
+      // ✅ alert() → toast.error()로 변경
+      toast.error(
+        '❌ 업로드 실패',
+        `업로드 중 오류가 발생했습니다.\n\n${errorMessage}`,
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => handleFinalUpload()
+          },
+          duration: 0
+        }
+      );
     }
   };
 
@@ -697,6 +922,17 @@ export default function LeadUploadPage() {
                 Excel (.xlsx) 또는 CSV (.csv) 파일을 지원합니다
               </p>
               
+              {/* ✅ 파일 형식 안내 추가 */}
+              <div className="mb-6 p-4 bg-bg-secondary rounded-lg text-left">
+                <h4 className="font-medium text-text-primary mb-2">📋 지원되는 파일 형식</h4>
+                <ul className="text-sm text-text-secondary space-y-1">
+                  <li>• Excel 파일 (.xlsx) - 최대 10MB</li>
+                  <li>• CSV 파일 (.csv) - UTF-8 인코딩 권장</li>
+                  <li>• 첫 번째 행은 헤더(칼럼명)로 사용됩니다</li>
+                  <li>• 전화번호와 이름 필드는 필수입니다</li>
+                </ul>
+              </div>
+              
               <button className={designSystem.components.button.primary}>
                 파일 선택
               </button>
@@ -729,6 +965,18 @@ export default function LeadUploadPage() {
                     </p>
                   </div>
                 </div>
+                
+                {/* ✅ 파일 통계 요약 카드 추가 */}
+                <div className="grid grid-cols-2 gap-4 text-center">
+                  <div className="p-3 bg-accent-light rounded-lg">
+                    <div className="text-lg font-bold text-accent">{fileData?.totalRows || 0}</div>
+                    <div className="text-xs text-text-secondary">총 행 수</div>
+                  </div>
+                  <div className="p-3 bg-success-light rounded-lg">
+                    <div className="text-lg font-bold text-success">{fileData?.headers.length || 0}</div>
+                    <div className="text-xs text-text-secondary">칼럼 수</div>
+                  </div>
+                </div>
               </div>
 
               {/* 🚀 SmartTable로 미리보기 */}
@@ -747,7 +995,7 @@ export default function LeadUploadPage() {
               {fileData && fileData.data.length > 10 && (
                 <div className="mt-4 p-3 bg-bg-secondary rounded-lg text-center">
                   <p className="text-sm text-text-secondary">
-                    미리보기: 총 {fileData.data.length}개 행 중 10개만 표시됨
+                    📋 미리보기: 총 {fileData.data.length}개 행 중 처음 10개만 표시됨
                   </p>
                 </div>
               )}
@@ -1002,6 +1250,14 @@ export default function LeadUploadPage() {
                 </div>
                 <p className="text-sm text-text-secondary mt-2">{uploadProgress}% 완료</p>
               </div>
+              
+              {/* ✅ 업로드 단계별 설명 추가 */}
+              <div className="text-sm text-text-tertiary">
+                {uploadProgress < 10 && '배치 생성 중...'}
+                {uploadProgress >= 10 && uploadProgress < 30 && '데이터 변환 중...'}
+                {uploadProgress >= 30 && uploadProgress < 90 && '데이터베이스 업로드 중...'}
+                {uploadProgress >= 90 && '최종 처리 중...'}
+              </div>
             </div>
           </div>
         );
@@ -1025,6 +1281,26 @@ export default function LeadUploadPage() {
                 )}
               </p>
               
+              {/* ✅ 업로드 결과 상세 통계 추가 */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="p-3 bg-success-light rounded-lg">
+                  <div className="text-lg font-bold text-success">{duplicateResult?.uploadedCount || 0}</div>
+                  <div className="text-xs text-success">업로드 성공</div>
+                </div>
+                <div className="p-3 bg-error-light rounded-lg">
+                  <div className="text-lg font-bold text-error">{duplicateResult?.errorCount || 0}</div>
+                  <div className="text-xs text-error">업로드 실패</div>
+                </div>
+                <div className="p-3 bg-warning-light rounded-lg">
+                  <div className="text-lg font-bold text-warning">{duplicateResult?.internalDuplicates.length || 0}</div>
+                  <div className="text-xs text-warning">파일 내 중복</div>
+                </div>
+                <div className="p-3 bg-accent-light rounded-lg">
+                  <div className="text-lg font-bold text-accent">{duplicateResult?.dbDuplicates.length || 0}</div>
+                  <div className="text-xs text-accent">DB 중복</div>
+                </div>
+              </div>
+              
               <div className="flex gap-3 justify-center">
                 <button 
                   onClick={() => {
@@ -1039,8 +1315,11 @@ export default function LeadUploadPage() {
                 >
                   새 파일 업로드
                 </button>
-                <button className={designSystem.components.button.primary}>
-                  리드 관리로 이동
+                <button 
+                  onClick={() => window.location.href = '/admin/assignments'}
+                  className={designSystem.components.button.primary}
+                >
+                  리드 배정 관리
                 </button>
               </div>
             </div>

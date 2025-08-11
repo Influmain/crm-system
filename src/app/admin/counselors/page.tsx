@@ -6,6 +6,7 @@ import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
 import { supabase } from '@/lib/supabase';
 import SmartTable from '@/components/ui/SmartTable';
+import { useToastHelpers } from '@/components/ui/Toast'; // ✅ 토스트 시스템 추가
 import { 
   UserPlus, Users, CheckCircle, XCircle, RefreshCw, 
   Edit2, Trash2, Building2, Mail, Phone, BarChart3 
@@ -32,6 +33,8 @@ interface NewCounselorForm {
 }
 
 export default function CounselorsPage() {
+  const toast = useToastHelpers(); // ✅ 토스트 헬퍼 추가
+  
   // 📊 기본 상태
   const [counselors, setCounselors] = useState<Counselor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -210,7 +213,18 @@ export default function CounselorsPage() {
     } catch (error) {
       console.error('상담원 로드 실패:', error);
       const errorMessage = error?.message || '알 수 없는 오류';
-      alert(`상담원 목록을 불러오는 중 오류가 발생했습니다: ${errorMessage}`);
+      
+      // ✅ alert() → toast.error()로 변경
+      toast.error(
+        '데이터 로드 실패', 
+        `상담원 목록을 불러오는 중 오류가 발생했습니다: ${errorMessage}`,
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => loadCounselors()
+          }
+        }
+      );
     } finally {
       setLoading(false);
     }
@@ -234,7 +248,8 @@ export default function CounselorsPage() {
     e.preventDefault();
     
     if (!newCounselor.email || !newCounselor.full_name) {
-      alert('이메일과 이름은 필수입니다.');
+      // ✅ alert() → toast.warning()으로 변경
+      toast.warning('입력 오류', '이메일과 이름은 필수입니다.');
       return;
     }
 
@@ -256,14 +271,36 @@ export default function CounselorsPage() {
 
       if (error) throw error;
 
-      alert('상담원이 성공적으로 추가되었습니다.');
+      // ✅ alert() → toast.success()로 변경
+      toast.success(
+        '상담원 추가 완료', 
+        `${newCounselor.full_name}님이 성공적으로 추가되었습니다.`,
+        {
+          action: {
+            label: '목록 보기',
+            onClick: () => setShowAddForm(false)
+          }
+        }
+      );
+      
       setNewCounselor({ email: '', full_name: '', phone: '', department: '' });
       setShowAddForm(false);
       await loadCounselors();
 
     } catch (error) {
       console.error('상담원 추가 실패:', error);
-      alert('상담원 추가 중 오류가 발생했습니다.');
+      
+      // ✅ alert() → toast.error()로 변경
+      toast.error(
+        '상담원 추가 실패', 
+        error.message || '상담원 추가 중 오류가 발생했습니다.',
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => handleAddCounselor(e)
+          }
+        }
+      );
     } finally {
       setActionLoading(false);
     }
@@ -272,8 +309,31 @@ export default function CounselorsPage() {
   // 🔄 벌크 활성화/비활성화
   const handleBulkToggleActive = async (isActive: boolean) => {
     const action = isActive ? '활성화' : '비활성화';
-    if (!confirm(`선택된 ${selectedCounselors.length}명의 상담원을 ${action}하시겠습니까?`)) return;
+    const selectedNames = counselors
+      .filter(c => selectedCounselors.includes(c.id))
+      .map(c => c.full_name);
 
+    // ✅ confirm() → toast 확인 시스템으로 변경
+    const confirmAction = () => {
+      performBulkToggle(isActive, selectedNames);
+    };
+
+    toast.info(
+      `${action} 확인`,
+      `선택된 ${selectedCounselors.length}명의 상담원을 ${action}하시겠습니까?\n\n${selectedNames.join(', ')}`,
+      {
+        action: {
+          label: `${action} 실행`,
+          onClick: confirmAction
+        },
+        duration: 0 // 수동으로 닫을 때까지 유지
+      }
+    );
+  };
+
+  const performBulkToggle = async (isActive: boolean, selectedNames: string[]) => {
+    const action = isActive ? '활성화' : '비활성화';
+    
     setActionLoading(true);
     try {
       const { error } = await supabase
@@ -283,13 +343,35 @@ export default function CounselorsPage() {
 
       if (error) throw error;
 
-      alert(`${selectedCounselors.length}명의 상담원이 ${action}되었습니다.`);
+      // ✅ alert() → toast.success()로 변경
+      toast.success(
+        `${action} 완료`,
+        `${selectedCounselors.length}명의 상담원이 ${action}되었습니다.\n\n${selectedNames.join(', ')}`,
+        {
+          action: {
+            label: '목록 새로고침',
+            onClick: () => loadCounselors()
+          }
+        }
+      );
+      
       setSelectedCounselors([]);
       await loadCounselors();
 
     } catch (error) {
       console.error(`벌크 ${action} 실패:`, error);
-      alert(`상담원 ${action} 중 오류가 발생했습니다.`);
+      
+      // ✅ alert() → toast.error()로 변경
+      toast.error(
+        `${action} 실패`,
+        error.message || `상담원 ${action} 중 오류가 발생했습니다.`,
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => performBulkToggle(isActive, selectedNames)
+          }
+        }
+      );
     } finally {
       setActionLoading(false);
     }
@@ -329,7 +411,8 @@ export default function CounselorsPage() {
     if (bulkEditForm.department.trim()) updateData.department = bulkEditForm.department.trim();
 
     if (Object.keys(updateData).length === 0) {
-      alert('수정할 정보를 입력해주세요.');
+      // ✅ alert() → toast.warning()으로 변경
+      toast.warning('입력 오류', '수정할 정보를 입력해주세요.');
       return;
     }
 
@@ -343,7 +426,21 @@ export default function CounselorsPage() {
       if (error) throw error;
 
       const updatedFields = Object.keys(updateData).join(', ');
-      alert(`${selectedCounselors.length}명의 상담원 정보가 업데이트되었습니다.\n수정된 항목: ${updatedFields}`);
+      const selectedNames = counselors
+        .filter(c => selectedCounselors.includes(c.id))
+        .map(c => c.full_name);
+
+      // ✅ alert() → toast.success()로 변경
+      toast.success(
+        '정보 수정 완료',
+        `${selectedCounselors.length}명의 상담원 정보가 업데이트되었습니다.\n\n수정된 항목: ${updatedFields}\n대상: ${selectedNames.join(', ')}`,
+        {
+          action: {
+            label: '목록 보기',
+            onClick: () => setShowBulkEditModal(false)
+          }
+        }
+      );
       
       setShowBulkEditModal(false);
       setBulkEditForm({ full_name: '', email: '', phone: '', department: '' });
@@ -352,7 +449,18 @@ export default function CounselorsPage() {
 
     } catch (error) {
       console.error('벌크 수정 실패:', error);
-      alert('상담원 정보 수정 중 오류가 발생했습니다.');
+      
+      // ✅ alert() → toast.error()로 변경
+      toast.error(
+        '정보 수정 실패',
+        error.message || '상담원 정보 수정 중 오류가 발생했습니다.',
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => handleBulkEditSubmit(e)
+          }
+        }
+      );
     } finally {
       setActionLoading(false);
     }
@@ -364,12 +472,29 @@ export default function CounselorsPage() {
       .filter(c => selectedCounselors.includes(c.id))
       .map(c => c.full_name);
 
+    // ✅ confirm() → toast 확인 시스템으로 변경
     const confirmMessage = selectedCounselors.length === 1 
       ? `"${selectedCounselorNames[0]}" 상담원을 정말 삭제하시겠습니까?`
-      : `다음 ${selectedCounselors.length}명의 상담원을 정말 삭제하시겠습니까?\n\n${selectedCounselorNames.join(', ')}\n\n이 작업은 되돌릴 수 없습니다.`;
+      : `다음 ${selectedCounselors.length}명의 상담원을 정말 삭제하시겠습니까?\n\n${selectedCounselorNames.join(', ')}\n\n⚠️ 이 작업은 되돌릴 수 없습니다.`;
 
-    if (!confirm(confirmMessage)) return;
+    const confirmDelete = () => {
+      performBulkDelete(selectedCounselorNames);
+    };
 
+    toast.error(
+      '삭제 확인',
+      confirmMessage,
+      {
+        action: {
+          label: '삭제 실행',
+          onClick: confirmDelete
+        },
+        duration: 0 // 수동으로 닫을 때까지 유지
+      }
+    );
+  };
+
+  const performBulkDelete = async (selectedNames: string[]) => {
     setActionLoading(true);
     try {
       // 배정된 리드가 있는지 확인
@@ -385,7 +510,17 @@ export default function CounselorsPage() {
           .filter(c => assignedCounselors.has(c.id))
           .map(c => c.full_name);
         
-        alert(`다음 상담원들은 현재 배정된 리드를 가지고 있어 삭제할 수 없습니다:\n\n${assignedNames.join(', ')}\n\n먼저 리드를 재배정하거나 완료 처리해주세요.`);
+        // ✅ alert() → toast.warning()으로 변경
+        toast.warning(
+          '삭제 불가',
+          `다음 상담원들은 현재 배정된 리드를 가지고 있어 삭제할 수 없습니다:\n\n${assignedNames.join(', ')}\n\n먼저 리드를 재배정하거나 완료 처리해주세요.`,
+          {
+            action: {
+              label: '배정 관리로 이동',
+              onClick: () => window.location.href = '/admin/assignments'
+            }
+          }
+        );
         return;
       }
 
@@ -396,13 +531,35 @@ export default function CounselorsPage() {
 
       if (error) throw error;
 
-      alert(`${selectedCounselors.length}명의 상담원이 삭제되었습니다.`);
+      // ✅ alert() → toast.success()로 변경
+      toast.success(
+        '삭제 완료',
+        `${selectedCounselors.length}명의 상담원이 삭제되었습니다.\n\n삭제된 상담원: ${selectedNames.join(', ')}`,
+        {
+          action: {
+            label: '목록 새로고침',
+            onClick: () => loadCounselors()
+          }
+        }
+      );
+      
       setSelectedCounselors([]);
       await loadCounselors();
 
     } catch (error) {
       console.error('벌크 삭제 실패:', error);
-      alert('상담원 삭제 중 오류가 발생했습니다.');
+      
+      // ✅ alert() → toast.error()로 변경
+      toast.error(
+        '삭제 실패',
+        error.message || '상담원 삭제 중 오류가 발생했습니다.',
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => performBulkDelete(selectedNames)
+          }
+        }
+      );
     } finally {
       setActionLoading(false);
     }
@@ -551,7 +708,11 @@ export default function CounselorsPage() {
         <h3 className={designSystem.components.typography.h4}>상담원 목록</h3>
         <div className="flex gap-3">
           <button
-            onClick={loadCounselors}
+            onClick={() => {
+              loadCounselors();
+              // ✅ 새로고침 완료 토스트 추가
+              toast.info('새로고침', '상담원 목록이 업데이트되었습니다.');
+            }}
             disabled={loading}
             className={designSystem.components.button.secondary}
           >

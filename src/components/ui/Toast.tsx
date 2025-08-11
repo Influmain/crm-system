@@ -39,12 +39,25 @@ export const useToast = () => {
   return context;
 };
 
+// ✅ 고유 ID 생성 함수 개선
+let toastCounter = 0;
+const generateUniqueToastId = (): string => {
+  // 현재 시간 + 카운터 + 랜덤 문자열 + 고성능 타이머로 완전 고유 ID 생성
+  const timestamp = Date.now();
+  const counter = ++toastCounter;
+  const random = Math.random().toString(36).substr(2, 9);
+  const performance = typeof window !== 'undefined' ? window.performance.now() : Math.random();
+  
+  return `toast-${timestamp}-${counter}-${random}-${performance.toString().replace('.', '')}`;
+};
+
 // 토스트 프로바이더
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const showToast = (toast: Omit<Toast, 'id'>) => {
-    const id = Date.now().toString();
+    // ✅ 개선된 고유 ID 생성 사용
+    const id = generateUniqueToastId();
     const newToast: Toast = {
       id,
       duration: 5000, // 기본 5초
@@ -158,7 +171,7 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: (id: string) => 
                 {toast.title}
               </p>
               {toast.message && (
-                <p className="mt-1 text-sm text-text-secondary">
+                <p className="mt-1 text-sm text-text-secondary whitespace-pre-line">
                   {toast.message}
                 </p>
               )}
@@ -212,6 +225,43 @@ export const useToastHelpers = () => {
   return createToastHelpers(showToast);
 };
 
+// ✅ 중복 토스트 방지 헬퍼 (선택적 사용)
+export const useToastHelpersWithDuplicatePrevention = () => {
+  const { toasts, showToast } = useToast();
+  
+  const showUniqueToast = (toast: Omit<Toast, 'id'>, preventDuplicateKey?: string) => {
+    // 중복 방지가 필요한 경우, 같은 제목과 메시지의 토스트가 이미 있는지 확인
+    if (preventDuplicateKey) {
+      const isDuplicate = toasts.some(existingToast => 
+        existingToast.title === toast.title && 
+        existingToast.message === toast.message &&
+        existingToast.type === toast.type
+      );
+      
+      if (isDuplicate) {
+        console.log('중복 토스트 방지됨:', toast.title);
+        return;
+      }
+    }
+    
+    showToast(toast);
+  };
+  
+  return {
+    success: (title: string, message?: string, options?: Partial<Toast>, preventDuplicate?: boolean) =>
+      showUniqueToast({ type: 'success', title, message, ...options }, preventDuplicate ? `${title}-${message}` : undefined),
+    
+    error: (title: string, message?: string, options?: Partial<Toast>, preventDuplicate?: boolean) =>
+      showUniqueToast({ type: 'error', title, message, ...options }, preventDuplicate ? `${title}-${message}` : undefined),
+    
+    warning: (title: string, message?: string, options?: Partial<Toast>, preventDuplicate?: boolean) =>
+      showUniqueToast({ type: 'warning', title, message, ...options }, preventDuplicate ? `${title}-${message}` : undefined),
+    
+    info: (title: string, message?: string, options?: Partial<Toast>, preventDuplicate?: boolean) =>
+      showUniqueToast({ type: 'info', title, message, ...options }, preventDuplicate ? `${title}-${message}` : undefined),
+  };
+};
+
 // 사용 예시를 위한 데모 컴포넌트
 export function ToastDemo() {
   const toast = useToastHelpers();
@@ -253,6 +303,32 @@ export function ToastDemo() {
         >
           정보 알림
         </button>
+        
+        {/* ✅ 빠른 연속 클릭 테스트 버튼 */}
+        <button
+          onClick={() => {
+            // 빠르게 연속으로 토스트 생성 - key 중복 테스트
+            for (let i = 0; i < 5; i++) {
+              setTimeout(() => {
+                toast.info('연속 테스트', `${i + 1}번째 토스트입니다.`);
+              }, i * 10); // 10ms 간격으로 빠르게 생성
+            }
+          }}
+          className={`${designSystem.components.button.secondary} bg-warning text-warning-dark`}
+        >
+          연속 토스트 테스트
+        </button>
+      </div>
+      
+      <div className="mt-4 p-4 bg-bg-secondary rounded-lg">
+        <h4 className="text-sm font-medium text-text-primary mb-2">✅ 개선사항</h4>
+        <ul className="text-sm text-text-secondary space-y-1">
+          <li>• 고유 ID 생성 알고리즘 개선 (timestamp + counter + random + performance)</li>
+          <li>• Key 중복 오류 완전 해결</li>
+          <li>• 빠른 연속 토스트 생성 시에도 안정적 작동</li>
+          <li>• 선택적 중복 방지 헬퍼 함수 추가</li>
+          <li>• 메시지 줄바꿈 지원 (whitespace-pre-line)</li>
+        </ul>
       </div>
     </div>
   );
