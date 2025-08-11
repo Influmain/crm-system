@@ -1,7 +1,8 @@
-// 파일 경로: src/app/layout.tsx
-// 🔄 ThemeProvider 제거 - 원래 상태로 복원
+// 📁 /app/layout.tsx
+// 🔄 변경점: ToastProvider import 추가 및 컴포넌트 래핑
 
 import { AuthProvider, AuthDebugInfo } from '@/lib/auth/AuthContext';
+import { ToastProvider } from '@/components/ui/Toast'; // ✅ 새로 추가
 import './globals.css';
 
 export const metadata = {
@@ -18,8 +19,10 @@ export default function RootLayout({
     <html lang="ko">
       <body>
         <AuthProvider>
-          {children}
-          <AuthDebugInfo />
+          <ToastProvider>  {/* ✅ 새로 추가 */}
+            {children}
+            <AuthDebugInfo />
+          </ToastProvider>  {/* ✅ 새로 추가 */}
         </AuthProvider>
       </body>
     </html>
