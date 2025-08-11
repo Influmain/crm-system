@@ -1,10 +1,6 @@
-// 파일 경로: src/app/login/page.tsx
-// 📋 5단계: 로그인 페이지 생성
-
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
@@ -16,7 +12,6 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   
   const { signIn } = useAuth();
-  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,9 +27,8 @@ export default function LoginPage() {
       setError('이메일 또는 비밀번호가 올바르지 않습니다.');
       setLoading(false);
     } else {
-      console.log('로그인 성공, 대시보드로 이동');
-      // 로그인 성공 시 역할에 따라 리다이렉트
-      router.push('/dashboard');
+      console.log('로그인 성공, AuthContext가 자동으로 리다이렉트 처리');
+      // ✅ 리다이렉트는 AuthContext의 loadUserProfile에서 자동 처리
     }
   };
 
@@ -164,20 +158,3 @@ export default function LoginPage() {
     </div>
   );
 }
-
-/*
-📝 사용법:
-1. src/app/login/ 폴더 생성
-2. src/app/login/page.tsx 파일 생성 후 위 코드 복사
-3. 브라우저에서 http://localhost:3000/login 접속
-4. 테스트 계정 자동입력 버튼 클릭 후 로그인 시도
-
-🧪 테스트 시나리오:
-1. 테스트 계정 자동입력 → 로그인 시도 → 성공/실패 확인
-2. 잘못된 계정 입력 → 에러 메시지 확인
-3. 로그인 성공 시 /dashboard로 리다이렉트 확인
-
-📊 예상 결과:
-- 로그인 성공 시: Auth Debug에서 User/Profile 정보 표시
-- 로그인 실패 시: 에러 메시지 표시
-*/

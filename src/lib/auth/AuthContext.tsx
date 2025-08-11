@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  // 사용자 프로필 로드 함수
+  // ✅ 역할별 자동 리다이렉트가 포함된 사용자 프로필 로드 함수
   const loadUserProfile = async (userId: string) => {
     try {
       console.log('프로필 로드 시도:', userId);
@@ -55,7 +55,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       console.log('프로필 로드 성공:', data);
+      console.log('사용자 역할:', data.role);
       setUserProfile(data);
+
+      // ✅ 역할별 자동 리다이렉트 로직
+      const currentPath = window.location.pathname;
+      console.log('현재 경로:', currentPath);
+      
+      // 로그인 페이지나 홈페이지에서 로그인 성공 시에만 리다이렉트
+      if (currentPath === '/login' || currentPath === '/' || currentPath === '/dashboard') {
+        const targetPath = data.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard';
+        console.log('역할별 리다이렉트:', data.role, '→', targetPath);
+        
+        // 즉시 리다이렉트 (window.location.href 사용으로 확실한 이동)
+        setTimeout(() => {
+          window.location.href = targetPath;
+        }, 100);
+      }
+      
     } catch (error) {
       console.error('프로필 로드 예외:', error);
       setUserProfile(null);
@@ -78,6 +95,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       console.log('로그인 성공:', data.user?.email);
+      // ✅ 로그인 성공 시 프로필 로드 (자동 리다이렉트 포함)
+      if (data.user) {
+        await loadUserProfile(data.user.id);
+      }
+      
       return { error: null };
     } catch (error) {
       console.error('로그인 예외:', error);
@@ -281,11 +303,20 @@ export const useAuth = () => {
   return context;
 };
 
-// ✅ AuthDebugInfo 컴포넌트 (개발 환경용)
+// ✅ AuthDebugInfo 컴포넌트 (개발 환경용) - Hydration 오류 해결
 export function AuthDebugInfo() {
   const { user, userProfile, loading, signOut } = useAuth();
+  const [mounted, setMounted] = useState(false);
+  const [currentPath, setCurrentPath] = useState('');
   
-  if (process.env.NODE_ENV !== 'development') return null;
+  // ✅ 클라이언트에서만 마운트되도록 처리
+  useEffect(() => {
+    setMounted(true);
+    setCurrentPath(window.location.pathname);
+  }, []);
+  
+  // 개발 환경이 아니거나 아직 마운트되지 않았으면 렌더링하지 않음
+  if (process.env.NODE_ENV !== 'development' || !mounted) return null;
   
   return (
     <div className="fixed top-4 right-4 bg-black/90 text-white px-3 py-2 rounded-lg text-xs shadow-lg z-50 border border-gray-600">
@@ -302,7 +333,10 @@ export function AuthDebugInfo() {
               ✅ {userProfile.full_name}
             </div>
             <div className="text-xs text-gray-300">
-              {userProfile.role} • {userProfile.department}
+              {userProfile.role} • {userProfile.department || 'N/A'}
+            </div>
+            <div className="text-xs text-cyan-400">
+              Expected: {userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'}
             </div>
           </div>
         ) : user ? (
@@ -329,6 +363,18 @@ export function AuthDebugInfo() {
             <span className="text-gray-400">Email:</span> 
             <span className="text-blue-400 text-xs ml-1">
               {user?.email || 'null'}
+            </span>
+          </div>
+          <div>
+            <span className="text-gray-400">Role:</span> 
+            <span className="text-orange-400 text-xs ml-1">
+              {userProfile?.role || 'null'}
+            </span>
+          </div>
+          <div>
+            <span className="text-gray-400">Current Path:</span> 
+            <span className="text-purple-400 text-xs ml-1">
+              {currentPath || 'Loading...'}
             </span>
           </div>
           {userProfile && (
