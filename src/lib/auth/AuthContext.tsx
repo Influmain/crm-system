@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  // ✅ 역할별 자동 리다이렉트가 포함된 사용자 프로필 로드 함수
+  // ✅ 수정된 사용자 프로필 로드 함수 (무한 로딩 해결)
   const loadUserProfile = async (userId: string) => {
     try {
       console.log('프로필 로드 시도:', userId);
@@ -50,7 +50,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (error) {
         console.error('프로필 로드 오류:', error);
+        console.log('오류 상세:', error.code, error.message);
         setUserProfile(null);
+        setLoading(false); // 🚨 오류 시에도 로딩 완료!
         return;
       }
 
@@ -67,15 +69,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const targetPath = data.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard';
         console.log('역할별 리다이렉트:', data.role, '→', targetPath);
         
-        // 즉시 리다이렉트 (window.location.href 사용으로 확실한 이동)
+        // 🚨 로딩 완료 후 리다이렉트
+        setLoading(false);
+        
         setTimeout(() => {
-          window.location.href = targetPath;
-        }, 100);
+          if (window.location.pathname === currentPath) { // 중복 방지
+            window.location.href = targetPath;
+          }
+        }, 200);
+      } else {
+        // 🚨 다른 페이지에서는 단순히 로딩 완료
+        setLoading(false);
       }
       
     } catch (error) {
       console.error('프로필 로드 예외:', error);
       setUserProfile(null);
+      setLoading(false); // 🚨 예외 시에도 로딩 완료!
     }
   };
 
@@ -222,7 +232,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     console.log('🎉 슈퍼 로그아웃 프로세스 완료');
   };
 
-  // 인증 상태 변화 감지
+  // ✅ 수정된 인증 상태 변화 감지
   useEffect(() => {
     // 초기 세션 확인
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -231,9 +241,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(session?.user ?? null);
       
       if (session?.user) {
-        loadUserProfile(session.user.id);
+        loadUserProfile(session.user.id); // 여기서 setLoading(false) 처리됨
       } else {
-        setLoading(false);
+        setLoading(false); // 🚨 세션 없을 때 로딩 완료
       }
     });
 
@@ -242,14 +252,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async (event, session) => {
         console.log('인증 상태 변화:', event, session?.user?.email || '세션 없음');
         
-        // ✅ 로그아웃 이벤트 처리 강화
+        // 로그아웃 이벤트 처리
         if (event === 'SIGNED_OUT') {
           console.log('🚪 로그아웃 이벤트 감지 - 상태 완전 초기화');
           setUser(null);
           setUserProfile(null);
           setLoading(false);
           
-          // 추가 정리 작업
           setTimeout(() => {
             if (window.location.pathname !== '/login') {
               window.location.replace('/login');
@@ -261,12 +270,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
         
         if (session?.user) {
-          await loadUserProfile(session.user.id);
+          await loadUserProfile(session.user.id); // 여기서 setLoading(false) 처리됨
         } else {
           setUserProfile(null);
+          setLoading(false); // 🚨 세션 없을 때도 로딩 완료
         }
-        
-        setLoading(false);
       }
     );
 
