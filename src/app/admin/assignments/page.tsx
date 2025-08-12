@@ -1,6 +1,3 @@
-// 📁 /app/admin/assignments/page.tsx
-// 🔄 변경점: ToastProvider 제거, 컴포넌트 구조 간소화
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -9,12 +6,9 @@ import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
 import { supabase, leadAssignmentService, leadPoolService } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
-import { useToastHelpers } from '@/components/ui/Toast'; // ✅ 바로 사용 가능 (전역 제공)
+import { useToastHelpers } from '@/components/ui/Toast';
 import SmartTable from '@/components/ui/SmartTable';
 import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
-
-// ❌ 제거: ToastProvider import 및 래핑
-// ❌ 제거: 내부 컴포넌트 분리 구조
 
 interface Lead {
   id: string;
@@ -48,12 +42,11 @@ interface Assignment {
   counselor: Counselor;
 }
 
-// ✅ 간소화: 바로 메인 컴포넌트에서 토스트 사용
 export default function AssignmentsPage() {
   const { user } = useAuth();
-  const toast = useToastHelpers(); // ✅ 전역에서 제공되므로 바로 사용 가능
+  const toast = useToastHelpers();
   
-  // 📊 기본 데이터 상태
+  // 기본 데이터 상태
   const [availableLeads, setAvailableLeads] = useState<Lead[]>([]);
   const [counselors, setCounselors] = useState<Counselor[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -61,33 +54,50 @@ export default function AssignmentsPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'assign' | 'manage'>('assign');
   
-  // 📈 통계 상태 추가
+  // 통계 상태 추가
   const [totalLeadsInDB, setTotalLeadsInDB] = useState(0);
 
-  // 🎯 선택 관련 상태
+  // 선택 관련 상태
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
   const [selectedCounselor, setSelectedCounselor] = useState<string>('');
   
-  // 🔄 재배정 관련 상태
+  // 재배정 관련 상태
   const [selectedCounselorForView, setSelectedCounselorForView] = useState<string>('');
   const [counselorAssignments, setCounselorAssignments] = useState<Assignment[]>([]);
   const [selectedAssignments, setSelectedAssignments] = useState<string[]>([]);
   const [newCounselorForReassign, setNewCounselorForReassign] = useState<string>('');
   const [loadingCounselorData, setLoadingCounselorData] = useState(false);
 
-  // 📄 페이지네이션 상태
+  // 페이지네이션 상태
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const itemsPerPage = 50;
 
-  // 📄 재배정 페이지네이션 상태 추가
+  // 재배정 페이지네이션 상태 추가
   const [reassignPage, setReassignPage] = useState(1);
   const [reassignTotalCount, setReassignTotalCount] = useState(0);
   const [reassignTotalPages, setReassignTotalPages] = useState(0);
   const reassignItemsPerPage = 30;
 
-  // 🔍 리드 목록용 칼럼 정의
+  // 텍스트 하이라이트 함수
+  const highlightText = (text: string, query: string): React.ReactNode => {
+    if (!query.trim()) return text;
+    
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp('(' + escapedQuery + ')', 'gi');
+    const parts = text.split(regex);
+    
+    return parts.map((part, index) => 
+      regex.test(part) ? (
+        <span key={index} className="bg-accent-light text-accent font-medium rounded px-0.5">
+          {part}
+        </span>
+      ) : part
+    );
+  };
+
+  // 고객 목록용 칼럼 정의 (용어 업데이트)
   const leadColumns = [
     {
       key: 'phone',
@@ -105,7 +115,7 @@ export default function AssignmentsPage() {
     },
     {
       key: 'contact_name',
-      label: '접근정보',
+      label: '고객명',
       icon: businessIcons.contact,
       width: 'w-32',
       render: (value: string, record: Lead, searchQuery?: string) => (
@@ -116,7 +126,7 @@ export default function AssignmentsPage() {
     },
     {
       key: 'contact_script',
-      label: '관심사항',
+      label: '영업 상품',
       icon: businessIcons.script,
       width: 'w-32',
       render: (value: string, record: Lead, searchQuery?: string) => (
@@ -127,7 +137,7 @@ export default function AssignmentsPage() {
     },
     {
       key: 'data_source',
-      label: '출처',
+      label: 'DB 출처',
       icon: businessIcons.company,
       width: 'w-40',
       render: (value: string, record: Lead, searchQuery?: string) => (
@@ -157,7 +167,7 @@ export default function AssignmentsPage() {
     }
   ];
 
-  // 🎯 재배정용 칼럼 정의
+  // 재배정용 칼럼 정의 (용어 업데이트)
   const reassignmentColumns = [
     {
       key: 'lead_info',
@@ -167,7 +177,7 @@ export default function AssignmentsPage() {
       render: (value: any, record: Assignment) => (
         <div>
           <div className="font-medium text-text-primary">
-            {record.lead?.name || record.lead?.contact_name || '이름 없음'}
+            {record.lead?.name || record.lead?.contact_name || '고객명 없음'}
           </div>
           <div className="text-sm text-text-secondary flex items-center">
             <businessIcons.phone className="w-3 h-3 mr-1" />
@@ -178,7 +188,7 @@ export default function AssignmentsPage() {
     },
     {
       key: 'data_source',
-      label: '출처',
+      label: 'DB 출처',
       icon: businessIcons.company,
       width: 'w-32',
       render: (value: any, record: Assignment) => (
@@ -190,7 +200,7 @@ export default function AssignmentsPage() {
     },
     {
       key: 'contact_script',
-      label: '관심사항',
+      label: '영업 상품',
       icon: businessIcons.script,
       width: 'w-32',
       render: (value: any, record: Assignment) => (
@@ -218,24 +228,7 @@ export default function AssignmentsPage() {
     }
   ];
 
-  // 🎨 텍스트 하이라이트 함수
-  const highlightText = (text: string, query: string): React.ReactNode => {
-    if (!query.trim()) return text;
-    
-    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp('(' + escapedQuery + ')', 'gi');
-    const parts = text.split(regex);
-    
-    return parts.map((part, index) => 
-      regex.test(part) ? (
-        <span key={index} className="bg-accent-light text-accent font-medium rounded px-0.5">
-          {part}
-        </span>
-      ) : part
-    );
-  };
-
-  // 📊 전체 DB 리드 수 로드 함수
+  // 전체 DB 고객 수 로드 함수
   const loadTotalLeadsCount = async () => {
     try {
       const { count } = await supabase
@@ -244,11 +237,11 @@ export default function AssignmentsPage() {
       
       setTotalLeadsInDB(count || 0);
     } catch (error) {
-      console.error('전체 리드 수 조회 실패:', error);
+      console.error('전체 고객 수 조회 실패:', error);
     }
   };
 
-  // 📊 상담원 데이터 로드
+  // 영업사원 데이터 로드
   const loadCounselors = async () => {
     try {
       const { data: counselorsData, error: counselorsError } = await supabase
@@ -260,7 +253,7 @@ export default function AssignmentsPage() {
 
       if (counselorsError) throw counselorsError;
 
-      // 각 상담원의 배정 통계 조회
+      // 각 영업사원의 배정 통계 조회
       const counselorsWithStats = await Promise.all(
         (counselorsData || []).map(async (counselor) => {
           const { count: activeCount } = await supabase
@@ -280,15 +273,15 @@ export default function AssignmentsPage() {
 
       setCounselors(counselorsWithStats);
     } catch (error) {
-      console.error('상담원 로드 실패:', error);
-      toast.error('상담원 로드 실패', '상담원 목록을 불러오는 중 오류가 발생했습니다.');
+      console.error('영업사원 로드 실패:', error);
+      toast.error('영업사원 로드 실패', '영업사원 목록을 불러오는 중 오류가 발생했습니다.');
     }
   };
 
-  // 📊 사용 가능한 리드 로드
+  // 사용 가능한 고객 로드
   const loadAvailableLeads = async (page: number = 1, searchQuery: string = '') => {
     try {
-      console.log(`=== 리드 로드: 페이지 ${page} ===`);
+      console.log(`=== 고객 로드: 페이지 ${page} ===`);
       
       const startRange = (page - 1) * itemsPerPage;
       const endRange = startRange + itemsPerPage - 1;
@@ -346,15 +339,15 @@ export default function AssignmentsPage() {
       console.log(`페이지 ${page}: ${leadsWithBatch.length}개 로드, 전체: ${count}개`);
 
     } catch (error) {
-      console.error('리드 로드 실패:', error);
-      toast.error('리드 로드 실패', `리드를 불러오는 중 오류가 발생했습니다: ${error.message}`);
+      console.error('고객 로드 실패:', error);
+      toast.error('고객 로드 실패', `고객을 불러오는 중 오류가 발생했습니다: ${error.message}`);
     }
   };
 
-  // 📋 배정 실행
+  // 배정 실행
   const handleAssign = async () => {
     if (!selectedCounselor || selectedLeads.length === 0) {
-      toast.warning('선택 확인', '상담원과 리드를 선택해주세요.');
+      toast.warning('선택 확인', '영업사원과 고객을 선택해주세요.');
       return;
     }
 
@@ -371,10 +364,9 @@ export default function AssignmentsPage() {
         await leadAssignmentService.assign(leadId, selectedCounselor, user.id);
       }
 
-      // ✅ 성공 토스트
       toast.success(
-        '배정 완료', 
-        `${selectedLeads.length}개의 리드가 ${counselorName}에게 성공적으로 배정되었습니다.`,
+        '고객 배정 완료', 
+        `${selectedLeads.length}개의 고객이 ${counselorName} 영업사원에게 성공적으로 배정되었습니다.`,
         {
           action: {
             label: '배정 현황 보기',
@@ -393,7 +385,7 @@ export default function AssignmentsPage() {
     } catch (error) {
       console.error('배정 실패:', error);
       toast.error(
-        '배정 실패', 
+        '고객 배정 실패', 
         error.message || '알 수 없는 오류가 발생했습니다.',
         {
           action: {
@@ -407,7 +399,7 @@ export default function AssignmentsPage() {
     }
   };
 
-  // 🔄 특정 상담원의 배정 목록 로드 (페이지네이션 추가)
+  // 특정 영업사원의 배정 목록 로드 (페이지네이션 추가)
   const loadCounselorAssignments = async (counselorId: string, page: number = 1) => {
     if (!counselorId) {
       setCounselorAssignments([]);
@@ -418,12 +410,11 @@ export default function AssignmentsPage() {
 
     setLoadingCounselorData(true);
     try {
-      console.log(`=== 상담원 ${counselorId}의 배정 목록 로드 (페이지 ${page}) ===`);
+      console.log(`=== 영업사원 ${counselorId}의 배정 목록 로드 (페이지 ${page}) ===`);
       
       const startRange = (page - 1) * reassignItemsPerPage;
       const endRange = startRange + reassignItemsPerPage - 1;
       
-      // 1단계: 해당 상담원의 배정 목록 조회 (페이지네이션 적용)
       const { data: assignmentsData, error: assignmentsError, count } = await supabase
         .from('lead_assignments')
         .select('*', { count: 'exact' })
@@ -434,9 +425,8 @@ export default function AssignmentsPage() {
 
       if (assignmentsError) throw assignmentsError;
 
-      console.log(`상담원 배정 목록: ${assignmentsData?.length || 0}개 (페이지 ${page})`);
+      console.log(`영업사원 배정 목록: ${assignmentsData?.length || 0}개 (페이지 ${page})`);
 
-      // 2단계: 각 배정의 리드 정보 조회
       const enrichedAssignments = await Promise.all(
         (assignmentsData || []).map(async (assignment) => {
           const { data: leadData } = await supabase
@@ -463,21 +453,21 @@ export default function AssignmentsPage() {
       setReassignTotalCount(count || 0);
       setReassignTotalPages(Math.ceil((count || 0) / reassignItemsPerPage));
       setReassignPage(page);
-      setSelectedAssignments([]); // 선택 초기화
+      setSelectedAssignments([]);
 
     } catch (error) {
-      console.error('상담원 배정 목록 로드 실패:', error);
-      toast.error('배정 목록 로드 실패', '상담원의 배정 목록을 불러오는 중 오류가 발생했습니다.');
+      console.error('영업사원 배정 목록 로드 실패:', error);
+      toast.error('배정 목록 로드 실패', '영업사원의 배정 목록을 불러오는 중 오류가 발생했습니다.');
       setCounselorAssignments([]);
     } finally {
       setLoadingCounselorData(false);
     }
   };
 
-  // 🔄 재배정 실행
+  // 재배정 실행
   const handleReassign = async () => {
     if (!newCounselorForReassign || selectedAssignments.length === 0) {
-      toast.warning('선택 확인', '새로운 상담원과 재배정할 리드를 선택해주세요.');
+      toast.warning('선택 확인', '새로운 영업사원과 재배정할 고객을 선택해주세요.');
       return;
     }
 
@@ -491,27 +481,23 @@ export default function AssignmentsPage() {
       console.log(`=== 재배정 실행: ${selectedAssignments.length}개 ===`);
 
       for (const assignmentId of selectedAssignments) {
-        // 기존 배정 삭제
         await supabase
           .from('lead_assignments')
           .delete()
           .eq('id', assignmentId);
 
-        // 해당 배정의 리드 정보 조회
         const assignment = counselorAssignments.find(a => a.id === assignmentId);
         if (assignment) {
-          // 새로운 배정 생성
           await leadAssignmentService.assign(assignment.lead_id, newCounselorForReassign, user.id);
         }
       }
 
-      // ✅ 성공 토스트
       const oldCounselor = counselors.find(c => c.id === selectedCounselorForView)?.full_name;
       const newCounselor = counselors.find(c => c.id === newCounselorForReassign)?.full_name;
       
       toast.success(
-        '재배정 완료',
-        `${selectedAssignments.length}개 리드가 ${oldCounselor}에서 ${newCounselor}으로 재배정되었습니다.`,
+        '고객 재배정 완료',
+        `${selectedAssignments.length}개 고객이 ${oldCounselor}에서 ${newCounselor}으로 재배정되었습니다.`,
         {
           action: {
             label: '새로고침',
@@ -520,7 +506,6 @@ export default function AssignmentsPage() {
         }
       );
       
-      // 데이터 새로고침
       await loadCounselorAssignments(selectedCounselorForView, reassignPage);
       await loadCounselors();
       setSelectedAssignments([]);
@@ -529,7 +514,7 @@ export default function AssignmentsPage() {
     } catch (error) {
       console.error('재배정 실패:', error);
       toast.error(
-        '재배정 실패',
+        '고객 재배정 실패',
         error.message || '알 수 없는 오류가 발생했습니다.',
         {
           action: {
@@ -543,7 +528,7 @@ export default function AssignmentsPage() {
     }
   };
 
-  // 🎯 배정 선택/해제
+  // 배정 선택/해제
   const toggleAssignmentSelection = (assignmentId: string) => {
     setSelectedAssignments(prev => 
       prev.includes(assignmentId) 
@@ -552,7 +537,6 @@ export default function AssignmentsPage() {
     );
   };
 
-  // ✅ 전체 선택/해제 함수 추가
   const toggleAllAssignments = () => {
     if (selectedAssignments.length === counselorAssignments.length) {
       setSelectedAssignments([]);
@@ -597,12 +581,10 @@ export default function AssignmentsPage() {
     loadData();
   }, []);
 
-  // 탭 변경 시 해당 데이터 다시 로드
   useEffect(() => {
     if (activeTab === 'assign') {
       loadAvailableLeads(currentPage);
     }
-    // 배정관리 탭은 상담원 선택 시에만 로드
   }, [activeTab]);
 
   const PaginationComponent = ({ currentPage, totalPages, totalCount, onPageChange, itemsPerPage }: any) => {
@@ -668,9 +650,9 @@ export default function AssignmentsPage() {
   return (
     <AdminLayout>
       <div className="mb-8">
-        <h1 className={designSystem.components.typography.h2}>리드 배정 관리</h1>
+        <h1 className={designSystem.components.typography.h2}>고객 배정 관리</h1>
         <p className={designSystem.components.typography.bodySm}>
-          상담원에게 리드를 배정하고 관리합니다.
+          영업사원에게 고객을 배정하고 관리합니다.
         </p>
       </div>
 
@@ -711,7 +693,7 @@ export default function AssignmentsPage() {
             <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-text-secondary">전체 리드</p>
+                  <p className="text-sm text-text-secondary">전체 고객</p>
                   <p className="text-2xl font-bold text-text-primary">{totalLeadsInDB.toLocaleString()}</p>
                 </div>
                 <businessIcons.analytics className="w-8 h-8 text-text-tertiary" />
@@ -721,7 +703,7 @@ export default function AssignmentsPage() {
             <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-text-secondary">대기 리드</p>
+                  <p className="text-sm text-text-secondary">배정 대기</p>
                   <p className="text-2xl font-bold text-text-primary">{totalCount.toLocaleString()}</p>
                 </div>
                 <businessIcons.contact className="w-8 h-8 text-text-tertiary" />
@@ -731,7 +713,7 @@ export default function AssignmentsPage() {
             <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-text-secondary">활성 상담원</p>
+                  <p className="text-sm text-text-secondary">활성 영업사원</p>
                   <p className="text-2xl font-bold text-text-primary">{counselors.length}</p>
                 </div>
                 <businessIcons.team className="w-8 h-8 text-text-tertiary" />
@@ -741,7 +723,7 @@ export default function AssignmentsPage() {
             <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-text-secondary">선택된 리드</p>
+                  <p className="text-sm text-text-secondary">선택된 고객</p>
                   <p className="text-2xl font-bold text-accent">{selectedLeads.length}</p>
                 </div>
                 <businessIcons.success className="w-8 h-8 text-accent" />
@@ -751,7 +733,7 @@ export default function AssignmentsPage() {
             <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-text-secondary">배정된 리드</p>
+                  <p className="text-sm text-text-secondary">배정된 고객</p>
                   <p className="text-2xl font-bold text-text-primary">{counselors.reduce((sum, c) => sum + c.active_count, 0)}</p>
                 </div>
                 <businessIcons.assignment className="w-8 h-8 text-text-tertiary" />
@@ -764,7 +746,7 @@ export default function AssignmentsPage() {
             <div className="sticky top-0 bg-bg-primary border border-border-primary p-4 z-10 shadow-sm mb-6 rounded-lg">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-text-primary">
-                  {selectedLeads.length}개 리드 선택됨
+                  {selectedLeads.length}개 고객 선택됨
                 </span>
                 
                 <div className="flex items-center space-x-3">
@@ -773,10 +755,10 @@ export default function AssignmentsPage() {
                     onChange={(e) => setSelectedCounselor(e.target.value)}
                     className="px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary"
                   >
-                    <option value="">상담원 선택</option>
+                    <option value="">영업사원 선택</option>
                     {counselors.map(counselor => (
                       <option key={counselor.id} value={counselor.id}>
-                        {counselor.full_name} (활성: {counselor.active_count})
+                        {counselor.full_name} (활성: {counselor.active_count}개)
                       </option>
                     ))}
                   </select>
@@ -812,7 +794,7 @@ export default function AssignmentsPage() {
             </div>
           )}
 
-          {/* 리드 목록 테이블 */}
+          {/* 고객 목록 테이블 */}
           <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
             <SmartTable
               data={availableLeads}
@@ -820,8 +802,8 @@ export default function AssignmentsPage() {
               selectedItems={selectedLeads}
               onToggleSelection={toggleLeadSelection}
               getItemId={(lead) => lead.id}
-              searchPlaceholder="전화번호, 이름, 출처로 검색..."
-              emptyMessage="배정 가능한 리드가 없습니다."
+              searchPlaceholder="전화번호, 고객명, DB출처로 검색..."
+              emptyMessage="배정 가능한 고객이 없습니다."
               height="calc(100vh - 500px)"
             />
             
@@ -840,28 +822,28 @@ export default function AssignmentsPage() {
           <div className="mb-6">
             <h3 className={designSystem.components.typography.h4}>재배정 관리</h3>
             <p className={designSystem.components.typography.bodySm}>
-              상담원을 선택하여 해당 상담원의 리드를 다른 상담원에게 재배정할 수 있습니다.
+              영업사원을 선택하여 해당 영업사원의 고객을 다른 영업사원에게 재배정할 수 있습니다.
             </p>
           </div>
 
-          {/* 상담원 선택 */}
+          {/* 영업사원 선택 */}
           <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content, 'mb-6')}>
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-text-primary mb-2">
-                  상담원 선택
+                  영업사원 선택
                 </label>
                 <select
                   value={selectedCounselorForView}
                   onChange={(e) => {
                     setSelectedCounselorForView(e.target.value);
-                    setReassignPage(1); // 페이지 초기화
+                    setReassignPage(1);
                     loadCounselorAssignments(e.target.value, 1);
                   }}
                   className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary"
                   disabled={loadingCounselorData}
                 >
-                  <option value="">상담원을 선택하세요</option>
+                  <option value="">영업사원을 선택하세요</option>
                   {counselors.map(counselor => (
                     <option key={counselor.id} value={counselor.id}>
                       {counselor.full_name} ({counselor.active_count}개 배정)
@@ -890,7 +872,7 @@ export default function AssignmentsPage() {
             <div className="sticky top-0 bg-bg-primary border border-border-primary p-4 z-10 shadow-sm mb-6 rounded-lg">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-text-primary">
-                  {selectedAssignments.length}개 리드 선택됨
+                  {selectedAssignments.length}개 고객 선택됨
                 </span>
                 
                 <div className="flex items-center space-x-3">
@@ -899,7 +881,7 @@ export default function AssignmentsPage() {
                     onChange={(e) => setNewCounselorForReassign(e.target.value)}
                     className="px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary"
                   >
-                    <option value="">새 상담원 선택</option>
+                    <option value="">새 영업사원 선택</option>
                     {counselors
                       .filter(c => c.id !== selectedCounselorForView)
                       .map(counselor => (
@@ -940,13 +922,13 @@ export default function AssignmentsPage() {
             </div>
           )}
 
-          {/* 상담원별 리드 목록 */}
+          {/* 영업사원별 고객 목록 */}
           {selectedCounselorForView ? (
             <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
               {loadingCounselorData ? (
                 <div className="p-8 text-center">
                   <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-accent" />
-                  <p className="text-text-secondary">상담원의 배정 목록을 불러오는 중...</p>
+                  <p className="text-text-secondary">영업사원의 배정 목록을 불러오는 중...</p>
                 </div>
               ) : counselorAssignments.length > 0 ? (
                 <>
@@ -956,12 +938,11 @@ export default function AssignmentsPage() {
                     selectedItems={selectedAssignments}
                     onToggleSelection={toggleAssignmentSelection}
                     getItemId={(assignment) => assignment.id}
-                    searchPlaceholder="고객 이름, 전화번호로 검색..."
-                    emptyMessage="해당 상담원에게 배정된 리드가 없습니다."
+                    searchPlaceholder="고객명, 전화번호로 검색..."
+                    emptyMessage="해당 영업사원에게 배정된 고객이 없습니다."
                     height="calc(100vh - 500px)"
                   />
                   
-                  {/* 재배정 페이지네이션 */}
                   <PaginationComponent
                     currentPage={reassignPage}
                     totalPages={reassignTotalPages}
@@ -973,17 +954,17 @@ export default function AssignmentsPage() {
               ) : (
                 <div className="p-8 text-center">
                   <div className="text-6xl mb-4">📋</div>
-                  <p className="text-text-secondary mb-2">해당 상담원에게 배정된 리드가 없습니다.</p>
-                  <p className="text-sm text-text-tertiary">다른 상담원을 선택해보세요.</p>
+                  <p className="text-text-secondary mb-2">해당 영업사원에게 배정된 고객이 없습니다.</p>
+                  <p className="text-sm text-text-tertiary">다른 영업사원을 선택해보세요.</p>
                 </div>
               )}
             </div>
           ) : (
             <div className="bg-bg-primary border border-border-primary rounded-lg p-12 text-center">
               <div className="text-6xl mb-4">👆</div>
-              <h4 className={designSystem.components.typography.h5}>상담원을 선택하세요</h4>
+              <h4 className={designSystem.components.typography.h5}>영업사원을 선택하세요</h4>
               <p className="text-text-secondary mt-2">
-                위에서 상담원을 선택하면 해당 상담원의 배정된 리드 목록을 확인할 수 있습니다.
+                위에서 영업사원을 선택하면 해당 영업사원의 배정된 고객 목록을 확인할 수 있습니다.
               </p>
             </div>
           )}

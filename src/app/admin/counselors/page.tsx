@@ -6,7 +6,7 @@ import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
 import { supabase } from '@/lib/supabase';
 import SmartTable from '@/components/ui/SmartTable';
-import { useToastHelpers } from '@/components/ui/Toast'; // ✅ 토스트 시스템 추가
+import { useToastHelpers } from '@/components/ui/Toast';
 import { 
   UserPlus, Users, CheckCircle, XCircle, RefreshCw, 
   Edit2, Trash2, Building2, Mail, Phone, BarChart3 
@@ -33,15 +33,15 @@ interface NewCounselorForm {
 }
 
 export default function CounselorsPage() {
-  const toast = useToastHelpers(); // ✅ 토스트 헬퍼 추가
+  const toast = useToastHelpers();
   
-  // 📊 기본 상태
+  // 기본 상태
   const [counselors, setCounselors] = useState<Counselor[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   
-  // 🎯 선택 관련 상태  
+  // 선택 관련 상태  
   const [selectedCounselors, setSelectedCounselors] = useState<string[]>([]);
   const [showBulkEditModal, setShowBulkEditModal] = useState(false);
   const [bulkEditForm, setBulkEditForm] = useState({
@@ -51,7 +51,7 @@ export default function CounselorsPage() {
     department: ''
   });
 
-  // 새 상담원 폼 상태
+  // 새 영업사원 폼 상태
   const [newCounselor, setNewCounselor] = useState<NewCounselorForm>({
     email: '',
     full_name: '',
@@ -59,11 +59,11 @@ export default function CounselorsPage() {
     department: ''
   });
 
-  // 🎨 상담사 테이블 칼럼 정의
+  // 영업사원 테이블 칼럼 정의 (용어 업데이트)
   const counselorColumns = [
     {
       key: 'full_name',
-      label: '상담원 정보',
+      label: '영업사원 정보',
       icon: businessIcons.contact,
       width: 'w-48',
       render: (value: string, record: Counselor) => (
@@ -108,7 +108,7 @@ export default function CounselorsPage() {
     },
     {
       key: 'stats',
-      label: '배정 현황',
+      label: '고객 배정 현황',
       icon: BarChart3,
       width: 'w-40',
       sortable: false,
@@ -144,11 +144,11 @@ export default function CounselorsPage() {
     }
   ];
 
-  // 📊 데이터 로드
+  // 데이터 로드
   const loadCounselors = async () => {
     setLoading(true);
     try {
-      console.log('상담원 조회 시작...');
+      console.log('영업사원 조회 시작...');
       
       const { data: counselorsData, error: counselorsError } = await supabase
         .from('users')
@@ -157,19 +157,19 @@ export default function CounselorsPage() {
         .order('full_name', { ascending: true });
 
       if (counselorsError) {
-        console.error('상담원 조회 에러:', counselorsError);
-        throw new Error(`상담원 조회 실패: ${counselorsError.message}`);
+        console.error('영업사원 조회 에러:', counselorsError);
+        throw new Error(`영업사원 조회 실패: ${counselorsError.message}`);
       }
 
-      console.log('조회된 상담원 수:', counselorsData?.length || 0);
+      console.log('조회된 영업사원 수:', counselorsData?.length || 0);
       
       if (!counselorsData || counselorsData.length === 0) {
-        console.log('등록된 상담원이 없습니다.');
+        console.log('등록된 영업사원이 없습니다.');
         setCounselors([]);
         return;
       }
       
-      // 각 상담원별 배정 통계 계산
+      // 각 영업사원별 배정 통계 계산
       const counselorsWithStats = await Promise.all(
         counselorsData.map(async (counselor) => {
           try {
@@ -179,7 +179,7 @@ export default function CounselorsPage() {
               .eq('counselor_id', counselor.id);
 
             if (assignmentError) {
-              console.warn(`상담원 ${counselor.full_name} 배정 통계 조회 실패:`, assignmentError);
+              console.warn(`영업사원 ${counselor.full_name} 배정 통계 조회 실패:`, assignmentError);
               return {
                 ...counselor,
                 assigned_count: 0,
@@ -196,7 +196,7 @@ export default function CounselorsPage() {
               completed_count: assignmentCounts.filter(a => a.status === 'completed').length
             };
           } catch (error) {
-            console.warn(`상담원 ${counselor.full_name} 통계 처리 실패:`, error);
+            console.warn(`영업사원 ${counselor.full_name} 통계 처리 실패:`, error);
             return {
               ...counselor,
               assigned_count: 0,
@@ -207,17 +207,16 @@ export default function CounselorsPage() {
         })
       );
 
-      console.log('최종 상담원 데이터:', counselorsWithStats);
+      console.log('최종 영업사원 데이터:', counselorsWithStats);
       setCounselors(counselorsWithStats);
       
     } catch (error) {
-      console.error('상담원 로드 실패:', error);
+      console.error('영업사원 로드 실패:', error);
       const errorMessage = error?.message || '알 수 없는 오류';
       
-      // ✅ alert() → toast.error()로 변경
       toast.error(
         '데이터 로드 실패', 
-        `상담원 목록을 불러오는 중 오류가 발생했습니다: ${errorMessage}`,
+        `영업사원 목록을 불러오는 중 오류가 발생했습니다: ${errorMessage}`,
         {
           action: {
             label: '다시 시도',
@@ -234,7 +233,7 @@ export default function CounselorsPage() {
     loadCounselors();
   }, []);
 
-  // 🎯 상담원 선택/해제
+  // 영업사원 선택/해제
   const toggleCounselorSelection = (counselorId: string) => {
     setSelectedCounselors(prev => 
       prev.includes(counselorId) 
@@ -243,12 +242,11 @@ export default function CounselorsPage() {
     );
   };
 
-  // 📋 새 상담원 추가
+  // 새 영업사원 추가
   const handleAddCounselor = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!newCounselor.email || !newCounselor.full_name) {
-      // ✅ alert() → toast.warning()으로 변경
       toast.warning('입력 오류', '이메일과 이름은 필수입니다.');
       return;
     }
@@ -271,9 +269,8 @@ export default function CounselorsPage() {
 
       if (error) throw error;
 
-      // ✅ alert() → toast.success()로 변경
       toast.success(
-        '상담원 추가 완료', 
+        '영업사원 추가 완료', 
         `${newCounselor.full_name}님이 성공적으로 추가되었습니다.`,
         {
           action: {
@@ -288,12 +285,11 @@ export default function CounselorsPage() {
       await loadCounselors();
 
     } catch (error) {
-      console.error('상담원 추가 실패:', error);
+      console.error('영업사원 추가 실패:', error);
       
-      // ✅ alert() → toast.error()로 변경
       toast.error(
-        '상담원 추가 실패', 
-        error.message || '상담원 추가 중 오류가 발생했습니다.',
+        '영업사원 추가 실패', 
+        error.message || '영업사원 추가 중 오류가 발생했습니다.',
         {
           action: {
             label: '다시 시도',
@@ -306,27 +302,26 @@ export default function CounselorsPage() {
     }
   };
 
-  // 🔄 벌크 활성화/비활성화
+  // 벌크 활성화/비활성화
   const handleBulkToggleActive = async (isActive: boolean) => {
     const action = isActive ? '활성화' : '비활성화';
     const selectedNames = counselors
       .filter(c => selectedCounselors.includes(c.id))
       .map(c => c.full_name);
 
-    // ✅ confirm() → toast 확인 시스템으로 변경
     const confirmAction = () => {
       performBulkToggle(isActive, selectedNames);
     };
 
     toast.info(
       `${action} 확인`,
-      `선택된 ${selectedCounselors.length}명의 상담원을 ${action}하시겠습니까?\n\n${selectedNames.join(', ')}`,
+      `선택된 ${selectedCounselors.length}명의 영업사원을 ${action}하시겠습니까?\n\n${selectedNames.join(', ')}`,
       {
         action: {
           label: `${action} 실행`,
           onClick: confirmAction
         },
-        duration: 0 // 수동으로 닫을 때까지 유지
+        duration: 0
       }
     );
   };
@@ -343,10 +338,9 @@ export default function CounselorsPage() {
 
       if (error) throw error;
 
-      // ✅ alert() → toast.success()로 변경
       toast.success(
         `${action} 완료`,
-        `${selectedCounselors.length}명의 상담원이 ${action}되었습니다.\n\n${selectedNames.join(', ')}`,
+        `${selectedCounselors.length}명의 영업사원이 ${action}되었습니다.\n\n${selectedNames.join(', ')}`,
         {
           action: {
             label: '목록 새로고침',
@@ -361,10 +355,9 @@ export default function CounselorsPage() {
     } catch (error) {
       console.error(`벌크 ${action} 실패:`, error);
       
-      // ✅ alert() → toast.error()로 변경
       toast.error(
         `${action} 실패`,
-        error.message || `상담원 ${action} 중 오류가 발생했습니다.`,
+        error.message || `영업사원 ${action} 중 오류가 발생했습니다.`,
         {
           action: {
             label: '다시 시도',
@@ -377,7 +370,7 @@ export default function CounselorsPage() {
     }
   };
 
-  // ✏️ 벌크 수정
+  // 벌크 수정
   const handleBulkEdit = () => {
     if (selectedCounselors.length === 1) {
       const selectedCounselor = counselors.find(c => c.id === selectedCounselors[0]);
@@ -400,7 +393,7 @@ export default function CounselorsPage() {
     setShowBulkEditModal(true);
   };
 
-  // 💾 벌크 수정 실행
+  // 벌크 수정 실행
   const handleBulkEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -411,7 +404,6 @@ export default function CounselorsPage() {
     if (bulkEditForm.department.trim()) updateData.department = bulkEditForm.department.trim();
 
     if (Object.keys(updateData).length === 0) {
-      // ✅ alert() → toast.warning()으로 변경
       toast.warning('입력 오류', '수정할 정보를 입력해주세요.');
       return;
     }
@@ -430,10 +422,9 @@ export default function CounselorsPage() {
         .filter(c => selectedCounselors.includes(c.id))
         .map(c => c.full_name);
 
-      // ✅ alert() → toast.success()로 변경
       toast.success(
         '정보 수정 완료',
-        `${selectedCounselors.length}명의 상담원 정보가 업데이트되었습니다.\n\n수정된 항목: ${updatedFields}\n대상: ${selectedNames.join(', ')}`,
+        `${selectedCounselors.length}명의 영업사원 정보가 업데이트되었습니다.\n\n수정된 항목: ${updatedFields}\n대상: ${selectedNames.join(', ')}`,
         {
           action: {
             label: '목록 보기',
@@ -450,10 +441,9 @@ export default function CounselorsPage() {
     } catch (error) {
       console.error('벌크 수정 실패:', error);
       
-      // ✅ alert() → toast.error()로 변경
       toast.error(
         '정보 수정 실패',
-        error.message || '상담원 정보 수정 중 오류가 발생했습니다.',
+        error.message || '영업사원 정보 수정 중 오류가 발생했습니다.',
         {
           action: {
             label: '다시 시도',
@@ -466,16 +456,15 @@ export default function CounselorsPage() {
     }
   };
 
-  // ❌ 벌크 삭제  
+  // 벌크 삭제  
   const handleBulkDelete = async () => {
     const selectedCounselorNames = counselors
       .filter(c => selectedCounselors.includes(c.id))
       .map(c => c.full_name);
 
-    // ✅ confirm() → toast 확인 시스템으로 변경
     const confirmMessage = selectedCounselors.length === 1 
-      ? `"${selectedCounselorNames[0]}" 상담원을 정말 삭제하시겠습니까?`
-      : `다음 ${selectedCounselors.length}명의 상담원을 정말 삭제하시겠습니까?\n\n${selectedCounselorNames.join(', ')}\n\n⚠️ 이 작업은 되돌릴 수 없습니다.`;
+      ? `"${selectedCounselorNames[0]}" 영업사원을 정말 삭제하시겠습니까?`
+      : `다음 ${selectedCounselors.length}명의 영업사원을 정말 삭제하시겠습니까?\n\n${selectedCounselorNames.join(', ')}\n\n⚠️ 이 작업은 되돌릴 수 없습니다.`;
 
     const confirmDelete = () => {
       performBulkDelete(selectedCounselorNames);
@@ -489,7 +478,7 @@ export default function CounselorsPage() {
           label: '삭제 실행',
           onClick: confirmDelete
         },
-        duration: 0 // 수동으로 닫을 때까지 유지
+        duration: 0
       }
     );
   };
@@ -497,7 +486,7 @@ export default function CounselorsPage() {
   const performBulkDelete = async (selectedNames: string[]) => {
     setActionLoading(true);
     try {
-      // 배정된 리드가 있는지 확인
+      // 배정된 고객이 있는지 확인
       const { data: assignments } = await supabase
         .from('lead_assignments')
         .select('counselor_id, lead_id')
@@ -510,10 +499,9 @@ export default function CounselorsPage() {
           .filter(c => assignedCounselors.has(c.id))
           .map(c => c.full_name);
         
-        // ✅ alert() → toast.warning()으로 변경
         toast.warning(
           '삭제 불가',
-          `다음 상담원들은 현재 배정된 리드를 가지고 있어 삭제할 수 없습니다:\n\n${assignedNames.join(', ')}\n\n먼저 리드를 재배정하거나 완료 처리해주세요.`,
+          `다음 영업사원들은 현재 배정된 고객을 가지고 있어 삭제할 수 없습니다:\n\n${assignedNames.join(', ')}\n\n먼저 고객을 재배정하거나 완료 처리해주세요.`,
           {
             action: {
               label: '배정 관리로 이동',
@@ -531,10 +519,9 @@ export default function CounselorsPage() {
 
       if (error) throw error;
 
-      // ✅ alert() → toast.success()로 변경
       toast.success(
         '삭제 완료',
-        `${selectedCounselors.length}명의 상담원이 삭제되었습니다.\n\n삭제된 상담원: ${selectedNames.join(', ')}`,
+        `${selectedCounselors.length}명의 영업사원이 삭제되었습니다.\n\n삭제된 영업사원: ${selectedNames.join(', ')}`,
         {
           action: {
             label: '목록 새로고침',
@@ -549,10 +536,9 @@ export default function CounselorsPage() {
     } catch (error) {
       console.error('벌크 삭제 실패:', error);
       
-      // ✅ alert() → toast.error()로 변경
       toast.error(
         '삭제 실패',
-        error.message || '상담원 삭제 중 오류가 발생했습니다.',
+        error.message || '영업사원 삭제 중 오류가 발생했습니다.',
         {
           action: {
             label: '다시 시도',
@@ -571,7 +557,7 @@ export default function CounselorsPage() {
         <div className="flex items-center justify-center min-h-96">
           <div className="text-center">
             <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-accent" />
-            <p className={designSystem.components.typography.body}>상담원 목록을 불러오는 중...</p>
+            <p className={designSystem.components.typography.body}>영업사원 목록을 불러오는 중...</p>
           </div>
         </div>
       </AdminLayout>
@@ -581,9 +567,9 @@ export default function CounselorsPage() {
   return (
     <AdminLayout>
       <div className="mb-8">
-        <h1 className={designSystem.components.typography.h2}>상담원 관리</h1>
+        <h1 className={designSystem.components.typography.h2}>영업사원 관리</h1>
         <p className={designSystem.components.typography.bodySm}>
-          상담원을 추가하고 관리합니다.
+          영업사원을 추가하고 관리합니다.
         </p>
       </div>
 
@@ -592,7 +578,7 @@ export default function CounselorsPage() {
         <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-text-secondary">전체 상담원</p>
+              <p className="text-sm text-text-secondary">전체 영업사원</p>
               <p className="text-2xl font-bold text-text-primary">{counselors.length}</p>
             </div>
             <Users className="w-8 h-8 text-accent" />
@@ -602,7 +588,7 @@ export default function CounselorsPage() {
         <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-text-secondary">활성 상담원</p>
+              <p className="text-sm text-text-secondary">활성 영업사원</p>
               <p className="text-2xl font-bold text-success">
                 {counselors.filter(c => c.is_active).length}
               </p>
@@ -614,7 +600,7 @@ export default function CounselorsPage() {
         <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-text-secondary">총 배정</p>
+              <p className="text-sm text-text-secondary">총 배정 고객</p>
               <p className="text-2xl font-bold text-warning">
                 {counselors.reduce((sum, c) => sum + (c.assigned_count || 0), 0)}
               </p>
@@ -626,7 +612,7 @@ export default function CounselorsPage() {
         <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-text-secondary">총 완료</p>
+              <p className="text-sm text-text-secondary">총 완료 건수</p>
               <p className="text-2xl font-bold text-accent">
                 {counselors.reduce((sum, c) => sum + (c.completed_count || 0), 0)}
               </p>
@@ -705,13 +691,12 @@ export default function CounselorsPage() {
 
       {/* 상단 액션 바 */}
       <div className="flex justify-between items-center mb-6">
-        <h3 className={designSystem.components.typography.h4}>상담원 목록</h3>
+        <h3 className={designSystem.components.typography.h4}>영업사원 목록</h3>
         <div className="flex gap-3">
           <button
             onClick={() => {
               loadCounselors();
-              // ✅ 새로고침 완료 토스트 추가
-              toast.info('새로고침', '상담원 목록이 업데이트되었습니다.');
+              toast.info('새로고침', '영업사원 목록이 업데이트되었습니다.');
             }}
             disabled={loading}
             className={designSystem.components.button.secondary}
@@ -724,15 +709,15 @@ export default function CounselorsPage() {
             className={designSystem.components.button.primary}
           >
             <UserPlus className="w-4 h-4 mr-2" />
-            상담원 추가
+            영업사원 추가
           </button>
         </div>
       </div>
 
-      {/* 상담원 추가 폼 */}
+      {/* 영업사원 추가 폼 */}
       {showAddForm && (
         <div className={designSystem.utils.cn(designSystem.components.card.base, "p-6 mb-6 bg-accent-light")}>
-          <h4 className="text-lg font-medium mb-4 text-text-primary">새 상담원 추가</h4>
+          <h4 className="text-lg font-medium mb-4 text-text-primary">새 영업사원 추가</h4>
           <form onSubmit={handleAddCounselor} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2 text-text-primary">이메일 *</label>
@@ -741,7 +726,7 @@ export default function CounselorsPage() {
                 value={newCounselor.email}
                 onChange={(e) => setNewCounselor(prev => ({ ...prev, email: e.target.value }))}
                 className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-                placeholder="counselor@company.com"
+                placeholder="salesperson@company.com"
                 required
               />
             </div>
@@ -808,7 +793,7 @@ export default function CounselorsPage() {
         </div>
       )}
 
-      {/* 🚀 SmartTable로 간소화된 상담원 목록 */}
+      {/* SmartTable로 간소화된 영업사원 목록 */}
       <SmartTable
         data={counselors}
         columns={counselorColumns}
@@ -816,7 +801,7 @@ export default function CounselorsPage() {
         onToggleSelection={toggleCounselorSelection}
         getItemId={(counselor) => counselor.id}
         searchPlaceholder="이름, 이메일, 부서로 검색..."
-        emptyMessage="등록된 상담원이 없습니다."
+        emptyMessage="등록된 영업사원이 없습니다."
         height="50vh"
         minHeight="300px"
         maxHeight="600px"
@@ -827,7 +812,7 @@ export default function CounselorsPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-bg-primary border border-border-primary rounded-lg p-6 w-full max-w-md mx-4">
             <h3 className="text-lg font-medium mb-4 text-text-primary">
-              {selectedCounselors.length === 1 ? '상담원 정보 수정' : `${selectedCounselors.length}명 일괄 수정`}
+              {selectedCounselors.length === 1 ? '영업사원 정보 수정' : `${selectedCounselors.length}명 일괄 수정`}
             </h3>
             
             <form onSubmit={handleBulkEditSubmit} className="space-y-4">

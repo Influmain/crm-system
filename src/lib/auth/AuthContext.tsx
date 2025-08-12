@@ -35,12 +35,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasRedirected, setHasRedirected] = useState(false); // 🚨 리다이렉트 중복 방지
   const router = useRouter();
 
-  // ✅ 수정된 사용자 프로필 로드 함수 (무한 로딩 해결)
-  const loadUserProfile = async (userId: string) => {
+  // ✅ 개선된 사용자 프로필 로드 함수 (무한 리다이렉트 방지)
+  const loadUserProfile = async (userId: string, isFromSignIn: boolean = false) => {
     try {
-      console.log('프로필 로드 시도:', userId);
+      console.log('프로필 로드 시도:', userId, '로그인에서 호출:', isFromSignIn);
       
       const { data, error } = await supabase
         .from('users')
@@ -52,7 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('프로필 로드 오류:', error);
         console.log('오류 상세:', error.code, error.message);
         setUserProfile(null);
-        setLoading(false); // 🚨 오류 시에도 로딩 완료!
+        setLoading(false);
         return;
       }
 
@@ -60,36 +61,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('사용자 역할:', data.role);
       setUserProfile(data);
 
-      // ✅ 역할별 자동 리다이렉트 로직
+      // ✅ 리다이렉트 로직 개선 (무한 루프 방지)
       const currentPath = window.location.pathname;
-      console.log('현재 경로:', currentPath);
+      console.log('현재 경로:', currentPath, '리다이렉트 완료:', hasRedirected);
       
-      // 로그인 페이지나 홈페이지에서 로그인 성공 시에만 리다이렉트
-      if (currentPath === '/login' || currentPath === '/' || currentPath === '/dashboard') {
+      // 🚨 리다이렉트 조건 개선
+      const shouldRedirect = 
+        !hasRedirected && // 아직 리다이렉트 안 함
+        (
+          isFromSignIn || // 로그인에서 호출됨
+          currentPath === '/login' || // 로그인 페이지
+          currentPath === '/' || // 홈페이지
+          currentPath === '/dashboard' // 잘못된 대시보드 경로
+        );
+
+      if (shouldRedirect) {
         const targetPath = data.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard';
-        console.log('역할별 리다이렉트:', data.role, '→', targetPath);
+        console.log('리다이렉트 실행:', data.role, '→', targetPath);
         
-        // 🚨 로딩 완료 후 리다이렉트
+        // 🚨 리다이렉트 플래그 설정 (중복 방지)
+        setHasRedirected(true);
         setLoading(false);
         
         setTimeout(() => {
-          if (window.location.pathname === currentPath) { // 중복 방지
+          if (window.location.pathname === currentPath) {
+            console.log('실제 리다이렉트 실행:', targetPath);
             window.location.href = targetPath;
           }
-        }, 200);
+        }, 100);
       } else {
-        // 🚨 다른 페이지에서는 단순히 로딩 완료
+        console.log('리다이렉트 조건 불충족 - 현재 페이지 유지');
         setLoading(false);
       }
       
     } catch (error) {
       console.error('프로필 로드 예외:', error);
       setUserProfile(null);
-      setLoading(false); // 🚨 예외 시에도 로딩 완료!
+      setLoading(false);
     }
   };
 
-  // 로그인 함수
+  // ✅ 개선된 로그인 함수
   const signIn = async (email: string, password: string) => {
     try {
       console.log('로그인 시도:', email);
@@ -105,9 +117,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       console.log('로그인 성공:', data.user?.email);
-      // ✅ 로그인 성공 시 프로필 로드 (자동 리다이렉트 포함)
+      
+      // 🚨 로그인 성공 시에만 리다이렉트 플래그 초기화
+      setHasRedirected(false);
+      
       if (data.user) {
-        await loadUserProfile(data.user.id);
+        await loadUserProfile(data.user.id, true); // isFromSignIn = true
       }
       
       return { error: null };
@@ -117,146 +132,97 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // ✅ 슈퍼 강력한 로그아웃 함수
+  // ✅ 개선된 로그아웃 함수
   const signOut = async () => {
     console.log('🚀 슈퍼 로그아웃 프로세스 시작');
     
-    // 1. 즉시 로딩 상태 변경 및 상태 초기화
+    // 1. 즉시 상태 초기화
     setLoading(true);
     setUser(null);
     setUserProfile(null);
+    setHasRedirected(false); // 🚨 리다이렉트 플래그 초기화
     
     try {
-      // 2. 모든 Supabase 세션 강제 종료 (여러 방법 시도)
-      console.log('🔐 Supabase 다중 로그아웃 시도');
+      // Supabase 세션 종료
+      await supabase.auth.signOut({ scope: 'local' });
+      await supabase.auth.signOut({ scope: 'global' });
       
-      // 방법 1: 로컬 세션만 종료
-      try {
-        await supabase.auth.signOut({ scope: 'local' });
-        console.log('✅ 로컬 세션 종료 성공');
-      } catch (e) {
-        console.warn('⚠️ 로컬 세션 종료 실패:', e);
-      }
-      
-      // 방법 2: 전체 세션 종료
-      try {
-        await supabase.auth.signOut({ scope: 'global' });
-        console.log('✅ 전체 세션 종료 성공');
-      } catch (e) {
-        console.warn('⚠️ 전체 세션 종료 실패:', e);
-      }
-      
-      // 방법 3: 세션 강제 무효화
-      try {
-        await supabase.auth.refreshSession({ refresh_token: null });
-        console.log('✅ 세션 강제 무효화 성공');
-      } catch (e) {
-        console.warn('⚠️ 세션 무효화 실패:', e);
-      }
-      
-    } catch (error) {
-      console.warn('⚠️ Supabase 로그아웃 전체 실패:', error);
-    }
-    
-    // 3. 브라우저 저장소 완전 정리 (더 강력한 버전)
-    try {
-      console.log('🗑️ 브라우저 저장소 완전 정리');
-      
-      // LocalStorage 모든 키 확인 후 정리
-      const allKeys = Object.keys(localStorage);
-      allKeys.forEach(key => {
-        if (key.includes('supabase') || 
-            key.includes('auth') || 
-            key.includes('session') ||
-            key.includes('token') ||
-            key.includes('user')) {
-          console.log(`🗑️ 삭제할 키: ${key}`);
-          localStorage.removeItem(key);
-        }
-      });
-      
-      // SessionStorage 완전 정리
+      // 브라우저 저장소 완전 정리
+      localStorage.clear();
       sessionStorage.clear();
       
-      // IndexedDB 정리 시도
+      // IndexedDB 정리
       try {
         const databases = await indexedDB.databases();
         databases.forEach(db => {
           if (db.name && (db.name.includes('supabase') || db.name.includes('auth'))) {
             indexedDB.deleteDatabase(db.name);
-            console.log(`🗑️ IndexedDB 삭제: ${db.name}`);
           }
         });
       } catch (idbError) {
-        console.warn('⚠️ IndexedDB 정리 실패:', idbError);
+        console.warn('IndexedDB 정리 실패:', idbError);
       }
       
-      // 모든 쿠키 강제 삭제
+      // 쿠키 정리
       document.cookie.split(";").forEach(cookie => {
         const eqPos = cookie.indexOf("=");
         const name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
-        
-        // 다양한 도메인/경로로 쿠키 삭제
-        const deleteCookie = (domain = '', path = '/') => {
-          document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=${path};domain=${domain}`;
-        };
-        
-        deleteCookie(); // 기본
-        deleteCookie('', '/'); // 루트 경로
-        deleteCookie(window.location.hostname, '/'); // 현재 도메인
-        deleteCookie('localhost', '/'); // localhost
-        
-        console.log(`🗑️ 쿠키 삭제 시도: ${name}`);
+        document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
       });
       
-      console.log('✅ 저장소 완전 정리 완료');
-      
-    } catch (storageError) {
-      console.error('❌ 저장소 정리 중 오류:', storageError);
+    } catch (error) {
+      console.warn('로그아웃 중 오류:', error);
     }
     
-    // 4. React 상태 완전 초기화
-    console.log('🔄 React 상태 완전 초기화');
-    setUser(null);
-    setUserProfile(null);
     setLoading(false);
     
-    // 5. 페이지 완전 새로고침으로 리다이렉트 (가장 확실한 방법)
-    console.log('🔄 페이지 완전 새로고침으로 로그인 페이지 이동');
-    
     setTimeout(() => {
-      // window.location.replace는 뒤로 가기 방지
       window.location.replace('/login');
-    }, 300);
+    }, 200);
     
-    console.log('🎉 슈퍼 로그아웃 프로세스 완료');
+    console.log('🎉 슈퍼 로그아웃 완료');
   };
 
-  // ✅ 수정된 인증 상태 변화 감지
+  // ✅ 개선된 인증 상태 변화 감지
   useEffect(() => {
+    let mounted = true;
+    
     // 초기 세션 확인
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
+      
       console.log('초기 세션 확인:', session?.user?.email || '세션 없음');
       
       setUser(session?.user ?? null);
       
       if (session?.user) {
-        loadUserProfile(session.user.id); // 여기서 setLoading(false) 처리됨
+        // 🚨 초기 로드 시에는 isFromSignIn = false
+        loadUserProfile(session.user.id, false);
       } else {
-        setLoading(false); // 🚨 세션 없을 때 로딩 완료
+        // 🚨 세션 없는데 대시보드 페이지에 있으면 즉시 로그인 페이지로
+        const currentPath = window.location.pathname;
+        if (currentPath.includes('/admin/') || currentPath.includes('/counselor/')) {
+          console.log('⚠️ 로그아웃 상태인데 보호된 페이지 접근 → 로그인 페이지로 이동');
+          window.location.href = '/login';
+          return;
+        }
+        setLoading(false);
       }
     });
 
     // 인증 상태 변화 리스너
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (!mounted) return;
+        
         console.log('인증 상태 변화:', event, session?.user?.email || '세션 없음');
         
         // 로그아웃 이벤트 처리
         if (event === 'SIGNED_OUT') {
-          console.log('🚪 로그아웃 이벤트 감지 - 상태 완전 초기화');
+          console.log('🚪 로그아웃 이벤트 감지');
           setUser(null);
           setUserProfile(null);
+          setHasRedirected(false);
           setLoading(false);
           
           setTimeout(() => {
@@ -267,18 +233,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         
+        // 로그인 이벤트 처리
+        if (event === 'SIGNED_IN') {
+          console.log('✅ SIGNED_IN 이벤트 감지');
+          setHasRedirected(false); // 새 로그인 시 플래그 초기화
+        }
+        
         setUser(session?.user ?? null);
         
         if (session?.user) {
-          await loadUserProfile(session.user.id); // 여기서 setLoading(false) 처리됨
+          // 🚨 이벤트 기반 호출 시에는 이벤트 타입에 따라 구분
+          const isFromSignInEvent = event === 'SIGNED_IN';
+          await loadUserProfile(session.user.id, isFromSignInEvent);
         } else {
           setUserProfile(null);
-          setLoading(false); // 🚨 세션 없을 때도 로딩 완료
+          setLoading(false);
         }
       }
     );
 
     return () => {
+      mounted = false;
       console.log('인증 리스너 정리');
       subscription.unsubscribe();
     };
@@ -311,19 +286,17 @@ export const useAuth = () => {
   return context;
 };
 
-// ✅ AuthDebugInfo 컴포넌트 (개발 환경용) - Hydration 오류 해결
+// ✅ AuthDebugInfo 컴포넌트 (개발 환경용)
 export function AuthDebugInfo() {
-  const { user, userProfile, loading, signOut } = useAuth();
+  const { user, userProfile, loading } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [currentPath, setCurrentPath] = useState('');
   
-  // ✅ 클라이언트에서만 마운트되도록 처리
   useEffect(() => {
     setMounted(true);
     setCurrentPath(window.location.pathname);
   }, []);
   
-  // 개발 환경이 아니거나 아직 마운트되지 않았으면 렌더링하지 않음
   if (process.env.NODE_ENV !== 'development' || !mounted) return null;
   
   return (
@@ -344,7 +317,7 @@ export function AuthDebugInfo() {
               {userProfile.role} • {userProfile.department || 'N/A'}
             </div>
             <div className="text-xs text-cyan-400">
-              Expected: {userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'}
+              Path: {currentPath}
             </div>
           </div>
         ) : user ? (
@@ -385,17 +358,21 @@ export function AuthDebugInfo() {
               {currentPath || 'Loading...'}
             </span>
           </div>
-          {userProfile && (
-            <div>
-              <span className="text-gray-400">Active:</span> 
-              <span className={`text-xs ml-1 ${userProfile.is_active ? 'text-green-400' : 'text-red-400'}`}>
-                {userProfile.is_active ? 'Yes' : 'No'}
-              </span>
-            </div>
-          )}
           
-          {/* 개발 환경용 완전 초기화 버튼 */}
-          <div className="pt-2 border-t border-gray-600">
+          {/* 개발 환경용 캐시 정리 버튼 */}
+          <div className="pt-2 border-t border-gray-600 space-y-1">
+            <button 
+              onClick={() => {
+                console.log('🧹 캐시 정리 실행');
+                localStorage.clear();
+                sessionStorage.clear();
+                // 🚨 로그인 페이지로 이동 후 새로고침 (무한 로딩 방지)
+                window.location.href = '/login';
+              }}
+              className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600 w-full"
+            >
+              🧹 캐시 정리
+            </button>
             <button 
               onClick={() => {
                 console.log('🆘 완전 초기화 실행');

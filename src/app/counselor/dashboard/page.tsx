@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import CounselorLayout from '@/components/layout/CounselorLayout';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
+import { useToastHelpers } from '@/components/ui/Toast';
 import SmartTable from '@/components/ui/SmartTable';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
@@ -28,14 +30,17 @@ interface CounselorLead {
 }
 
 interface DashboardStats {
-  assigned: number;      // 배정받은 리드
-  in_progress: number;   // 상담 진행 중
+  assigned: number;      // 배정받은 고객
+  in_progress: number;   // 영업 진행 중
   completed: number;     // 계약 완료
-  returned: number;      // 반환된 리드
+  returned: number;      // 반환된 고객
 }
 
 export default function CounselorDashboard() {
-  const { user } = useAuth(); // ✅ 수정: userProfile → user
+  const { user } = useAuth();
+  const router = useRouter();
+  const toast = useToastHelpers();
+  
   const [leads, setLeads] = useState<CounselorLead[]>([]);
   const [stats, setStats] = useState<DashboardStats>({
     assigned: 0,
@@ -48,7 +53,7 @@ export default function CounselorDashboard() {
 
   // 데이터 로드
   const loadDashboardData = async () => {
-    if (!user?.id) return; // ✅ 수정: userProfile → user
+    if (!user?.id) return;
 
     setLoading(true);
     try {
@@ -56,20 +61,22 @@ export default function CounselorDashboard() {
       const { data: leadsData, error: leadsError } = await supabase
         .from('counselor_leads_view')
         .select('*')
-        .eq('counselor_id', user.id) // ✅ 수정: userProfile.id → user.id
+        .eq('counselor_id', user.id)
         .order('priority', { ascending: false })
         .order('assigned_at', { ascending: false });
 
       if (leadsError) {
         console.warn('counselor_leads_view 조회 오류:', leadsError);
         
-        // ✅ 추가: counselor_leads_view가 없을 경우 대체 로직
+        // counselor_leads_view가 없을 경우 대체 로직
         try {
           const { data: fallbackData, error: fallbackError } = await supabase
             .from('lead_assignments')
             .select(`
               id, lead_id, counselor_id, assigned_at, status,
-              lead:lead_pool(id, phone, contact_name, data_source, contact_script)
+              lead_pool (
+                id, phone, name, contact_name, data_source, contact_script
+              )
             `)
             .eq('counselor_id', user.id)
             .eq('status', 'active');
@@ -80,10 +87,10 @@ export default function CounselorDashboard() {
               assignment_id: assignment.id,
               counselor_id: assignment.counselor_id,
               lead_id: assignment.lead_id,
-              phone: assignment.lead.phone,
-              contact_name: assignment.lead.contact_name,
-              data_source: assignment.lead.data_source,
-              contact_script: assignment.lead.contact_script,
+              phone: assignment.lead_pool?.phone || '',
+              contact_name: assignment.lead_pool?.contact_name || assignment.lead_pool?.name || '고객명 없음',
+              data_source: assignment.lead_pool?.data_source || '미지정',
+              contact_script: assignment.lead_pool?.contact_script || '',
               assigned_at: assignment.assigned_at,
               priority: 'medium' as const,
               call_attempts: 0,
@@ -97,6 +104,17 @@ export default function CounselorDashboard() {
               completed: 0,
               returned: 0
             });
+            
+            toast.success(
+              '대시보드 로드 완료',
+              `${convertedLeads.length}개의 배정 고객을 불러왔습니다.`,
+              {
+                action: { 
+                  label: '고객 목록 보기', 
+                  onClick: () => router.push('/counselor/leads')
+                }
+              }
+            );
             return;
           }
         } catch (fallbackErr) {
@@ -111,6 +129,17 @@ export default function CounselorDashboard() {
           completed: 0,
           returned: 0
         });
+        
+        toast.info(
+          '배정된 고객이 없습니다',
+          '관리자가 고객을 배정하면 여기에 표시됩니다.',
+          {
+            action: { 
+              label: '새로고침', 
+              onClick: () => loadDashboardData()
+            }
+          }
+        );
         return;
       }
 
@@ -125,9 +154,13 @@ export default function CounselorDashboard() {
         returned: leadsArray.filter(lead => lead.assignment_status === 'returned').length
       });
 
+      toast.success(
+        '대시보드 새로고침 완료',
+        `${leadsArray.length}개의 배정 고객 정보를 업데이트했습니다.`
+      );
+
     } catch (error) {
       console.error('대시보드 데이터 로드 오류:', error);
-      // 오류 시 빈 상태로 처리
       setLeads([]);
       setStats({
         assigned: 0,
@@ -135,6 +168,14 @@ export default function CounselorDashboard() {
         completed: 0,
         returned: 0
       });
+      
+      toast.error(
+        '대시보드 로드 실패',
+        '데이터를 불러오는 중 오류가 발생했습니다.',
+        {
+          action: { label: '다시 시도', onClick: () => loadDashboardData() }
+        }
+      );
     } finally {
       setLoading(false);
     }
@@ -142,7 +183,7 @@ export default function CounselorDashboard() {
 
   useEffect(() => {
     loadDashboardData();
-  }, [user?.id]); // ✅ 수정: userProfile?.id → user?.id
+  }, [user?.id]);
 
   // 우선순위별 색상 및 아이콘
   const getPriorityDisplay = (priority: string) => {
@@ -156,8 +197,8 @@ export default function CounselorDashboard() {
         };
       case 'medium':
         return {
-          color: 'text-warning',
-          bgColor: 'bg-warning-light',
+          color: 'text-accent',
+          bgColor: 'bg-accent/10',
           icon: Clock,
           label: '보통'
         };
@@ -178,7 +219,7 @@ export default function CounselorDashboard() {
     }
   };
 
-  // SmartTable 컬럼 정의
+  // SmartTable 컬럼 정의 (업계 용어 적용)
   const columns = [
     {
       key: 'contact_name',
@@ -192,7 +233,7 @@ export default function CounselorDashboard() {
             </span>
           </div>
           <div>
-            <div className="font-medium text-text-primary">{value || '이름 없음'}</div>
+            <div className="font-medium text-text-primary">{value || '고객명 없음'}</div>
             <div className="text-xs text-text-tertiary">{record.data_source}</div>
           </div>
         </div>
@@ -222,15 +263,15 @@ export default function CounselorDashboard() {
     },
     {
       key: 'contact_script',
-      label: '상담 내용',
+      label: '영업 상품',
       icon: businessIcons.script,
       render: (value: string) => (
-        <span className="text-text-secondary">{value || '내용 없음'}</span>
+        <span className="text-text-secondary">{value || '상품 정보 없음'}</span>
       )
     },
     {
       key: 'call_attempts',
-      label: '통화시도',
+      label: '접촉시도',
       icon: businessIcons.phone,
       render: (value: number) => (
         <div className="text-center">
@@ -242,11 +283,11 @@ export default function CounselorDashboard() {
     },
     {
       key: 'last_contact_date',
-      label: '최근 연락',
+      label: '최근 접촉',
       icon: businessIcons.date,
       render: (value: string) => (
         <span className="text-text-tertiary text-sm">
-          {value ? new Date(value).toLocaleDateString('ko-KR') : '연락 안함'}
+          {value ? new Date(value).toLocaleDateString('ko-KR') : '미접촉'}
         </span>
       )
     }
@@ -261,23 +302,25 @@ export default function CounselorDashboard() {
     );
   };
 
-  // 통계 카드 데이터 - 실제 워크플로우 기반
+  // 통계 카드 데이터 - 업계 용어 적용
   const statCards = [
     {
-      title: '배정받은 리드',
+      title: '배정 고객',
       value: stats.assigned,
       icon: businessIcons.contact,
       color: 'text-accent',
       bgColor: 'bg-accent/10',
-      description: '현재 담당 중인 리드'
+      description: '현재 담당 중인 고객',
+      onClick: () => router.push('/counselor/leads')
     },
     {
-      title: '상담 진행 중',
+      title: '영업 진행 중',
       value: stats.in_progress,
       icon: businessIcons.phone,
       color: 'text-warning',
       bgColor: 'bg-warning-light',
-      description: '활발히 상담 중인 리드'
+      description: '활발히 영업 중인 고객',
+      onClick: () => router.push('/counselor/leads?filter=contacted')
     },
     {
       title: '계약 완료',
@@ -285,15 +328,47 @@ export default function CounselorDashboard() {
       icon: CheckCircle,
       color: 'text-success',
       bgColor: 'bg-success-light',
-      description: '성공적으로 계약한 리드'
+      description: '성공적으로 계약한 고객',
+      onClick: () => router.push('/counselor/leads?filter=completed')
     },
     {
-      title: '반환된 리드',
+      title: '반환 고객',
       value: stats.returned,
       icon: RefreshCw,
       color: 'text-text-tertiary',
       bgColor: 'bg-bg-hover',
-      description: '재배정을 위해 반환된 리드'
+      description: '재배정을 위해 반환된 고객'
+    }
+  ];
+
+  // 퀵 액션 버튼들
+  const quickActions = [
+    {
+      title: '영업 시작',
+      description: '새 고객에게 영업 개시',
+      icon: businessIcons.phone,
+      color: 'bg-accent',
+      onClick: () => {
+        if (leads.length > 0) {
+          router.push('/counselor/leads');
+        } else {
+          toast.info('배정된 고객이 없습니다', '관리자가 고객을 배정할 때까지 기다려주세요.');
+        }
+      }
+    },
+    {
+      title: '진행 현황',
+      description: '내 영업 진행 상황 확인',
+      icon: businessIcons.analytics,
+      color: 'bg-accent/80',
+      onClick: () => router.push('/counselor/leads')
+    },
+    {
+      title: '고객 목록',
+      description: '전체 배정 고객 보기',
+      icon: businessIcons.contact,
+      color: 'bg-accent/60',
+      onClick: () => router.push('/counselor/leads')
     }
   ];
 
@@ -317,15 +392,16 @@ export default function CounselorDashboard() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className={designSystem.components.typography.h2}>
-              상담원 대시보드
+              영업 대시보드
             </h1>
             <p className="text-text-secondary mt-1">
-              안녕하세요, {user?.full_name || '상담원'}님! 오늘도 화이팅하세요! 💪
+              안녕하세요, {user?.full_name || '상담원'}님! 오늘도 좋은 성과 만들어가세요! 💪
             </p>
           </div>
           <button
             onClick={loadDashboardData}
-            className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors"
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             새로고침
@@ -337,7 +413,13 @@ export default function CounselorDashboard() {
           {statCards.map((card, index) => {
             const IconComponent = card.icon;
             return (
-              <div key={index} className="bg-bg-primary border border-border-primary rounded-lg p-6">
+              <div 
+                key={index} 
+                className={`bg-bg-primary border border-border-primary rounded-lg p-6 transition-all hover:shadow-md ${
+                  card.onClick ? 'cursor-pointer hover:bg-bg-hover' : ''
+                }`}
+                onClick={card.onClick}
+              >
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-text-tertiary text-sm font-medium">{card.title}</p>
@@ -355,14 +437,33 @@ export default function CounselorDashboard() {
           })}
         </div>
 
-        {/* 우선순위별 리드 목록 */}
+        {/* 퀵 액션 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {quickActions.map((action, index) => (
+            <button
+              key={index}
+              onClick={action.onClick}
+              className={`${action.color} text-white p-4 rounded-lg hover:opacity-90 transition-all text-left group`}
+            >
+              <div className="flex items-center gap-3">
+                <action.icon className="w-6 h-6" />
+                <div>
+                  <div className="font-medium">{action.title}</div>
+                  <div className="text-sm opacity-90">{action.description}</div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* 우선순위별 고객 목록 */}
         <div className="bg-bg-primary border border-border-primary rounded-lg">
           <div className="p-6 border-b border-border-primary">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <TrendingUp className="w-5 h-5 text-accent" />
                 <h2 className={designSystem.components.typography.h4}>
-                  내 리드 목록
+                  배정 고객 목록
                 </h2>
                 <span className="text-text-tertiary text-sm">
                   ({leads.length}개)
@@ -373,8 +474,13 @@ export default function CounselorDashboard() {
                   <span className="text-sm text-text-secondary">
                     {selectedItems.length}개 선택됨
                   </span>
-                  <button className="px-3 py-1 bg-accent text-white rounded text-sm hover:bg-accent/90">
-                    일괄 처리
+                  <button 
+                    className="px-3 py-1 bg-accent text-white rounded text-sm hover:bg-accent/90"
+                    onClick={() => {
+                      toast.info('일괄 처리', `${selectedItems.length}개 고객에 대한 일괄 작업을 시작합니다.`);
+                    }}
+                  >
+                    일괄 영업
                   </button>
                 </div>
               )}
@@ -389,21 +495,21 @@ export default function CounselorDashboard() {
                 selectedItems={selectedItems}
                 onToggleSelection={toggleSelection}
                 getItemId={(item) => item.assignment_id}
-                searchPlaceholder="고객명, 전화번호, 상담내용으로 검색..."
+                searchPlaceholder="고객명, 전화번호, 영업상품으로 검색..."
                 height="60vh"
               />
             ) : (
               <div className="text-center py-12">
                 <businessIcons.contact className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-text-primary mb-2">
-                  아직 배정받은 리드가 없습니다
+                  아직 배정받은 고객이 없습니다
                 </h3>
                 <p className="text-text-secondary mb-4">
-                  관리자가 리드를 배정하면 여기에 표시됩니다.
+                  관리자가 고객을 배정하면 여기에 표시됩니다.
                 </p>
                 <div className="text-sm text-text-tertiary bg-bg-secondary p-4 rounded-lg inline-block">
-                  💡 <strong>안내:</strong> 관리자가 리드를 배정하면<br/>
-                  우선순위별로 체계적인 상담 관리가 가능합니다.<br/>
+                  💡 <strong>안내:</strong> 관리자가 고객을 배정하면<br/>
+                  우선순위별로 체계적인 영업 관리가 가능합니다.<br/>
                   배정 알림을 받으시면 대시보드를 새로고침해주세요.
                 </div>
               </div>
@@ -416,12 +522,12 @@ export default function CounselorDashboard() {
           <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
             <div className="flex items-center gap-3 mb-4">
               <TrendingUp className="w-5 h-5 text-accent" />
-              <h3 className="font-medium text-text-primary">내 성과 진행률</h3>
+              <h3 className="font-medium text-text-primary">내 영업 성과</h3>
             </div>
             <div className="space-y-3">
               {stats.assigned > 0 && (
                 <div className="flex items-center justify-between py-2">
-                  <span className="text-text-secondary">배정 → 상담 전환율</span>
+                  <span className="text-text-secondary">배정 → 영업 전환율</span>
                   <span className="font-medium text-text-primary">
                     {stats.assigned > 0 ? Math.round((stats.in_progress / stats.assigned) * 100) : 0}%
                   </span>
@@ -429,15 +535,21 @@ export default function CounselorDashboard() {
               )}
               {stats.in_progress > 0 && (
                 <div className="flex items-center justify-between py-2">
-                  <span className="text-text-secondary">상담 → 계약 전환율</span>
+                  <span className="text-text-secondary">영업 → 계약 전환율</span>
                   <span className="font-medium text-success">
                     {stats.in_progress > 0 ? Math.round((stats.completed / stats.in_progress) * 100) : 0}%
                   </span>
                 </div>
               )}
+              {stats.completed > 0 && (
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-text-secondary">총 계약 건수</span>
+                  <span className="font-medium text-success">{stats.completed}건</span>
+                </div>
+              )}
               {stats.returned > 0 && (
                 <div className="flex items-center justify-between py-2">
-                  <span className="text-text-secondary">반환된 리드</span>
+                  <span className="text-text-secondary">반환된 고객</span>
                   <span className="text-text-tertiary">{stats.returned}개</span>
                 </div>
               )}
