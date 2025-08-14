@@ -1,688 +1,901 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import AdminLayout from '@/components/layout/AdminLayout';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
-import { useToastHelpers } from '@/components/ui/Toast';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/lib/auth/AuthContext';
-import AdminLayout from '@/components/layout/AdminLayout';
+import SmartTable from '@/components/ui/SmartTable';
+import { useToastHelpers } from '@/components/ui/Toast';
+import { 
+  UserPlus, Users, CheckCircle, XCircle, RefreshCw, 
+  Edit2, Trash2, Building2, Mail, Phone, BarChart3 
+} from 'lucide-react';
 
-// 타입 정의
 interface Counselor {
-  id: string
-  name: string
-  email: string
-  assigned_count: number
-  in_progress_count: number
-  completed_count: number
-  contracted_count: number
-  total_contract_amount: number
+  id: string;
+  email: string;
+  full_name: string;
+  phone?: string;
+  department?: string;
+  is_active: boolean;
+  created_at: string;
+  assigned_count?: number;
+  active_count?: number;
+  completed_count?: number;
 }
 
-interface CounselorLead {
-  assignment_id: string
-  lead_id: string
-  phone: string
-  actual_customer_name?: string
-  data_source: string
-  contact_script: string
-  assigned_at: string
-  last_contact_date?: string
-  call_attempts: number
-  latest_contact_result?: string
-  latest_contract_status?: string
-  contract_amount?: number
-  status: 'not_contacted' | 'in_progress' | 'completed' | 'contracted'
-  counseling_memo?: string
-  customer_reaction?: string
+interface NewCounselorForm {
+  email: string;
+  full_name: string;
+  phone: string;
+  department: string;
 }
 
-export default function ConsultingMonitor() {
-  const { user } = useAuth()
-  const toast = useToastHelpers()
-  const router = useRouter()
+export default function CounselorsPage() {
+  const toast = useToastHelpers();
   
-  // 상태 관리
-  const [counselors, setCounselors] = useState<Counselor[]>([])
-  const [selectedCounselor, setSelectedCounselor] = useState<string>('')
-  const [counselorLeads, setCounselorLeads] = useState<CounselorLead[]>([])
-  const [loading, setLoading] = useState(true)
-  const [leadsLoading, setLeadsLoading] = useState(false)
+  // 기본 상태
+  const [counselors, setCounselors] = useState<Counselor[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
   
-  // 필터 상태
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [searchTerm, setSearchTerm] = useState('')
+  // 선택 관련 상태  
+  const [selectedCounselors, setSelectedCounselors] = useState<string[]>([]);
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
+  const [bulkEditForm, setBulkEditForm] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    department: ''
+  });
+
+  // 새 영업사원 폼 상태
+  const [newCounselor, setNewCounselor] = useState<NewCounselorForm>({
+    email: '',
+    full_name: '',
+    phone: '',
+    department: ''
+  });
+
+  // 영업사원 테이블 칼럼 정의 (용어 업데이트)
+  const counselorColumns = [
+    {
+      key: 'full_name',
+      label: '영업사원 정보',
+      icon: businessIcons.contact,
+      width: 'w-48',
+      render: (value: string, record: Counselor) => (
+        <div>
+          <div className="font-medium text-text-primary">{record.full_name}</div>
+          <div className="text-sm text-text-secondary truncate">{record.email}</div>
+        </div>
+      )
+    },
+    {
+      key: 'phone',
+      label: '연락처',
+      icon: businessIcons.phone,
+      width: 'w-40',
+      render: (value: string, record: Counselor) => (
+        <div className="space-y-1">
+          {record.phone ? (
+            <div className="flex items-center space-x-1">
+              <Phone className="w-3 h-3 text-text-tertiary flex-shrink-0" />
+              <span className="text-sm text-text-primary truncate">{record.phone}</span>
+            </div>
+          ) : (
+            <span className="text-sm text-text-tertiary">-</span>
+          )}
+          <div className="flex items-center space-x-1">
+            <Mail className="w-3 h-3 text-text-tertiary flex-shrink-0" />
+            <span className="text-xs text-text-secondary truncate">{record.email}</span>
+          </div>
+        </div>
+      )
+    },
+    {
+      key: 'department',
+      label: '부서',
+      icon: businessIcons.company,
+      width: 'w-32',
+      render: (value: string) => (
+        <div className="text-sm text-text-primary truncate">
+          {value || '미지정'}
+        </div>
+      )
+    },
+    {
+      key: 'stats',
+      label: '고객 배정 현황',
+      icon: BarChart3,
+      width: 'w-40',
+      sortable: false,
+      render: (value: any, record: Counselor) => (
+        <div className="space-y-1">
+          <div className="text-sm">
+            <span className="text-warning">활성: {record.active_count || 0}</span>
+          </div>
+          <div className="text-sm">
+            <span className="text-accent">완료: {record.completed_count || 0}</span>
+          </div>
+          <div className="text-xs text-text-secondary">
+            총 {record.assigned_count || 0}건
+          </div>
+        </div>
+      )
+    },
+    {
+      key: 'is_active',
+      label: '상태',
+      icon: CheckCircle,
+      width: 'w-24',
+      render: (value: boolean) => (
+        <span className={designSystem.utils.cn(
+          "px-2 py-1 text-xs rounded-full",
+          value 
+            ? "bg-success-light text-success"
+            : "bg-error-light text-error"
+        )}>
+          {value ? '활성' : '비활성'}
+        </span>
+      )
+    }
+  ];
 
   // 데이터 로드
-  useEffect(() => {
-    loadCounselors()
-  }, [])
-
-  // 상담원 선택 시 리드 로드
-  useEffect(() => {
-    if (selectedCounselor) {
-      loadCounselorLeads(selectedCounselor)
-    }
-  }, [selectedCounselor])
-
-  // 상담원 목록 로드
   const loadCounselors = async () => {
-    setLoading(true)
+    setLoading(true);
     try {
-      // users 테이블에서 상담원 목록 조회
+      console.log('영업사원 조회 시작...');
+      
       const { data: counselorsData, error: counselorsError } = await supabase
         .from('users')
-        .select('id, full_name, email, role, phone, department, is_active')
-        .eq('role', 'counselor')
-        .order('full_name', { ascending: true })
-
-      if (counselorsError) throw counselorsError
-
-      // 각 상담원별 통계 계산
-      const enrichedCounselors = await Promise.all(
-        counselorsData?.map(async (counselor) => {
-          // 배정된 리드 수
-          const { count: assignedCount } = await supabase
-            .from('lead_assignments')
-            .select('*', { count: 'exact' })
-            .eq('counselor_id', counselor.id)
-            .eq('status', 'active')
-
-          // 상담 현황별 통계 - counselor_lead_stats 뷰 사용 시도
-          const { data: statsData } = await supabase
-            .from('counselor_lead_stats')
-            .select('*')
-            .eq('counselor_id', counselor.id)
-            .single()
-
-          // 뷰가 없다면 직접 계산
-          let inProgressCount = 0
-          let completedCount = 0
-          let contractedCount = 0
-          let totalContractAmount = 0
-
-          if (statsData) {
-            // 뷰에서 데이터 가져오기
-            inProgressCount = statsData.in_progress_count || 0
-            completedCount = statsData.completed_count || 0
-            contractedCount = statsData.contracted_count || 0
-            totalContractAmount = statsData.total_contract_amount || 0
-          } else {
-            // 직접 계산
-            const { data: leadsData } = await supabase
-              .from('lead_assignments')
-              .select(`
-                id,
-                counseling_activities (
-                  contact_result,
-                  contract_status,
-                  contract_amount
-                )
-              `)
-              .eq('counselor_id', counselor.id)
-              .eq('status', 'active')
-
-            leadsData?.forEach(assignment => {
-              const activities = assignment.counseling_activities
-              if (activities && activities.length > 0) {
-                const latestActivity = activities[activities.length - 1]
-                
-                if (latestActivity.contract_status === 'contracted') {
-                  contractedCount++
-                  totalContractAmount += latestActivity.contract_amount || 0
-                } else if (latestActivity.contract_status === 'failed') {
-                  completedCount++
-                } else {
-                  inProgressCount++
-                }
-              }
-            })
-          }
-
-          return {
-            id: counselor.id,
-            name: counselor.full_name,
-            email: counselor.email,
-            assigned_count: assignedCount || 0,
-            in_progress_count: inProgressCount,
-            completed_count: completedCount,
-            contracted_count: contractedCount,
-            total_contract_amount: totalContractAmount
-          }
-        }) || []
-      )
-
-      setCounselors(enrichedCounselors)
-      
-      // 첫 번째 상담원 자동 선택
-      if (enrichedCounselors.length > 0 && !selectedCounselor) {
-        setSelectedCounselor(enrichedCounselors[0].id)
-      }
-
-      toast.success('상담원 목록 로드 완료', `${enrichedCounselors.length}명의 상담원을 불러왔습니다.`)
-
-    } catch (error: any) {
-      console.error('상담원 데이터 로드 오류:', error)
-      toast.error('데이터 로드 실패', error.message, {
-        action: { label: '다시 시도', onClick: () => loadCounselors() }
-      })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // 선택한 상담원의 리드 목록 로드
-  const loadCounselorLeads = async (counselorId: string) => {
-    setLeadsLoading(true)
-    try {
-      // counselor_leads_view 사용 시도
-      const { data: viewData, error: viewError } = await supabase
-        .from('counselor_leads_view')
         .select('*')
-        .eq('counselor_id', counselorId)
-        .order('assigned_at', { ascending: false })
+        .eq('role', 'counselor')
+        .order('full_name', { ascending: true });
 
-      let enrichedLeads: CounselorLead[] = []
-
-      if (viewData && !viewError) {
-        // 뷰에서 데이터 가져오기 성공
-        enrichedLeads = viewData.map(lead => ({
-          assignment_id: lead.assignment_id,
-          lead_id: lead.lead_id,
-          phone: lead.phone || '',
-          actual_customer_name: lead.actual_customer_name || null,
-          data_source: lead.data_source || '미지정',
-          contact_script: lead.contact_script || '',
-          assigned_at: lead.assigned_at,
-          last_contact_date: lead.last_contact_date || null,
-          call_attempts: lead.call_attempts || 0,
-          latest_contact_result: lead.latest_contact_result || null,
-          latest_contract_status: lead.latest_contract_status || null,
-          contract_amount: lead.contract_amount || null,
-          status: lead.status || 'not_contacted',
-          counseling_memo: lead.counseling_memo || null,
-          customer_reaction: lead.customer_reaction || null
-        }))
-      } else {
-        // 뷰가 없다면 직접 조회
-        const { data: leadsData, error: leadsError } = await supabase
-          .from('lead_assignments')
-          .select(`
-            id,
-            lead_id,
-            assigned_at,
-            status,
-            lead_pool (
-              id,
-              phone,
-              contact_name,
-              data_source,
-              contact_script
-            )
-          `)
-          .eq('counselor_id', counselorId)
-          .eq('status', 'active')
-          .order('assigned_at', { ascending: false })
-
-        if (leadsError) throw leadsError
-
-        // 각 리드별 최신 상담 기록 조회
-        enrichedLeads = await Promise.all(
-          leadsData?.map(async (assignment) => {
-            const { data: latestConsulting } = await supabase
-              .from('counseling_activities')
-              .select('contact_date, contact_result, contract_status, contract_amount, counseling_memo, customer_reaction, actual_customer_name')
-              .eq('assignment_id', assignment.id)
-              .order('contact_date', { ascending: false })
-              .limit(1)
-              .single()
-
-            // 상담 횟수 조회
-            const { count: callAttempts } = await supabase
-              .from('counseling_activities')
-              .select('*', { count: 'exact' })
-              .eq('assignment_id', assignment.id)
-
-            // 상태 계산
-            let status: CounselorLead['status'] = 'not_contacted'
-            if (latestConsulting) {
-              if (latestConsulting.contract_status === 'contracted') {
-                status = 'contracted'
-              } else if (latestConsulting.contract_status === 'failed') {
-                status = 'completed'
-              } else {
-                status = 'in_progress'
-              }
-            }
-
-            return {
-              assignment_id: assignment.id,
-              lead_id: assignment.lead_id,
-              phone: assignment.lead_pool?.phone || '',
-              actual_customer_name: latestConsulting?.actual_customer_name || null,
-              data_source: assignment.lead_pool?.data_source || '미지정',
-              contact_script: assignment.lead_pool?.contact_script || '',
-              assigned_at: assignment.assigned_at,
-              last_contact_date: latestConsulting?.contact_date || null,
-              call_attempts: callAttempts || 0,
-              latest_contact_result: latestConsulting?.contact_result || null,
-              latest_contract_status: latestConsulting?.contract_status || null,
-              contract_amount: latestConsulting?.contract_amount || null,
-              status,
-              counseling_memo: latestConsulting?.counseling_memo || null,
-              customer_reaction: latestConsulting?.customer_reaction || null
-            }
-          }) || []
-        )
+      if (counselorsError) {
+        console.error('영업사원 조회 에러:', counselorsError);
+        throw new Error(`영업사원 조회 실패: ${counselorsError.message}`);
       }
 
-      setCounselorLeads(enrichedLeads)
+      console.log('조회된 영업사원 수:', counselorsData?.length || 0);
+      
+      if (!counselorsData || counselorsData.length === 0) {
+        console.log('등록된 영업사원이 없습니다.');
+        setCounselors([]);
+        return;
+      }
+      
+      // 각 영업사원별 배정 통계 계산
+      const counselorsWithStats = await Promise.all(
+        counselorsData.map(async (counselor) => {
+          try {
+            const { data: assignments, error: assignmentError } = await supabase
+              .from('lead_assignments')
+              .select('status')
+              .eq('counselor_id', counselor.id);
 
-    } catch (error: any) {
-      console.error('상담원 리드 데이터 로드 오류:', error)
-      toast.error('리드 데이터 로드 실패', error.message)
+            if (assignmentError) {
+              console.warn(`영업사원 ${counselor.full_name} 배정 통계 조회 실패:`, assignmentError);
+              return {
+                ...counselor,
+                assigned_count: 0,
+                active_count: 0,
+                completed_count: 0
+              };
+            }
+
+            const assignmentCounts = assignments || [];
+            return {
+              ...counselor,
+              assigned_count: assignmentCounts.length,
+              active_count: assignmentCounts.filter(a => a.status === 'active').length,
+              completed_count: assignmentCounts.filter(a => a.status === 'completed').length
+            };
+          } catch (error) {
+            console.warn(`영업사원 ${counselor.full_name} 통계 처리 실패:`, error);
+            return {
+              ...counselor,
+              assigned_count: 0,
+              active_count: 0,
+              completed_count: 0
+            };
+          }
+        })
+      );
+
+      console.log('최종 영업사원 데이터:', counselorsWithStats);
+      setCounselors(counselorsWithStats);
+      
+    } catch (error) {
+      console.error('영업사원 로드 실패:', error);
+      const errorMessage = error?.message || '알 수 없는 오류';
+      
+      toast.error(
+        '데이터 로드 실패', 
+        `영업사원 목록을 불러오는 중 오류가 발생했습니다: ${errorMessage}`,
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => loadCounselors()
+          }
+        }
+      );
     } finally {
-      setLeadsLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  // 필터링된 리드 목록
-  const filteredLeads = counselorLeads.filter(lead => {
-    // 상태 필터
-    if (statusFilter !== 'all' && lead.status !== statusFilter) {
-      return false
-    }
-    
-    // 검색 필터
-    if (searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase()
-      return (
-        (lead.actual_customer_name && lead.actual_customer_name.toLowerCase().includes(searchLower)) ||
-        lead.phone.includes(searchTerm) ||
-        lead.contact_script.toLowerCase().includes(searchLower) ||
-        lead.data_source.toLowerCase().includes(searchLower) ||
-        (lead.counseling_memo && lead.counseling_memo.toLowerCase().includes(searchLower))
-      )
-    }
-    
-    return true
-  })
+  useEffect(() => {
+    loadCounselors();
+  }, []);
 
-  // 선택된 상담원 정보
-  const selectedCounselorInfo = counselors.find(c => c.id === selectedCounselor)
+  // 영업사원 선택/해제
+  const toggleCounselorSelection = (counselorId: string) => {
+    setSelectedCounselors(prev => 
+      prev.includes(counselorId) 
+        ? prev.filter(id => id !== counselorId)
+        : [...prev, counselorId]
+    );
+  };
 
-  // 상태별 스타일
-  const getStatusBadge = (status: CounselorLead['status']) => {
-    const styles = {
-      not_contacted: 'bg-bg-secondary text-text-primary',
-      in_progress: 'bg-accent/10 text-accent',
-      completed: 'bg-text-secondary/10 text-text-secondary',
-      contracted: 'bg-accent/20 text-accent font-medium'
-    }
+  // 새 영업사원 추가
+  const handleAddCounselor = async (e: React.FormEvent) => {
+    e.preventDefault();
     
-    const labels = {
-      not_contacted: '미접촉',
-      in_progress: '상담중',
-      completed: '완료',
-      contracted: '계약'
+    if (!newCounselor.email || !newCounselor.full_name) {
+      toast.warning('입력 오류', '이메일과 이름은 필수입니다.');
+      return;
     }
-    
-    return (
-      <span className={`px-2 py-1 rounded-full text-xs ${styles[status]}`}>
-        {labels[status]}
-      </span>
-    )
-  }
 
-  // 최근 활동 시간 계산
-  const getTimeAgo = (dateString: string | null) => {
-    if (!dateString) return '미접촉'
+    setActionLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .insert([{
+          id: crypto.randomUUID(),
+          email: newCounselor.email,
+          full_name: newCounselor.full_name,
+          phone: newCounselor.phone || null,
+          department: newCounselor.department || null,
+          role: 'counselor',
+          is_active: true
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      toast.success(
+        '영업사원 추가 완료', 
+        `${newCounselor.full_name}님이 성공적으로 추가되었습니다.`,
+        {
+          action: {
+            label: '목록 보기',
+            onClick: () => setShowAddForm(false)
+          }
+        }
+      );
+      
+      setNewCounselor({ email: '', full_name: '', phone: '', department: '' });
+      setShowAddForm(false);
+      await loadCounselors();
+
+    } catch (error) {
+      console.error('영업사원 추가 실패:', error);
+      
+      toast.error(
+        '영업사원 추가 실패', 
+        error.message || '영업사원 추가 중 오류가 발생했습니다.',
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => handleAddCounselor(e)
+          }
+        }
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // 벌크 활성화/비활성화
+  const handleBulkToggleActive = async (isActive: boolean) => {
+    const action = isActive ? '활성화' : '비활성화';
+    const selectedNames = counselors
+      .filter(c => selectedCounselors.includes(c.id))
+      .map(c => c.full_name);
+
+    const confirmAction = () => {
+      performBulkToggle(isActive, selectedNames);
+    };
+
+    toast.info(
+      `${action} 확인`,
+      `선택된 ${selectedCounselors.length}명의 영업사원을 ${action}하시겠습니까?\n\n${selectedNames.join(', ')}`,
+      {
+        action: {
+          label: `${action} 실행`,
+          onClick: confirmAction
+        },
+        duration: 0
+      }
+    );
+  };
+
+  const performBulkToggle = async (isActive: boolean, selectedNames: string[]) => {
+    const action = isActive ? '활성화' : '비활성화';
     
-    const now = new Date()
-    const date = new Date(dateString)
-    const diffMs = now.getTime() - date.getTime()
-    const diffMins = Math.floor(diffMs / (1000 * 60))
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-    
-    if (diffMins < 60) {
-      return `${diffMins}분 전`
-    } else if (diffHours < 24) {
-      return `${diffHours}시간 전`
+    setActionLoading(true);
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ is_active: isActive })
+        .in('id', selectedCounselors);
+
+      if (error) throw error;
+
+      toast.success(
+        `${action} 완료`,
+        `${selectedCounselors.length}명의 영업사원이 ${action}되었습니다.\n\n${selectedNames.join(', ')}`,
+        {
+          action: {
+            label: '목록 새로고침',
+            onClick: () => loadCounselors()
+          }
+        }
+      );
+      
+      setSelectedCounselors([]);
+      await loadCounselors();
+
+    } catch (error) {
+      console.error(`벌크 ${action} 실패:`, error);
+      
+      toast.error(
+        `${action} 실패`,
+        error.message || `영업사원 ${action} 중 오류가 발생했습니다.`,
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => performBulkToggle(isActive, selectedNames)
+          }
+        }
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // 벌크 수정
+  const handleBulkEdit = () => {
+    if (selectedCounselors.length === 1) {
+      const selectedCounselor = counselors.find(c => c.id === selectedCounselors[0]);
+      if (selectedCounselor) {
+        setBulkEditForm({
+          full_name: selectedCounselor.full_name || '',
+          email: selectedCounselor.email || '',
+          phone: selectedCounselor.phone || '',
+          department: selectedCounselor.department || ''
+        });
+      }
     } else {
-      return `${diffDays}일 전`
+      setBulkEditForm({
+        full_name: '',
+        email: '',
+        phone: '',
+        department: ''
+      });
     }
-  }
+    setShowBulkEditModal(true);
+  };
+
+  // 벌크 수정 실행
+  const handleBulkEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const updateData: any = {};
+    if (bulkEditForm.full_name.trim()) updateData.full_name = bulkEditForm.full_name.trim();
+    if (bulkEditForm.email.trim()) updateData.email = bulkEditForm.email.trim();
+    if (bulkEditForm.phone.trim()) updateData.phone = bulkEditForm.phone.trim();
+    if (bulkEditForm.department.trim()) updateData.department = bulkEditForm.department.trim();
+
+    if (Object.keys(updateData).length === 0) {
+      toast.warning('입력 오류', '수정할 정보를 입력해주세요.');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update(updateData)
+        .in('id', selectedCounselors);
+
+      if (error) throw error;
+
+      const updatedFields = Object.keys(updateData).join(', ');
+      const selectedNames = counselors
+        .filter(c => selectedCounselors.includes(c.id))
+        .map(c => c.full_name);
+
+      toast.success(
+        '정보 수정 완료',
+        `${selectedCounselors.length}명의 영업사원 정보가 업데이트되었습니다.\n\n수정된 항목: ${updatedFields}\n대상: ${selectedNames.join(', ')}`,
+        {
+          action: {
+            label: '목록 보기',
+            onClick: () => setShowBulkEditModal(false)
+          }
+        }
+      );
+      
+      setShowBulkEditModal(false);
+      setBulkEditForm({ full_name: '', email: '', phone: '', department: '' });
+      setSelectedCounselors([]);
+      await loadCounselors();
+
+    } catch (error) {
+      console.error('벌크 수정 실패:', error);
+      
+      toast.error(
+        '정보 수정 실패',
+        error.message || '영업사원 정보 수정 중 오류가 발생했습니다.',
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => handleBulkEditSubmit(e)
+          }
+        }
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // 벌크 삭제  
+  const handleBulkDelete = async () => {
+    const selectedCounselorNames = counselors
+      .filter(c => selectedCounselors.includes(c.id))
+      .map(c => c.full_name);
+
+    const confirmMessage = selectedCounselors.length === 1 
+      ? `"${selectedCounselorNames[0]}" 영업사원을 정말 삭제하시겠습니까?`
+      : `다음 ${selectedCounselors.length}명의 영업사원을 정말 삭제하시겠습니까?\n\n${selectedCounselorNames.join(', ')}\n\n⚠️ 이 작업은 되돌릴 수 없습니다.`;
+
+    const confirmDelete = () => {
+      performBulkDelete(selectedCounselorNames);
+    };
+
+    toast.error(
+      '삭제 확인',
+      confirmMessage,
+      {
+        action: {
+          label: '삭제 실행',
+          onClick: confirmDelete
+        },
+        duration: 0
+      }
+    );
+  };
+
+  const performBulkDelete = async (selectedNames: string[]) => {
+    setActionLoading(true);
+    try {
+      // 배정된 고객이 있는지 확인
+      const { data: assignments } = await supabase
+        .from('lead_assignments')
+        .select('counselor_id, lead_id')
+        .in('counselor_id', selectedCounselors)
+        .in('status', ['active', 'working']);
+
+      if (assignments && assignments.length > 0) {
+        const assignedCounselors = new Set(assignments.map(a => a.counselor_id));
+        const assignedNames = counselors
+          .filter(c => assignedCounselors.has(c.id))
+          .map(c => c.full_name);
+        
+        toast.warning(
+          '삭제 불가',
+          `다음 영업사원들은 현재 배정된 고객을 가지고 있어 삭제할 수 없습니다:\n\n${assignedNames.join(', ')}\n\n먼저 고객을 재배정하거나 완료 처리해주세요.`,
+          {
+            action: {
+              label: '배정 관리로 이동',
+              onClick: () => window.location.href = '/admin/assignments'
+            }
+          }
+        );
+        return;
+      }
+
+      const { error } = await supabase
+        .from('users')
+        .delete()
+        .in('id', selectedCounselors);
+
+      if (error) throw error;
+
+      toast.success(
+        '삭제 완료',
+        `${selectedCounselors.length}명의 영업사원이 삭제되었습니다.\n\n삭제된 영업사원: ${selectedNames.join(', ')}`,
+        {
+          action: {
+            label: '목록 새로고침',
+            onClick: () => loadCounselors()
+          }
+        }
+      );
+      
+      setSelectedCounselors([]);
+      await loadCounselors();
+
+    } catch (error) {
+      console.error('벌크 삭제 실패:', error);
+      
+      toast.error(
+        '삭제 실패',
+        error.message || '영업사원 삭제 중 오류가 발생했습니다.',
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => performBulkDelete(selectedNames)
+          }
+        }
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   if (loading) {
     return (
       <AdminLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="flex items-center gap-3 text-text-secondary">
-            <businessIcons.team className="w-6 h-6 animate-spin" />
-            <span>상담원 데이터 로딩 중...</span>
+        <div className="flex items-center justify-center min-h-96">
+          <div className="text-center">
+            <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-accent" />
+            <p className={designSystem.components.typography.body}>영업사원 목록을 불러오는 중...</p>
           </div>
         </div>
       </AdminLayout>
-    )
+    );
   }
 
   return (
     <AdminLayout>
-      <div className="p-6 max-w-7xl mx-auto">
-        {/* 헤더 */}
-        <div className="mb-8">
-          <h1 className={designSystem.components.typography.h2}>상담 현황 실시간 모니터링</h1>
-          <p className="text-text-secondary mt-2">
-            상담원별 실시간 진행상황을 모니터링하세요
-          </p>
+      <div className="mb-8">
+        <h1 className={designSystem.components.typography.h2}>영업사원 관리</h1>
+        <p className={designSystem.components.typography.bodySm}>
+          영업사원을 추가하고 관리합니다.
+        </p>
+      </div>
+
+      {/* 상단 통계 카드 */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-text-secondary">전체 영업사원</p>
+              <p className="text-2xl font-bold text-text-primary">{counselors.length}</p>
+            </div>
+            <Users className="w-8 h-8 text-accent" />
+          </div>
         </div>
 
-        {/* 상담원 선택 및 새로고침 */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <span className="text-text-secondary text-sm">상담원 선택:</span>
-            <select
-              value={selectedCounselor}
-              onChange={(e) => setSelectedCounselor(e.target.value)}
-              className="px-4 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent min-w-48"
-            >
-              <option value="">상담원을 선택하세요</option>
-              {counselors.map(counselor => (
-                <option key={counselor.id} value={counselor.id}>
-                  {counselor.name} ({counselor.assigned_count}건 배정)
-                </option>
-              ))}
-            </select>
+        <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-text-secondary">활성 영업사원</p>
+              <p className="text-2xl font-bold text-success">
+                {counselors.filter(c => c.is_active).length}
+              </p>
+            </div>
+            <CheckCircle className="w-8 h-8 text-success" />
           </div>
-          
-          <button
-            onClick={() => {
-              loadCounselors()
-              if (selectedCounselor) {
-                loadCounselorLeads(selectedCounselor)
-              }
-            }}
-            disabled={loading || leadsLoading}
-            className={designSystem.utils.cn(
-              designSystem.components.button.secondary,
-              "px-4 py-2"
-            )}
-          >
-            <businessIcons.team className={`w-4 h-4 mr-2 ${(loading || leadsLoading) ? 'animate-spin' : ''}`} />
-            새로고침
-          </button>
         </div>
 
-        {/* 선택된 상담원 현황 */}
-        {selectedCounselorInfo && (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
-            <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">배정</p>
-                  <p className="text-2xl font-bold text-text-primary">{selectedCounselorInfo.assigned_count}</p>
-                </div>
-                <businessIcons.contact className="w-8 h-8 text-text-secondary" />
-              </div>
+        <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-text-secondary">총 배정 고객</p>
+              <p className="text-2xl font-bold text-warning">
+                {counselors.reduce((sum, c) => sum + (c.assigned_count || 0), 0)}
+              </p>
             </div>
-
-            <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">미접촉</p>
-                  <p className="text-2xl font-bold text-text-primary">
-                    {selectedCounselorInfo.assigned_count - selectedCounselorInfo.in_progress_count - selectedCounselorInfo.completed_count - selectedCounselorInfo.contracted_count}
-                  </p>
-                </div>
-                <businessIcons.phone className="w-8 h-8 text-text-secondary" />
-              </div>
-            </div>
-
-            <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">상담중</p>
-                  <p className="text-2xl font-bold text-accent">{selectedCounselorInfo.in_progress_count}</p>
-                </div>
-                <businessIcons.message className="w-8 h-8 text-accent" />
-              </div>
-            </div>
-
-            <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">계약</p>
-                  <p className="text-2xl font-bold text-accent">{selectedCounselorInfo.contracted_count}</p>
-                </div>
-                <businessIcons.script className="w-8 h-8 text-accent" />
-              </div>
-            </div>
-
-            <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-text-secondary text-sm">총 매출</p>
-                  <p className="text-lg font-bold text-accent">
-                    {selectedCounselorInfo.total_contract_amount.toLocaleString()}원
-                  </p>
-                </div>
-                <businessIcons.date className="w-8 h-8 text-accent" />
-              </div>
-            </div>
+            <UserPlus className="w-8 h-8 text-warning" />
           </div>
-        )}
+        </div>
 
-        {/* 필터 및 검색 */}
-        {selectedCounselor && (
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-4">
-              <span className="text-text-secondary text-sm">상태 필터:</span>
-              <div className="flex gap-2">
-                {[
-                  { key: 'all', label: '전체' },
-                  { key: 'not_contacted', label: '미접촉' },
-                  { key: 'in_progress', label: '상담중' },
-                  { key: 'completed', label: '완료' },
-                  { key: 'contracted', label: '계약' }
-                ].map(filter => (
-                  <button
-                    key={filter.key}
-                    onClick={() => setStatusFilter(filter.key)}
-                    className={`px-3 py-1 rounded-lg text-sm transition-colors ${
-                      statusFilter === filter.key
-                        ? 'bg-accent text-bg-primary'
-                        : 'bg-bg-secondary text-text-secondary hover:text-text-primary'
-                    }`}
-                  >
-                    {filter.label}
-                  </button>
-                ))}
-              </div>
+        <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-text-secondary">총 완료 건수</p>
+              <p className="text-2xl font-bold text-accent">
+                {counselors.reduce((sum, c) => sum + (c.completed_count || 0), 0)}
+              </p>
+            </div>
+            <CheckCircle className="w-8 h-8 text-accent" />
+          </div>
+        </div>
+      </div>
+
+      {/* 벌크 액션 바 */}
+      {selectedCounselors.length > 0 && (
+        <div className="sticky top-0 bg-bg-primary border border-border-primary p-4 z-10 shadow-sm mb-6 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <span className="text-sm font-medium text-text-primary">
+                {selectedCounselors.length}명 선택됨
+              </span>
             </div>
             
-            {/* 검색창 */}
-            <div className="relative">
-              <businessIcons.script className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-text-secondary" />
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={handleBulkEdit}
+                disabled={actionLoading}
+                className={designSystem.components.button.secondary}
+              >
+                <Edit2 className="w-4 h-4 mr-2" />
+                정보 수정
+              </button>
+
+              <button
+                onClick={() => handleBulkToggleActive(true)}
+                disabled={actionLoading}
+                className={designSystem.utils.cn(
+                  designSystem.components.button.secondary,
+                  "text-success border-success hover:bg-success-light"
+                )}
+              >
+                <CheckCircle className="w-4 h-4 mr-2" />
+                활성화
+              </button>
+
+              <button
+                onClick={() => handleBulkToggleActive(false)}
+                disabled={actionLoading}
+                className={designSystem.utils.cn(
+                  designSystem.components.button.secondary,
+                  "text-warning border-warning hover:bg-warning-light"
+                )}
+              >
+                <XCircle className="w-4 h-4 mr-2" />
+                비활성화
+              </button>
+
+              <button
+                onClick={handleBulkDelete}
+                disabled={actionLoading}
+                className={designSystem.utils.cn(
+                  designSystem.components.button.secondary,
+                  "text-error border-error hover:bg-error-light"
+                )}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                삭제
+              </button>
+
+              <button
+                onClick={() => setSelectedCounselors([])}
+                className={designSystem.components.button.secondary}
+              >
+                선택 해제
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 상단 액션 바 */}
+      <div className="flex justify-between items-center mb-6">
+        <h3 className={designSystem.components.typography.h4}>영업사원 목록</h3>
+        <div className="flex gap-3">
+          <button
+            onClick={() => {
+              loadCounselors();
+              toast.info('새로고침', '영업사원 목록이 업데이트되었습니다.');
+            }}
+            disabled={loading}
+            className={designSystem.components.button.secondary}
+          >
+            <RefreshCw className={designSystem.utils.cn("w-4 h-4 mr-2", loading && "animate-spin")} />
+            새로고침
+          </button>
+          <button
+            onClick={() => setShowAddForm(true)}
+            className={designSystem.components.button.primary}
+          >
+            <UserPlus className="w-4 h-4 mr-2" />
+            영업사원 추가
+          </button>
+        </div>
+      </div>
+
+      {/* 영업사원 추가 폼 */}
+      {showAddForm && (
+        <div className={designSystem.utils.cn(designSystem.components.card.base, "p-6 mb-6 bg-accent-light")}>
+          <h4 className="text-lg font-medium mb-4 text-text-primary">새 영업사원 추가</h4>
+          <form onSubmit={handleAddCounselor} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-2 text-text-primary">이메일 *</label>
               <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="고객명, 전화번호, 메모로 검색..."
-                className="pl-10 pr-4 py-2 w-80 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+                type="email"
+                value={newCounselor.email}
+                onChange={(e) => setNewCounselor(prev => ({ ...prev, email: e.target.value }))}
+                className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                placeholder="salesperson@company.com"
+                required
               />
             </div>
-          </div>
-        )}
-
-        {/* 상담원 리드 목록 */}
-        {selectedCounselor && (
-          <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
-            <div className="p-4 border-b border-border-primary">
-              <div className="flex items-center gap-3">
-                <businessIcons.team className="w-5 h-5 text-accent" />
-                <h3 className="font-medium text-text-primary">
-                  {selectedCounselorInfo?.name}님의 배정 고객
-                </h3>
-                <span className="text-sm text-text-secondary">
-                  총 {filteredLeads.length}명
-                </span>
-              </div>
+            
+            <div>
+              <label className="block text-sm font-medium mb-2 text-text-primary">이름 *</label>
+              <input
+                type="text"
+                value={newCounselor.full_name}
+                onChange={(e) => setNewCounselor(prev => ({ ...prev, full_name: e.target.value }))}
+                className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                placeholder="홍길동"
+                required
+              />
             </div>
+            
+            <div>
+              <label className="block text-sm font-medium mb-2 text-text-primary">전화번호</label>
+              <input
+                type="tel"
+                value={newCounselor.phone}
+                onChange={(e) => setNewCounselor(prev => ({ ...prev, phone: e.target.value }))}
+                className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                placeholder="010-1234-5678"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium mb-2 text-text-primary">부서</label>
+              <input
+                type="text"
+                value={newCounselor.department}
+                onChange={(e) => setNewCounselor(prev => ({ ...prev, department: e.target.value }))}
+                className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                placeholder="영업팀"
+              />
+            </div>
+            
+            <div className="md:col-span-2 flex gap-3 pt-4">
+              <button
+                type="submit"
+                disabled={actionLoading}
+                className={designSystem.components.button.primary}
+              >
+                {actionLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <UserPlus className="w-4 h-4 mr-2" />
+                )}
+                추가
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddForm(false);
+                  setNewCounselor({ email: '', full_name: '', phone: '', department: '' });
+                }}
+                className={designSystem.components.button.secondary}
+              >
+                취소
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
-            {leadsLoading ? (
-              <div className="p-12 text-center">
-                <businessIcons.team className="w-8 h-8 text-text-tertiary mx-auto mb-2 animate-spin" />
-                <p className="text-text-secondary">상담 데이터 로딩 중...</p>
-              </div>
-            ) : filteredLeads.length > 0 ? (
-              <div className="overflow-x-auto" style={{ maxHeight: '60vh' }}>
-                <table className="w-full">
-                  <thead className="bg-bg-secondary sticky top-0">
-                    <tr>
-                      <th className="text-left py-3 px-4 font-medium text-text-secondary text-sm">
-                        <div className="flex items-center gap-2">
-                          <businessIcons.phone className="w-4 h-4" />
-                          연락처
-                        </div>
-                      </th>
-                      <th className="text-left py-3 px-4 font-medium text-text-secondary text-sm">
-                        <div className="flex items-center gap-2">
-                          <businessIcons.contact className="w-4 h-4" />
-                          고객명
-                        </div>
-                      </th>
-                      <th className="text-left py-3 px-4 font-medium text-text-secondary text-sm">
-                        <div className="flex items-center gap-2">
-                          <businessIcons.script className="w-4 h-4" />
-                          관심분야
-                        </div>
-                      </th>
-                      <th className="text-center py-3 px-4 font-medium text-text-secondary text-sm">
-                        <div className="flex items-center justify-center gap-2">
-                          <businessIcons.message className="w-4 h-4" />
-                          상담횟수
-                        </div>
-                      </th>
-                      <th className="text-left py-3 px-4 font-medium text-text-secondary text-sm">
-                        <div className="flex items-center gap-2">
-                          <businessIcons.date className="w-4 h-4" />
-                          최근활동
-                        </div>
-                      </th>
-                      <th className="text-center py-3 px-4 font-medium text-text-secondary text-sm">
-                        <div className="flex items-center justify-center gap-2">
-                          <businessIcons.team className="w-4 h-4" />
-                          상태
-                        </div>
-                      </th>
-                      <th className="text-right py-3 px-4 font-medium text-text-secondary text-sm">
-                        <div className="flex items-center justify-end gap-2">
-                          <businessIcons.script className="w-4 h-4" />
-                          계약금액
-                        </div>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredLeads.map((lead) => (
-                      <tr key={lead.assignment_id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
-                        {/* 연락처 */}
-                        <td className="py-4 px-4">
-                          <div className="font-mono text-text-primary font-medium">
-                            {lead.phone}
-                          </div>
-                        </td>
+      {/* SmartTable로 간소화된 영업사원 목록 */}
+      <SmartTable
+        data={counselors}
+        columns={counselorColumns}
+        selectedItems={selectedCounselors}
+        onToggleSelection={toggleCounselorSelection}
+        getItemId={(counselor) => counselor.id}
+        searchPlaceholder="이름, 이메일, 부서로 검색..."
+        emptyMessage="등록된 영업사원이 없습니다."
+        height="50vh"
+        minHeight="300px"
+        maxHeight="600px"
+      />
 
-                        {/* 고객명 */}
-                        <td className="py-4 px-4">
-                          <div>
-                            <div className="font-medium text-text-primary">
-                              {lead.actual_customer_name || '고객명 미확인'}
-                            </div>
-                            <div className="text-xs text-text-secondary">
-                              {lead.data_source}
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* 관심분야 */}
-                        <td className="py-4 px-4">
-                          <div className="text-text-primary">
-                            {lead.contact_script}
-                          </div>
-                        </td>
-
-                        {/* 상담 횟수 */}
-                        <td className="py-4 px-4 text-center">
-                          <span className="font-medium text-text-primary">
-                            {lead.call_attempts}회
-                          </span>
-                        </td>
-
-                        {/* 최근 활동 */}
-                        <td className="py-4 px-4">
-                          <div>
-                            <span className="text-text-secondary text-sm">
-                              {getTimeAgo(lead.last_contact_date)}
-                            </span>
-                            {lead.customer_reaction && (
-                              <div className="text-xs text-text-tertiary mt-1">
-                                반응: {lead.customer_reaction}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* 상태 */}
-                        <td className="py-4 px-4 text-center">
-                          {getStatusBadge(lead.status)}
-                        </td>
-
-                        {/* 계약금액 */}
-                        <td className="py-4 px-4 text-right">
-                          {lead.contract_amount ? (
-                            <span className="font-medium text-accent">
-                              {lead.contract_amount.toLocaleString()}원
-                            </span>
-                          ) : (
-                            <span className="text-text-tertiary">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="text-center py-12">
-                <businessIcons.contact className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-text-primary mb-2">
-                  {statusFilter === 'all' ? '배정된 고객이 없습니다' : `${statusFilter} 상태의 고객이 없습니다`}
-                </h3>
-                <p className="text-text-secondary">
-                  상담원에게 고객을 배정하면 여기에 표시됩니다.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 상담원 미선택 시 */}
-        {!selectedCounselor && (
-          <div className="text-center py-12">
-            <businessIcons.team className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-text-primary mb-2">
-              상담원을 선택해주세요
+      {/* 벌크 수정 모달 */}
+      {showBulkEditModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-medium mb-4 text-text-primary">
+              {selectedCounselors.length === 1 ? '영업사원 정보 수정' : `${selectedCounselors.length}명 일괄 수정`}
             </h3>
-            <p className="text-text-secondary">
-              위에서 상담원을 선택하면 해당 상담원의 실시간 진행상황을 확인할 수 있습니다.
-            </p>
+            
+            <form onSubmit={handleBulkEditSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-text-primary">이름</label>
+                <input
+                  type="text"
+                  value={bulkEditForm.full_name}
+                  onChange={(e) => setBulkEditForm(prev => ({ ...prev, full_name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                  placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "이름을 입력하세요"}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2 text-text-primary">이메일</label>
+                <input
+                  type="email"
+                  value={bulkEditForm.email}
+                  onChange={(e) => setBulkEditForm(prev => ({ ...prev, email: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                  placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "이메일을 입력하세요"}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2 text-text-primary">전화번호</label>
+                <input
+                  type="tel"
+                  value={bulkEditForm.phone}
+                  onChange={(e) => setBulkEditForm(prev => ({ ...prev, phone: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                  placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "전화번호를 입력하세요"}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium mb-2 text-text-primary">부서</label>
+                <input
+                  type="text"
+                  value={bulkEditForm.department}
+                  onChange={(e) => setBulkEditForm(prev => ({ ...prev, department: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                  placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "부서를 입력하세요"}
+                />
+              </div>
+
+              {selectedCounselors.length > 1 && (
+                <div className="p-3 bg-accent-light rounded-lg">
+                  <p className="text-sm text-text-secondary">
+                    💡 다중 선택 시 빈 칸은 변경되지 않습니다. 변경할 정보만 입력하세요.
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="submit"
+                  disabled={actionLoading}
+                  className={designSystem.components.button.primary}
+                >
+                  {actionLoading ? (
+                    <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                  )}
+                  수정 완료
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBulkEditModal(false);
+                    setBulkEditForm({ full_name: '', email: '', phone: '', department: '' });
+                  }}
+                  className={designSystem.components.button.secondary}
+                >
+                  취소
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </AdminLayout>
-  )
+  );
 }
