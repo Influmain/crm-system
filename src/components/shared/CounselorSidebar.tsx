@@ -1,10 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'  // ✅ useRouter 추가
+import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useTheme } from '@/hooks/useTheme'
-import { useAuth } from '@/lib/auth/AuthContext'  // ✅ AuthContext 추가
+import { useAuth } from '@/lib/auth/AuthContext'
 import { designSystem } from '@/lib/design-system'
 import { businessIcons } from '@/lib/design-system/icons'
 import { 
@@ -23,12 +23,12 @@ interface CounselorSidebarProps {
 
 export default function CounselorSidebar({ className }: CounselorSidebarProps) {
   const { isDark, toggle: toggleTheme } = useTheme()
-  const { user, userProfile, signOut } = useAuth()  // ✅ 실제 사용자 정보 가져오기
+  const { user, userProfile, signOut } = useAuth()
   const [isProfileOpen, setIsProfileOpen] = useState(false)
   const pathname = usePathname()
-  const router = useRouter()  // ✅ 라우터 추가
+  const router = useRouter()
 
-  // ✅ businessIcons 시스템 활용한 상담사 네비게이션 메뉴
+  // ✅ 단순화된 상담원 네비게이션 메뉴
   const navigationItems = [
     {
       href: '/counselor/dashboard',
@@ -36,28 +36,11 @@ export default function CounselorSidebar({ className }: CounselorSidebarProps) {
       icon: businessIcons.dashboard
     },
     {
-      href: '/counselor/leads',
-      label: '내 리드',
+      href: '/counselor/consulting',
+      label: '상담 진행',
       badge: '12',
       badgeType: 'warning',
       icon: businessIcons.contact
-    },
-    {
-      href: '/counselor/schedule',
-      label: '일정 관리',
-      badge: '3',
-      badgeType: 'error',
-      icon: businessIcons.date
-    },
-    {
-      href: '/counselor/records',
-      label: '상담 기록',
-      icon: businessIcons.script
-    },
-    {
-      href: '/counselor/analytics',
-      label: '성과 분석',
-      icon: businessIcons.analytics
     }
   ]
 
@@ -79,26 +62,25 @@ export default function CounselorSidebar({ className }: CounselorSidebarProps) {
     return <span className={badgeClass}>{badge}</span>
   }
 
-  // ✅ 사용자 이름 표시 로직 (안전한 fallback)
+  // 사용자 이름 표시 로직 (안전한 fallback)
   const displayName = userProfile?.full_name || user?.email?.split('@')[0] || '상담원'
   const displayRole = userProfile?.role === 'counselor' ? '상담원' : userProfile?.department || '상담사'
 
-  // ✅ 로그아웃 핸들러 - 로그인 페이지로 리다이렉트
+  // 로그아웃 핸들러 - 로그인 페이지로 리다이렉트
   const handleLogout = async () => {
     setIsProfileOpen(false)
     try {
-      await signOut()  // AuthContext의 signOut 실행
-      router.push('/login')  // 로그인 페이지로 리다이렉트
+      await signOut()
+      router.push('/login')
     } catch (error) {
       console.error('로그아웃 오류:', error)
-      // 오류가 발생해도 로그인 페이지로 이동
       router.push('/login')
     }
   }
 
   return (
     <aside className={designSystem.utils.cn('w-72 bg-bg-secondary border-r border-border-primary flex-shrink-0 h-screen fixed left-0 top-0 flex flex-col', className)}>
-      {/* 로고 섹션 - ✅ 상담원 전용 브랜딩 */}
+      {/* 로고 섹션 - 상담원 전용 브랜딩 */}
       <div className="p-6 border-b border-border-primary flex-shrink-0">
         <Link href="/counselor/dashboard" className="flex items-center gap-3">
           <div className="w-10 h-10 bg-accent rounded-lg flex items-center justify-center shadow-sm">
@@ -154,7 +136,7 @@ export default function CounselorSidebar({ className }: CounselorSidebarProps) {
           <span className="text-xs bg-error text-white px-2 py-0.5 rounded-full min-w-[20px] text-center">2</span>
         </button>
 
-        {/* 프로필 메뉴 - ✅ 실제 사용자 정보 연동 */}
+        {/* 프로필 메뉴 - 실제 사용자 정보 연동 */}
         <div className="relative">
           {/* 프로필 버튼 */}
           <button 
@@ -166,10 +148,10 @@ export default function CounselorSidebar({ className }: CounselorSidebarProps) {
             </div>
             <div className="flex-1 min-w-0 text-left">
               <div className={designSystem.utils.cn('text-sm font-medium truncate', designSystem.colors.text.primary)}>
-                {displayName}  {/* ✅ 실제 사용자 이름 */}
+                {displayName}
               </div>
               <div className={designSystem.utils.cn('text-xs', designSystem.colors.text.tertiary)}>
-                {displayRole}  {/* ✅ 실제 사용자 역할 */}
+                {displayRole}
               </div>
             </div>
             <ChevronRight 
@@ -218,7 +200,7 @@ export default function CounselorSidebar({ className }: CounselorSidebarProps) {
               {/* 구분선 */}
               <div className="mx-6 border-t border-border-primary my-2"></div>
 
-              {/* 로그아웃 - ✅ 실제 로그아웃 기능 연동 */}
+              {/* 로그아웃 - 실제 로그아웃 기능 연동 */}
               <button 
                 className={designSystem.utils.cn('flex items-center gap-3 px-6 py-2 text-sm transition-colors w-full text-left', designSystem.colors.status.error.text, 'hover:bg-bg-hover')}
                 onClick={handleLogout}

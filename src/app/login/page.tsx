@@ -1,160 +1,176 @@
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { useAuth } from '@/lib/auth/AuthContext';
-import { designSystem } from '@/lib/design-system';
-import { businessIcons } from '@/lib/design-system/icons';
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/lib/auth/AuthContext'
+import { useToastHelpers } from '@/components/ui/Toast'
+import LoginModal from '@/components/auth/LoginModal'
+import { designSystem } from '@/lib/design-system'
+import { ArrowLeft, BarChart3 } from 'lucide-react'
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  
-  const { signIn } = useAuth();
+  const { user, profile, loading } = useAuth()
+  const router = useRouter()
+  const toast = useToastHelpers()
+  const [mounted, setMounted] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
-    console.log('로그인 폼 제출:', { email, password: '***' });
-
-    const { error } = await signIn(email, password);
-    
-    if (error) {
-      console.error('로그인 실패:', error);
-      setError('이메일 또는 비밀번호가 올바르지 않습니다.');
-      setLoading(false);
-    } else {
-      console.log('로그인 성공, AuthContext가 자동으로 리다이렉트 처리');
-      // ✅ 리다이렉트는 AuthContext의 loadUserProfile에서 자동 처리
+  // 이미 로그인된 경우 대시보드로 리다이렉트
+  useEffect(() => {
+    if (user && profile && mounted) {
+      const dashboardPath = profile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+      
+      toast.info(
+        '이미 로그인됨',
+        `${profile.full_name || user.email}님으로 로그인되어 있습니다.`,
+        {
+          action: { 
+            label: '대시보드로 이동', 
+            onClick: () => router.push(dashboardPath)
+          }
+        }
+      )
+      
+      setTimeout(() => {
+        router.push(dashboardPath)
+      }, 2000)
     }
-  };
+  }, [user, profile, mounted, router, toast])
 
-  // 테스트 계정으로 자동 입력
-  const fillTestAccount = (type: 'admin' | 'counselor') => {
-    if (type === 'admin') {
-      setEmail('admin@company.com');
-      setPassword('admin123');
-    } else {
-      setEmail('counselor1@company.com');
-      setPassword('counselor123');
-    }
-  };
+  const handleLoginSuccess = (user: any, profile: any) => {
+    console.log('로그인 페이지에서 로그인 성공:', user.email, profile.role)
+    // LoginModal에서 이미 리다이렉트와 토스트 처리됨
+  }
 
-  return (
-    <div className="min-h-screen bg-bg-secondary flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        {/* 헤더 */}
-        <div>
-          <div className="mx-auto h-12 w-12 bg-accent rounded-lg flex items-center justify-center">
-            {businessIcons.contact && <businessIcons.contact className="h-8 w-8 text-white" />}
-          </div>
-          <h2 className="mt-6 text-center text-3xl font-bold text-text-primary">
-            CRM 시스템 로그인
-          </h2>
-          <p className="mt-2 text-center text-sm text-text-secondary">
-            관리자 또는 상담원 계정으로 로그인하세요
-          </p>
+  const handleClose = () => {
+    router.push('/')
+  }
+
+  // 로딩 중
+  if (!mounted || loading) {
+    return (
+      <div className="min-h-screen bg-bg-primary flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-text-secondary">로그인 상태 확인 중...</p>
         </div>
-        
-        {/* 로그인 폼 */}
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-text-primary">
-                이메일 주소
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-border-primary rounded-md shadow-sm bg-bg-primary text-text-primary focus:outline-none focus:ring-accent focus:border-accent"
-                placeholder="your@email.com"
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-text-primary">
-                비밀번호
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-border-primary rounded-md shadow-sm bg-bg-primary text-text-primary focus:outline-none focus:ring-accent focus:border-accent"
-                placeholder="비밀번호를 입력하세요"
-              />
-            </div>
+      </div>
+    )
+  }
+
+  // 이미 로그인된 경우 안내 화면
+  if (user && profile) {
+    return (
+      <div className="min-h-screen bg-bg-primary flex items-center justify-center">
+        <div className="text-center max-w-md mx-auto p-8">
+          <div className="w-16 h-16 bg-success/10 rounded-xl flex items-center justify-center mx-auto mb-6">
+            <BarChart3 className="w-8 h-8 text-success" />
           </div>
-
-          {/* 에러 메시지 */}
-          {error && (
-            <div className="bg-error-light border border-error rounded-md p-3">
-              <p className="text-sm text-error">{error}</p>
-            </div>
-          )}
-
-          {/* 로그인 버튼 */}
-          <div>
+          
+          <h1 className={designSystem.components.typography.h3 + " mb-4"}>
+            로그인 완료
+          </h1>
+          
+          <p className="text-text-secondary mb-6">
+            {profile.full_name || user.email}님으로 로그인되어 있습니다.
+            <br />
+            잠시 후 대시보드로 이동합니다.
+          </p>
+          
+          <div className="flex flex-col gap-3">
             <button
-              type="submit"
-              disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-accent hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => {
+                const dashboardPath = profile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+                router.push(dashboardPath)
+              }}
+              className={designSystem.components.button.primary}
             >
-              {loading ? '로그인 중...' : '로그인'}
+              대시보드로 이동
             </button>
-          </div>
-        </form>
-
-        {/* 테스트 계정 안내 */}
-        <div className="mt-6 p-4 bg-bg-primary border border-border-primary rounded-lg">
-          <h3 className="text-sm font-medium text-text-primary mb-3">🧪 테스트 계정</h3>
-          
-          <div className="space-y-3">
-            <div className="flex items-center justify-between p-2 bg-bg-secondary rounded border border-border-primary">
-              <div className="text-xs">
-                <div className="font-medium text-text-primary">관리자</div>
-                <div className="text-text-tertiary">admin@company.com / admin123</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => fillTestAccount('admin')}
-                className="px-2 py-1 text-xs bg-accent text-white rounded hover:bg-accent/90"
-              >
-                자동입력
-              </button>
-            </div>
             
-            <div className="flex items-center justify-between p-2 bg-bg-secondary rounded border border-border-primary">
-              <div className="text-xs">
-                <div className="font-medium text-text-primary">상담원</div>
-                <div className="text-text-tertiary">counselor1@company.com / counselor123</div>
-              </div>
-              <button
-                type="button"
-                onClick={() => fillTestAccount('counselor')}
-                className="px-2 py-1 text-xs bg-accent text-white rounded hover:bg-accent/90"
-              >
-                자동입력
-              </button>
-            </div>
-          </div>
-          
-          <div className="mt-3 text-xs text-text-tertiary">
-            💡 자동입력 버튼을 클릭하면 테스트 계정 정보가 자동으로 입력됩니다
+            <button
+              onClick={() => router.push('/')}
+              className={designSystem.components.button.secondary}
+            >
+              홈페이지로 이동
+            </button>
           </div>
         </div>
       </div>
+    )
+  }
+
+  // 로그인이 필요한 경우 - 모달을 페이지 중앙에 고정 표시
+  return (
+    <div className="min-h-screen bg-bg-primary">
+      {/* 상단 네비게이션 */}
+      <header className="flex items-center justify-between p-6">
+        <button
+          onClick={() => router.push('/')}
+          className="flex items-center gap-2 text-text-secondary hover:text-text-primary transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span className="text-sm">홈페이지로 돌아가기</span>
+        </button>
+        
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center">
+            <BarChart3 className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <div className="text-sm font-medium text-text-primary">CRM System</div>
+            <div className="text-xs text-text-secondary">로그인 페이지</div>
+          </div>
+        </div>
+      </header>
+
+      {/* 중앙 로그인 영역 */}
+      <div className="flex items-center justify-center min-h-[calc(100vh-120px)] px-4">
+        <div className="w-full max-w-md">
+          {/* 페이지 제목 */}
+          <div className="text-center mb-8">
+            <h1 className={designSystem.components.typography.h2 + " mb-2"}>
+              CRM 시스템 로그인
+            </h1>
+            <p className="text-text-secondary">
+              계정에 로그인하여 리드 관리를 시작하세요
+            </p>
+          </div>
+
+          {/* LoginModal을 항상 열린 상태로 표시 */}
+          <div className="relative">
+            <LoginModal 
+              isOpen={true} 
+              onClose={handleClose}
+              onSuccess={handleLoginSuccess}
+            />
+          </div>
+
+          {/* 추가 안내 */}
+          <div className="mt-8 text-center">
+            <div className="p-4 bg-bg-secondary rounded-lg">
+              <p className="text-sm text-text-secondary mb-2">
+                💡 <strong>URL 직접 접근</strong>
+              </p>
+              <p className="text-xs text-text-tertiary">
+                이 페이지는 북마크하거나 직접 URL로 접근할 때 사용됩니다.
+                <br />
+                홈페이지에서는 모달 방식으로 더 편리하게 로그인할 수 있습니다.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 푸터 */}
+      <footer className="text-center p-6 border-t border-border-primary">
+        <p className="text-xs text-text-tertiary">
+          © 2025 CRM Lead Management System
+        </p>
+      </footer>
     </div>
-  );
+  )
 }

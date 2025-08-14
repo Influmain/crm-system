@@ -90,56 +90,40 @@ export default function ConsultingMonitor() {
             .eq('counselor_id', counselor.id)
             .eq('status', 'active')
 
-          // 상담 현황별 통계 - counselor_lead_stats 뷰 사용 시도
-          const { data: statsData } = await supabase
-            .from('counselor_lead_stats')
-            .select('*')
+          // 상담 현황별 통계 - 직접 계산
+          const { data: leadsData } = await supabase
+            .from('lead_assignments')
+            .select(`
+              id,
+              counseling_activities (
+                contact_result,
+                contract_status,
+                contract_amount
+              )
+            `)
             .eq('counselor_id', counselor.id)
-            .single()
+            .eq('status', 'active')
 
-          // 뷰가 없다면 직접 계산
           let inProgressCount = 0
           let completedCount = 0
           let contractedCount = 0
           let totalContractAmount = 0
 
-          if (statsData) {
-            // 뷰에서 데이터 가져오기
-            inProgressCount = statsData.in_progress_count || 0
-            completedCount = statsData.completed_count || 0
-            contractedCount = statsData.contracted_count || 0
-            totalContractAmount = statsData.total_contract_amount || 0
-          } else {
-            // 직접 계산
-            const { data: leadsData } = await supabase
-              .from('lead_assignments')
-              .select(`
-                id,
-                counseling_activities (
-                  contact_result,
-                  contract_status,
-                  contract_amount
-                )
-              `)
-              .eq('counselor_id', counselor.id)
-              .eq('status', 'active')
-
-            leadsData?.forEach(assignment => {
-              const activities = assignment.counseling_activities
-              if (activities && activities.length > 0) {
-                const latestActivity = activities[activities.length - 1]
-                
-                if (latestActivity.contract_status === 'contracted') {
-                  contractedCount++
-                  totalContractAmount += latestActivity.contract_amount || 0
-                } else if (latestActivity.contract_status === 'failed') {
-                  completedCount++
-                } else {
-                  inProgressCount++
-                }
+          leadsData?.forEach(assignment => {
+            const activities = assignment.counseling_activities
+            if (activities && activities.length > 0) {
+              const latestActivity = activities[activities.length - 1]
+              
+              if (latestActivity.contract_status === 'contracted') {
+                contractedCount++
+                totalContractAmount += latestActivity.contract_amount || 0
+              } else if (latestActivity.contract_status === 'failed') {
+                completedCount++
+              } else {
+                inProgressCount++
               }
-            })
-          }
+            }
+          })
 
           return {
             id: counselor.id,
@@ -177,106 +161,76 @@ export default function ConsultingMonitor() {
   const loadCounselorLeads = async (counselorId: string) => {
     setLeadsLoading(true)
     try {
-      // counselor_leads_view 사용 시도
-      const { data: viewData, error: viewError } = await supabase
-        .from('counselor_leads_view')
-        .select('*')
+      // 직접 조회 방식 사용 (뷰에 contract_amount가 제대로 포함되지 않음)
+      const { data: leadsData, error: leadsError } = await supabase
+        .from('lead_assignments')
+        .select(`
+          id,
+          lead_id,
+          assigned_at,
+          status,
+          lead_pool (
+            id,
+            phone,
+            contact_name,
+            data_source,
+            contact_script
+          )
+        `)
         .eq('counselor_id', counselorId)
+        .eq('status', 'active')
         .order('assigned_at', { ascending: false })
 
-      let enrichedLeads: CounselorLead[] = []
+      if (leadsError) throw leadsError
 
-      if (viewData && !viewError) {
-        // 뷰에서 데이터 가져오기 성공
-        enrichedLeads = viewData.map(lead => ({
-          assignment_id: lead.assignment_id,
-          lead_id: lead.lead_id,
-          phone: lead.phone || '',
-          actual_customer_name: lead.actual_customer_name || null,
-          data_source: lead.data_source || '미지정',
-          contact_script: lead.contact_script || '',
-          assigned_at: lead.assigned_at,
-          last_contact_date: lead.last_contact_date || null,
-          call_attempts: lead.call_attempts || 0,
-          latest_contact_result: lead.latest_contact_result || null,
-          latest_contract_status: lead.latest_contract_status || null,
-          contract_amount: lead.contract_amount || null,
-          status: lead.status || 'not_contacted',
-          counseling_memo: lead.counseling_memo || null,
-          customer_reaction: lead.customer_reaction || null
-        }))
-      } else {
-        // 뷰가 없다면 직접 조회
-        const { data: leadsData, error: leadsError } = await supabase
-          .from('lead_assignments')
-          .select(`
-            id,
-            lead_id,
-            assigned_at,
+      // 각 리드별 최신 상담 기록 조회
+      const enrichedLeads = await Promise.all(
+        leadsData?.map(async (assignment) => {
+          const { data: latestConsulting } = await supabase
+            .from('counseling_activities')
+            .select('contact_date, contact_result, contract_status, contract_amount, counseling_memo, customer_reaction, actual_customer_name')
+            .eq('assignment_id', assignment.id)
+            .order('contact_date', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+          // 상담 횟수 조회
+          const { count: callAttempts } = await supabase
+            .from('counseling_activities')
+            .select('*', { count: 'exact' })
+            .eq('assignment_id', assignment.id)
+
+          // 상태 계산
+          let status: CounselorLead['status'] = 'not_contacted'
+          if (latestConsulting) {
+            if (latestConsulting.contract_status === 'contracted') {
+              status = 'contracted'
+            } else if (latestConsulting.contract_status === 'failed') {
+              status = 'completed'
+            } else {
+              status = 'in_progress'
+            }
+          }
+
+          return {
+            assignment_id: assignment.id,
+            lead_id: assignment.lead_id,
+            phone: assignment.lead_pool?.phone || '',
+            actual_customer_name: latestConsulting?.actual_customer_name || null,
+            data_source: assignment.lead_pool?.data_source || '미지정',
+            contact_script: assignment.lead_pool?.contact_script || '',
+            assigned_at: assignment.assigned_at,
+            last_contact_date: latestConsulting?.contact_date || null,
+            call_attempts: callAttempts || 0,
+            latest_contact_result: latestConsulting?.contact_result || null,
+            latest_contract_status: latestConsulting?.contract_status || null,
+            contract_amount: latestConsulting?.contract_amount || null,
             status,
-            lead_pool (
-              id,
-              phone,
-              contact_name,
-              data_source,
-              contact_script
-            )
-          `)
-          .eq('counselor_id', counselorId)
-          .eq('status', 'active')
-          .order('assigned_at', { ascending: false })
-
-        if (leadsError) throw leadsError
-
-        // 각 리드별 최신 상담 기록 조회
-        enrichedLeads = await Promise.all(
-          leadsData?.map(async (assignment) => {
-            const { data: latestConsulting } = await supabase
-              .from('counseling_activities')
-              .select('contact_date, contact_result, contract_status, contract_amount, counseling_memo, customer_reaction, actual_customer_name')
-              .eq('assignment_id', assignment.id)
-              .order('contact_date', { ascending: false })
-              .limit(1)
-              .single()
-
-            // 상담 횟수 조회
-            const { count: callAttempts } = await supabase
-              .from('counseling_activities')
-              .select('*', { count: 'exact' })
-              .eq('assignment_id', assignment.id)
-
-            // 상태 계산
-            let status: CounselorLead['status'] = 'not_contacted'
-            if (latestConsulting) {
-              if (latestConsulting.contract_status === 'contracted') {
-                status = 'contracted'
-              } else if (latestConsulting.contract_status === 'failed') {
-                status = 'completed'
-              } else {
-                status = 'in_progress'
-              }
-            }
-
-            return {
-              assignment_id: assignment.id,
-              lead_id: assignment.lead_id,
-              phone: assignment.lead_pool?.phone || '',
-              actual_customer_name: latestConsulting?.actual_customer_name || null,
-              data_source: assignment.lead_pool?.data_source || '미지정',
-              contact_script: assignment.lead_pool?.contact_script || '',
-              assigned_at: assignment.assigned_at,
-              last_contact_date: latestConsulting?.contact_date || null,
-              call_attempts: callAttempts || 0,
-              latest_contact_result: latestConsulting?.contact_result || null,
-              latest_contract_status: latestConsulting?.contract_status || null,
-              contract_amount: latestConsulting?.contract_amount || null,
-              status,
-              counseling_memo: latestConsulting?.counseling_memo || null,
-              customer_reaction: latestConsulting?.customer_reaction || null
-            }
-          }) || []
-        )
-      }
+            counseling_memo: latestConsulting?.counseling_memo || null,
+            customer_reaction: latestConsulting?.customer_reaction || null
+          }
+        }) || []
+      )
 
       setCounselorLeads(enrichedLeads)
 

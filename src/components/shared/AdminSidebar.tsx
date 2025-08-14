@@ -1,10 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'  // ✅ useRouter 추가
+import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useTheme } from '@/hooks/useTheme'
-import { useAuth } from '@/lib/auth/AuthContext'  // ✅ AuthContext 추가
+import { useAuth } from '@/lib/auth/AuthContext'
 import { designSystem } from '@/lib/design-system'
 import { businessIcons } from '@/lib/design-system/icons'
 import { 
@@ -25,12 +25,12 @@ interface AdminSidebarProps {
 
 export default function AdminSidebar({ className }: AdminSidebarProps) {
   const { isDark, toggle: toggleTheme } = useTheme()
-  const { user, userProfile, signOut } = useAuth()  // ✅ 실제 사용자 정보 가져오기
+  const { user, userProfile, signOut } = useAuth()
   const [isProfileOpen, setIsProfileOpen] = useState(false)
   const pathname = usePathname()
-  const router = useRouter()  // ✅ 라우터 추가
+  const router = useRouter()
 
-  // ✅ businessIcons 시스템 활용한 네비게이션 메뉴
+  // ✅ 업데이트된 관리자 네비게이션 메뉴
   const navigationItems = [
     {
       href: '/admin/dashboard',
@@ -64,13 +64,15 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
       icon: businessIcons.assignment
     },
     {
-      href: '/admin/analytics',
-      label: '전체 분석',
+      href: '/admin/consulting-monitor',
+      label: '상담 모니터링',
+      badge: '실시간',
+      badgeType: 'success',
       icon: businessIcons.analytics
     },
     {
-      href: '/admin/reports',
-      label: '보고서',
+      href: '/admin/consulting-results',
+      label: '상담 결과 분석',
       icon: businessIcons.script
     },
     {
@@ -100,19 +102,18 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
     return <span className={badgeClass}>{badge}</span>
   }
 
-  // ✅ 사용자 이름 표시 로직 (안전한 fallback)
+  // 사용자 이름 표시 로직 (안전한 fallback)
   const displayName = userProfile?.full_name || user?.email?.split('@')[0] || '관리자'
   const displayRole = userProfile?.role === 'admin' ? '시스템 관리자' : userProfile?.department || '관리자'
 
-  // ✅ 로그아웃 핸들러 - 로그인 페이지로 리다이렉트
+  // 로그아웃 핸들러 - 로그인 페이지로 리다이렉트
   const handleLogout = async () => {
     setIsProfileOpen(false)
     try {
-      await signOut()  // AuthContext의 signOut 실행
-      router.push('/login')  // 로그인 페이지로 리다이렉트
+      await signOut()
+      router.push('/login')
     } catch (error) {
       console.error('로그아웃 오류:', error)
-      // 오류가 발생해도 로그인 페이지로 이동
       router.push('/login')
     }
   }
@@ -175,7 +176,7 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
           <span className="text-xs bg-warning text-white px-2 py-0.5 rounded-full min-w-[20px] text-center">3</span>
         </button>
 
-        {/* 프로필 메뉴 - ✅ 실제 사용자 정보 연동 */}
+        {/* 프로필 메뉴 - 실제 사용자 정보 연동 */}
         <div className="relative">
           {/* 프로필 버튼 */}
           <button 
@@ -187,10 +188,10 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
             </div>
             <div className="flex-1 min-w-0 text-left">
               <div className={designSystem.utils.cn('text-sm font-medium truncate', designSystem.colors.text.primary)}>
-                {displayName}  {/* ✅ 실제 사용자 이름 */}
+                {displayName}
               </div>
               <div className={designSystem.utils.cn('text-xs', designSystem.colors.text.tertiary)}>
-                {displayRole}  {/* ✅ 실제 사용자 역할 */}
+                {displayRole}
               </div>
             </div>
             <ChevronRight 
@@ -249,7 +250,7 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
               {/* 구분선 */}
               <div className="mx-6 border-t border-border-primary my-2"></div>
 
-              {/* 로그아웃 - ✅ 실제 로그아웃 기능 연동 */}
+              {/* 로그아웃 - 실제 로그아웃 기능 연동 */}
               <button 
                 className={designSystem.utils.cn('flex items-center gap-3 px-6 py-2 text-sm transition-colors w-full text-left', designSystem.colors.status.error.text, 'hover:bg-bg-hover')}
                 onClick={handleLogout}
