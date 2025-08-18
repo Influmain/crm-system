@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
 import CounselorLayout from '@/components/layout/CounselorLayout';
 
-// 타입 정의
+// 타입 정의 (대시보드와 동일하게 수정)
 interface AssignedLead {
   assignment_id: string
   lead_id: string
@@ -23,7 +23,7 @@ interface AssignedLead {
   latest_contact_result?: string
   latest_contract_status?: string
   contract_amount?: number
-  status: 'not_contacted' | 'in_progress' | 'completed' | 'contracted'
+  status: 'not_contacted' | 'in_progress' | 'contracted'
 }
 
 interface ConsultingRecord {
@@ -76,128 +76,6 @@ export default function CounselorConsulting() {
     commission_amount: undefined
   })
 
-  // SmartTable용 컬럼 정의
-  const columns = [
-    {
-      key: 'contact_name',
-      label: '고객정보',
-      icon: businessIcons.contact,
-      width: 'w-48',
-      render: (value: string, lead: AssignedLead) => (
-        <div>
-          <div className="font-medium text-text-primary">
-            {lead.contact_name}
-          </div>
-          <div className="text-sm text-text-secondary">
-            {lead.data_source}
-          </div>
-          <div className="text-xs text-text-tertiary truncate max-w-48">
-            {lead.contact_script}
-          </div>
-        </div>
-      )
-    },
-    {
-      key: 'phone',
-      label: '연락처',
-      icon: businessIcons.phone,
-      width: 'w-32',
-      render: (value: string) => (
-        <div className="font-mono text-text-primary">
-          {value}
-        </div>
-      )
-    },
-    {
-      key: 'call_attempts',
-      label: '상담횟수',
-      icon: businessIcons.message,
-      width: 'w-24',
-      render: (value: number) => (
-        <div className="text-center">
-          <span className="font-medium text-text-primary">
-            {value}회
-          </span>
-        </div>
-      )
-    },
-    {
-      key: 'last_contact_date',
-      label: '최근상담',
-      icon: businessIcons.date,
-      width: 'w-28',
-      render: (value: string | null) => (
-        <span className="text-text-secondary text-sm">
-          {value 
-            ? new Date(value).toLocaleDateString('ko-KR')
-            : '미접촉'
-          }
-        </span>
-      )
-    },
-    {
-      key: 'status',
-      label: '상태',
-      icon: businessIcons.team,
-      width: 'w-24',
-      render: (value: AssignedLead['status']) => {
-        const styles = {
-          not_contacted: 'bg-bg-secondary text-text-primary',
-          in_progress: 'bg-accent/10 text-accent',
-          completed: 'bg-text-secondary/10 text-text-secondary',
-          contracted: 'bg-accent/20 text-accent font-medium'
-        }
-        
-        const labels = {
-          not_contacted: '미접촉',
-          in_progress: '상담중',
-          completed: '완료',
-          contracted: '계약'
-        }
-        
-        return (
-          <span className={`px-2 py-1 rounded-full text-xs ${styles[value]}`}>
-            {labels[value]}
-          </span>
-        )
-      }
-    },
-    {
-      key: 'contract_amount',
-      label: '계약금액',
-      icon: businessIcons.script,
-      width: 'w-32',
-      render: (value: number | null) => (
-        <div className="text-right">
-          {value ? (
-            <span className="font-medium text-accent">
-              {value.toLocaleString()}원
-            </span>
-          ) : (
-            <span className="text-text-tertiary">-</span>
-          )}
-        </div>
-      )
-    },
-    {
-      key: 'actions',
-      label: '액션',
-      icon: businessIcons.contact,
-      width: 'w-32',
-      render: (value: any, lead: AssignedLead) => (
-        <div className="text-center">
-          <button
-            onClick={() => startConsultingRecord(lead)}
-            className="inline-flex items-center gap-2 px-3 py-2 bg-accent text-bg-primary rounded-lg hover:bg-accent/90 transition-colors text-sm font-medium"
-          >
-            <businessIcons.phone className="w-4 h-4" />
-            {lead.status === 'not_contacted' ? '기록 입력' : '기록 수정'}
-          </button>
-        </div>
-      )
-    }
-  ]
-
   // 데이터 로드
   useEffect(() => {
     if (user?.id) {
@@ -208,14 +86,14 @@ export default function CounselorConsulting() {
   // 필터 적용
   useEffect(() => {
     applyFilter()
-  }, [leads, statusFilter])
+  }, [leads, statusFilter, searchTerm])
 
   const loadAssignedLeads = async () => {
     if (!user?.id) return
 
     setLoading(true)
     try {
-      // 배정된 리드 목록과 최신 상담 기록 조회
+      // 배정된 리드 목록과 최신 상담 기록 조회 (대시보드와 동일한 로직)
       const { data: leadsData, error: leadsError } = await supabase
         .from('lead_assignments')
         .select(`
@@ -254,13 +132,11 @@ export default function CounselorConsulting() {
             .select('*', { count: 'exact' })
             .eq('assignment_id', assignment.id)
 
-          // 상태 계산
+          // 상태 계산 (대시보드와 동일한 단순화된 로직)
           let status: AssignedLead['status'] = 'not_contacted'
           if (latestConsulting) {
             if (latestConsulting.contract_status === 'contracted') {
               status = 'contracted'
-            } else if (latestConsulting.contract_status === 'failed') {
-              status = 'completed'
             } else {
               status = 'in_progress'
             }
@@ -303,6 +179,14 @@ export default function CounselorConsulting() {
     if (statusFilter !== 'all') {
       filtered = leads.filter(lead => lead.status === statusFilter)
     }
+
+    if (searchTerm) {
+      filtered = filtered.filter(lead => 
+        lead.contact_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        lead.phone.includes(searchTerm) ||
+        lead.contact_script.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+    }
     
     setFilteredLeads(filtered)
   }
@@ -318,7 +202,7 @@ export default function CounselorConsulting() {
     setShowConsultingModal(true)
 
     const actionType = lead.status === 'not_contacted' ? '입력' : '수정'
-    toast.info(`상담 기록 ${actionType}`, `전문가 "강호동"님 건 (관심: ${lead.contact_script})의 상담 기록을 ${actionType}합니다.`, {
+    toast.info(`상담 기록 ${actionType}`, `${lead.contact_name}님 건 (관심: ${lead.contact_script})의 상담 기록을 ${actionType}합니다.`, {
       action: { label: '전화 걸기', onClick: () => window.open(`tel:${lead.phone}`) }
     })
   }
@@ -353,8 +237,8 @@ export default function CounselorConsulting() {
 
       if (error) throw error
 
-      toast.success('상담 기록 저장 완료! 🎉', 
-        `전문가 "강호동"님 건의 상담 기록이 저장되었습니다.`, {
+      toast.success('상담 기록 저장 완료!', 
+        `${selectedLead.contact_name}님 건의 상담 기록이 저장되었습니다.`, {
         action: { 
           label: '다음 고객', 
           onClick: () => {
@@ -424,7 +308,7 @@ export default function CounselorConsulting() {
           </p>
         </div>
 
-        {/* 통계 카드 */}
+        {/* 통계 카드 (4개 한줄) */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
           <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
             <div className="flex items-center justify-between">
@@ -463,12 +347,12 @@ export default function CounselorConsulting() {
           <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-text-secondary text-sm">계약</p>
+                <p className="text-text-secondary text-sm">계약완료</p>
                 <p className="text-2xl font-bold text-accent">
                   {leads.filter(l => l.status === 'contracted').length}
                 </p>
               </div>
-              <businessIcons.date className="w-8 h-8 text-accent" />
+              <businessIcons.script className="w-8 h-8 text-accent" />
             </div>
           </div>
         </div>
@@ -482,7 +366,6 @@ export default function CounselorConsulting() {
                 { key: 'all', label: '전체' },
                 { key: 'not_contacted', label: '미접촉' },
                 { key: 'in_progress', label: '상담중' },
-                { key: 'completed', label: '완료' },
                 { key: 'contracted', label: '계약' }
               ].map(filter => (
                 <button
@@ -513,7 +396,7 @@ export default function CounselorConsulting() {
           </button>
         </div>
 
-        {/* 일반 테이블로 고객 목록 */}
+        {/* 고객 목록 테이블 */}
         <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
           <div className="p-4 border-b border-border-primary">
             <div className="flex items-center justify-between">
@@ -553,7 +436,7 @@ export default function CounselorConsulting() {
                     <th className="text-left py-3 px-4 font-medium text-text-secondary text-sm">
                       <div className="flex items-center gap-2">
                         <businessIcons.contact className="w-4 h-4" />
-                        전문가명
+                        고객명
                       </div>
                     </th>
                     <th className="text-left py-3 px-4 font-medium text-text-secondary text-sm">
@@ -599,31 +482,29 @@ export default function CounselorConsulting() {
                     const styles = {
                       not_contacted: 'bg-bg-secondary text-text-primary',
                       in_progress: 'bg-accent/10 text-accent',
-                      completed: 'bg-text-secondary/10 text-text-secondary',
-                      contracted: 'bg-accent/20 text-accent font-medium'
+                      contracted: 'bg-success/20 text-success font-medium'
                     }
                     
                     const labels = {
                       not_contacted: '미접촉',
                       in_progress: '상담중',
-                      completed: '완료',
                       contracted: '계약'
                     }
                     
                     return (
                       <tr key={lead.assignment_id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
-                        {/* 연락처 - 맨 앞 */}
+                        {/* 연락처 */}
                         <td className="py-4 px-4">
                           <div className="font-mono text-text-primary font-medium">
                             {lead.phone}
                           </div>
                         </td>
 
-                        {/* 전문가명 */}
+                        {/* 고객명 */}
                         <td className="py-4 px-4">
                           <div>
                             <div className="font-medium text-text-primary">
-                              강호동
+                              {lead.contact_name}
                             </div>
                             <div className="text-xs text-text-secondary">
                               {lead.data_source}
@@ -665,7 +546,7 @@ export default function CounselorConsulting() {
                         {/* 계약금액 */}
                         <td className="py-4 px-4 text-right">
                           {lead.contract_amount ? (
-                            <span className="font-medium text-accent">
+                            <span className="font-medium text-success">
                               {lead.contract_amount.toLocaleString()}원
                             </span>
                           ) : (
@@ -717,7 +598,7 @@ export default function CounselorConsulting() {
                       상담 기록 입력
                     </h3>
                     <p className="text-sm text-text-secondary">
-                      전문가 강호동님 건 ({selectedLead.phone})
+                      {selectedLead.contact_name}님 건 ({selectedLead.phone})
                     </p>
                   </div>
                 </div>
@@ -734,7 +615,7 @@ export default function CounselorConsulting() {
                 </button>
               </div>
 
-              {/* 간소화된 상담 기록 폼 */}
+              {/* 상담 기록 폼 */}
               <div className="p-6 space-y-6">
                 {/* 상담 일시 */}
                 <div>
@@ -763,7 +644,7 @@ export default function CounselorConsulting() {
                     required
                   />
                   <p className="text-xs text-text-tertiary mt-1">
-                    📋 전문가: <strong>강호동</strong> | 관심분야: <strong>{selectedLead.contact_script}</strong>
+                    📋 고객: <strong>{selectedLead.contact_name}</strong> | 관심분야: <strong>{selectedLead.contact_script}</strong>
                   </p>
                 </div>
 

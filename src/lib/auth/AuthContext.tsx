@@ -25,85 +25,240 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   isAdmin: boolean;
   isCounselor: boolean;
+  emergencyReset: () => void;
 }
 
 // Context 생성
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// 무한로딩 방지 헬퍼 함수들
+const INIT_TIMEOUT = 8000; // 8초 타임아웃
+const MAX_RETRIES = 2; // 최대 재시도 횟수
+
+// 완전한 캐시 정리 함수
+const clearAllCache = async () => {
+  console.log('🧹 완전한 캐시 정리 시작');
+  
+  try {
+    // 로컬/세션 스토리지
+    localStorage.clear();
+    sessionStorage.clear();
+    
+    // IndexedDB (비동기, 타임아웃 적용)
+    if ('indexedDB' in window) {
+      try {
+        const dbs = await Promise.race([
+          indexedDB.databases(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('IndexedDB timeout')), 3000))
+        ]) as IDBDatabaseInfo[];
+        
+        await Promise.all(
+          dbs.map(db => {
+            if (db.name) {
+              return new Promise<void>((resolve) => {
+                const deleteReq = indexedDB.deleteDatabase(db.name!);
+                deleteReq.onsuccess = () => resolve();
+                deleteReq.onerror = () => resolve();
+                setTimeout(() => resolve(), 2000); // 2초 타임아웃
+              });
+            }
+            return Promise.resolve();
+          })
+        );
+      } catch (error) {
+        console.log('IndexedDB 정리 실패:', error);
+      }
+    }
+    
+    // 쿠키 정리
+    if (typeof document !== 'undefined') {
+      document.cookie.split(';').forEach(cookie => {
+        const eqPos = cookie.indexOf('=');
+        const name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+        if (name.includes('supabase') || name.includes('auth') || name.includes('sb-')) {
+          document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=${window.location.hostname}`;
+          document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+        }
+      });
+    }
+    
+    console.log('✅ 캐시 정리 완료');
+  } catch (error) {
+    console.error('캐시 정리 중 오류:', error);
+  }
+};
+
+// 타임아웃이 있는 세션 확인
+const getSessionWithTimeout = async (timeoutMs: number = INIT_TIMEOUT) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    clearTimeout(timeoutId);
+    return { data, error };
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+};
 
 // Provider 컴포넌트
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [hasRedirected, setHasRedirected] = useState(false); // 🚨 리다이렉트 중복 방지
+  const [hasRedirected, setHasRedirected] = useState(false);
+  const [initAttempts, setInitAttempts] = useState(0);
+  const [emergencyMode, setEmergencyMode] = useState(false);
   const router = useRouter();
 
-  // ✅ 개선된 사용자 프로필 로드 함수 (무한 리다이렉트 방지)
+  // 긴급 리셋 함수 (사용자가 수동으로 호출 가능)
+  const emergencyReset = async () => {
+    console.log('🆘 긴급 리셋 실행');
+    setEmergencyMode(true);
+    setLoading(true);
+    
+    await clearAllCache();
+    
+    // Supabase 연결 리셋
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.log('강제 로그아웃 실패:', error);
+    }
+    
+    setUser(null);
+    setUserProfile(null);
+    setHasRedirected(false);
+    setInitAttempts(0);
+    setLoading(false);
+    setEmergencyMode(false);
+    
+    // 로그인 페이지로 이동
+    setTimeout(() => {
+      window.location.href = '/login';
+    }, 500);
+  };
+
+  // 안전한 프로필 로드
   const loadUserProfile = async (userId: string, isFromSignIn: boolean = false) => {
     try {
-      console.log('프로필 로드 시도:', userId, '로그인에서 호출:', isFromSignIn);
+      console.log('프로필 로드 시도:', userId);
       
-      const { data, error } = await supabase
+      // 타임아웃 적용
+      const profilePromise = supabase
         .from('users')
         .select('*')
         .eq('id', userId)
         .single();
+      
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('프로필 로드 타임아웃')), 5000)
+      );
+      
+      const { data, error } = await Promise.race([profilePromise, timeoutPromise]) as any;
 
       if (error) {
         console.error('프로필 로드 오류:', error);
-        console.log('오류 상세:', error.code, error.message);
-        setUserProfile(null);
-        setLoading(false);
-        return;
+        throw error;
       }
 
-      console.log('프로필 로드 성공:', data);
-      console.log('사용자 역할:', data.role);
+      console.log('프로필 로드 성공:', data.email);
       setUserProfile(data);
 
-      // ✅ 리다이렉트 로직 개선 (무한 루프 방지)
+      // 리다이렉트 로직
       const currentPath = window.location.pathname;
-      console.log('현재 경로:', currentPath, '리다이렉트 완료:', hasRedirected);
-      
-      // 🚨 리다이렉트 조건 개선
       const shouldRedirect = 
-        !hasRedirected && // 아직 리다이렉트 안 함
-        (
-          isFromSignIn || // 로그인에서 호출됨
-          currentPath === '/login' || // 로그인 페이지
-          currentPath === '/' || // 홈페이지
-          currentPath === '/dashboard' // 잘못된 대시보드 경로
-        );
+        !hasRedirected && 
+        (isFromSignIn || currentPath === '/login' || currentPath === '/' || currentPath === '/dashboard');
 
       if (shouldRedirect) {
         const targetPath = data.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard';
-        console.log('리다이렉트 실행:', data.role, '→', targetPath);
+        console.log('리다이렉트:', targetPath);
         
-        // 🚨 리다이렉트 플래그 설정 (중복 방지)
         setHasRedirected(true);
         setLoading(false);
         
         setTimeout(() => {
-          if (window.location.pathname === currentPath) {
-            console.log('실제 리다이렉트 실행:', targetPath);
-            window.location.href = targetPath;
-          }
+          window.location.href = targetPath;
         }, 100);
       } else {
-        console.log('리다이렉트 조건 불충족 - 현재 페이지 유지');
         setLoading(false);
       }
       
-    } catch (error) {
-      console.error('프로필 로드 예외:', error);
+    } catch (error: any) {
+      console.error('프로필 로드 실패:', error);
+      
+      // 프로필 로드 실패 시 로그아웃 처리
+      setUser(null);
       setUserProfile(null);
       setLoading(false);
+      
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 1000);
     }
   };
 
-  // ✅ 개선된 로그인 함수
+  // 안전한 세션 초기화
+  const initializeAuth = async () => {
+    if (initAttempts >= MAX_RETRIES) {
+      console.log('⚠️ 최대 재시도 횟수 도달, 긴급 리셋 실행');
+      await emergencyReset();
+      return;
+    }
+
+    try {
+      setInitAttempts(prev => prev + 1);
+      console.log(`인증 초기화 시도 ${initAttempts + 1}/${MAX_RETRIES + 1}`);
+      
+      const { data: { session }, error } = await getSessionWithTimeout();
+      
+      if (error) {
+        throw error;
+      }
+
+      console.log('세션 확인 완료:', session?.user?.email || '세션 없음');
+      setUser(session?.user ?? null);
+      
+      if (session?.user) {
+        await loadUserProfile(session.user.id, false);
+      } else {
+        // 보호된 페이지에서 세션 없으면 로그인 페이지로
+        const currentPath = window.location.pathname;
+        if (currentPath.includes('/admin/') || currentPath.includes('/counselor/')) {
+          console.log('보호된 페이지에서 세션 없음 → 로그인 페이지로');
+          window.location.href = '/login';
+          return;
+        }
+        setLoading(false);
+      }
+      
+      // 성공하면 재시도 카운터 리셋
+      setInitAttempts(0);
+      
+    } catch (error: any) {
+      console.error('세션 초기화 실패:', error);
+      
+      if (initAttempts >= MAX_RETRIES) {
+        console.log('최대 재시도 도달, 긴급 모드 활성화');
+        setEmergencyMode(true);
+        setLoading(false);
+      } else {
+        // 재시도
+        console.log(`${(initAttempts + 1) * 2}초 후 재시도`);
+        setTimeout(() => {
+          initializeAuth();
+        }, (initAttempts + 1) * 2000);
+      }
+    }
+  };
+
+  // 로그인 함수
   const signIn = async (email: string, password: string) => {
     try {
+      setLoading(true);
       console.log('로그인 시도:', email);
       
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -112,64 +267,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (error) {
-        console.error('로그인 오류:', error);
+        setLoading(false);
         return { error };
       }
 
       console.log('로그인 성공:', data.user?.email);
-      
-      // 🚨 로그인 성공 시에만 리다이렉트 플래그 초기화
       setHasRedirected(false);
+      setInitAttempts(0); // 성공 시 재시도 카운터 리셋
       
       if (data.user) {
-        await loadUserProfile(data.user.id, true); // isFromSignIn = true
+        await loadUserProfile(data.user.id, true);
       }
       
       return { error: null };
     } catch (error) {
       console.error('로그인 예외:', error);
+      setLoading(false);
       return { error };
     }
   };
 
-  // ✅ 개선된 로그아웃 함수
+  // 로그아웃 함수
   const signOut = async () => {
-    console.log('🚀 슈퍼 로그아웃 프로세스 시작');
+    console.log('로그아웃 시작');
     
-    // 1. 즉시 상태 초기화
     setLoading(true);
     setUser(null);
     setUserProfile(null);
-    setHasRedirected(false); // 🚨 리다이렉트 플래그 초기화
+    setHasRedirected(false);
+    setInitAttempts(0);
     
     try {
-      // Supabase 세션 종료
-      await supabase.auth.signOut({ scope: 'local' });
-      await supabase.auth.signOut({ scope: 'global' });
-      
-      // 브라우저 저장소 완전 정리
-      localStorage.clear();
-      sessionStorage.clear();
-      
-      // IndexedDB 정리
-      try {
-        const databases = await indexedDB.databases();
-        databases.forEach(db => {
-          if (db.name && (db.name.includes('supabase') || db.name.includes('auth'))) {
-            indexedDB.deleteDatabase(db.name);
-          }
-        });
-      } catch (idbError) {
-        console.warn('IndexedDB 정리 실패:', idbError);
-      }
-      
-      // 쿠키 정리
-      document.cookie.split(";").forEach(cookie => {
-        const eqPos = cookie.indexOf("=");
-        const name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
-        document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
-      });
-      
+      await supabase.auth.signOut();
+      await clearAllCache();
     } catch (error) {
       console.warn('로그아웃 중 오류:', error);
     }
@@ -179,47 +309,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => {
       window.location.replace('/login');
     }, 200);
-    
-    console.log('🎉 슈퍼 로그아웃 완료');
   };
 
-  // ✅ 개선된 인증 상태 변화 감지
+  // 초기화
   useEffect(() => {
     let mounted = true;
     
-    // 초기 세션 확인
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!mounted) return;
-      
-      console.log('초기 세션 확인:', session?.user?.email || '세션 없음');
-      
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        // 🚨 초기 로드 시에는 isFromSignIn = false
-        loadUserProfile(session.user.id, false);
-      } else {
-        // 🚨 세션 없는데 대시보드 페이지에 있으면 즉시 로그인 페이지로
-        const currentPath = window.location.pathname;
-        if (currentPath.includes('/admin/') || currentPath.includes('/counselor/')) {
-          console.log('⚠️ 로그아웃 상태인데 보호된 페이지 접근 → 로그인 페이지로 이동');
-          window.location.href = '/login';
-          return;
-        }
-        setLoading(false);
-      }
-    });
+    if (mounted) {
+      initializeAuth();
+    }
+    
+    return () => {
+      mounted = false;
+    };
+  }, []); // 의존성 배열 비움
 
-    // 인증 상태 변화 리스너
+  // 인증 상태 변화 리스너
+  useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (!mounted) return;
+        console.log('인증 상태 변화:', event);
         
-        console.log('인증 상태 변화:', event, session?.user?.email || '세션 없음');
-        
-        // 로그아웃 이벤트 처리
         if (event === 'SIGNED_OUT') {
-          console.log('🚪 로그아웃 이벤트 감지');
           setUser(null);
           setUserProfile(null);
           setHasRedirected(false);
@@ -233,16 +344,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         
-        // 로그인 이벤트 처리
         if (event === 'SIGNED_IN') {
-          console.log('✅ SIGNED_IN 이벤트 감지');
-          setHasRedirected(false); // 새 로그인 시 플래그 초기화
+          setHasRedirected(false);
+          setInitAttempts(0);
         }
         
         setUser(session?.user ?? null);
         
         if (session?.user) {
-          // 🚨 이벤트 기반 호출 시에는 이벤트 타입에 따라 구분
           const isFromSignInEvent = event === 'SIGNED_IN';
           await loadUserProfile(session.user.id, isFromSignInEvent);
         } else {
@@ -253,13 +362,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     return () => {
-      mounted = false;
-      console.log('인증 리스너 정리');
       subscription.unsubscribe();
     };
   }, []);
 
-  // Context 값 정의
+  // 긴급 모드일 때 특별한 UI 표시
+  if (emergencyMode) {
+    return (
+      <div className="min-h-screen bg-bg-primary flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="text-6xl">⚠️</div>
+          <h2 className="text-xl font-semibold text-text-primary">인증 시스템 오류</h2>
+          <p className="text-text-secondary max-w-md">
+            로그인 과정에서 문제가 발생했습니다. 
+            아래 버튼을 클릭하여 시스템을 초기화하고 다시 시도해주세요.
+          </p>
+          <div className="space-y-2">
+            <button
+              onClick={emergencyReset}
+              className="px-6 py-3 bg-accent text-white rounded-lg hover:bg-accent/90"
+            >
+              시스템 초기화 후 재시도
+            </button>
+            <div className="text-xs text-text-tertiary">
+              브라우저 캐시가 정리되고 로그인 페이지로 이동합니다
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const value = {
     user,
     userProfile,
@@ -268,6 +401,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signOut,
     isAdmin: userProfile?.role === 'admin',
     isCounselor: userProfile?.role === 'counselor',
+    emergencyReset,
   };
 
   return (
@@ -286,39 +420,88 @@ export const useAuth = () => {
   return context;
 };
 
-// ✅ AuthDebugInfo 컴포넌트 (개발 환경용)
+// 개발 환경용 디버그 + 프로덕션용 긴급 버튼
 export function AuthDebugInfo() {
-  const { user, userProfile, loading } = useAuth();
+  const { user, userProfile, loading, emergencyReset } = useAuth();
   const [mounted, setMounted] = useState(false);
+  const [showEmergencyButton, setShowEmergencyButton] = useState(false);
   const [currentPath, setCurrentPath] = useState('');
   
   useEffect(() => {
     setMounted(true);
     setCurrentPath(window.location.pathname);
+    
+    // 경로 변경 감지
+    const updatePath = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    
+    // popstate 이벤트 리스너 (뒤로가기/앞으로가기)
+    window.addEventListener('popstate', updatePath);
+    
+    // 주기적으로 경로 확인 (SPA에서 경로 변경 감지)
+    const pathInterval = setInterval(updatePath, 1000);
+    
+    return () => {
+      window.removeEventListener('popstate', updatePath);
+      clearInterval(pathInterval);
+    };
   }, []);
   
-  if (process.env.NODE_ENV !== 'development' || !mounted) return null;
+  // 사용자 상태 변경 시 경로 업데이트
+  useEffect(() => {
+    if (!user && !loading) {
+      // 로그아웃 상태일 때 현재 경로 다시 확인
+      setCurrentPath(window.location.pathname);
+    }
+  }, [user, loading]);
   
+  useEffect(() => {
+    // 10초 후 긴급 버튼 표시 (무한로딩 감지)
+    if (loading) {
+      const timer = setTimeout(() => {
+        setShowEmergencyButton(true);
+      }, 10000);
+      
+      return () => clearTimeout(timer);
+    } else {
+      setShowEmergencyButton(false);
+    }
+  }, [loading]);
+  
+  if (!mounted) return null;
+  
+  // 프로덕션에서는 긴급 버튼만 표시
+  if (process.env.NODE_ENV === 'production') {
+    if (!showEmergencyButton || !loading) return null;
+    
+    return (
+      <div className="fixed top-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50">
+        <div className="text-center space-y-2">
+          <div className="text-sm font-medium">로딩이 너무 오래 걸리나요?</div>
+          <button
+            onClick={emergencyReset}
+            className="px-3 py-1 bg-white text-red-500 rounded text-sm hover:bg-gray-100"
+          >
+            문제 해결하기
+          </button>
+        </div>
+      </div>
+    );
+  }
+  
+  // 개발 환경에서는 전체 디버그 정보 표시
   return (
     <div className="fixed top-4 right-4 bg-black/90 text-white px-3 py-2 rounded-lg text-xs shadow-lg z-50 border border-gray-600">
       <div className="flex items-center gap-2">
-        <span className="text-green-400">🔍</span>
         {loading ? (
           <div className="flex items-center gap-1">
             <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
             <span className="text-yellow-400">Loading...</span>
           </div>
         ) : userProfile ? (
-          <div className="flex flex-col">
-            <div className="text-green-400 font-medium">
-              ✅ {userProfile.full_name}
-            </div>
-            <div className="text-xs text-gray-300">
-              {userProfile.role} • {userProfile.department || 'N/A'}
-            </div>
-            <div className="text-xs text-cyan-400">
-              Path: {currentPath}
-            </div>
+          <div className="text-green-400 font-medium">
+            ✅ {userProfile.full_name} ({userProfile.role})
           </div>
         ) : user ? (
           <div className="text-yellow-400">
@@ -329,69 +512,50 @@ export function AuthDebugInfo() {
         )}
       </div>
       
-      <details className="mt-2">
-        <summary className="text-gray-400 cursor-pointer hover:text-white text-xs">
-          상세정보
-        </summary>
-        <div className="mt-2 pt-2 border-t border-gray-600 space-y-1">
+      <div className="mt-2 space-y-1">
+        <div className="text-xs space-y-1">
           <div>
             <span className="text-gray-400">User ID:</span> 
-            <span className="text-cyan-400 text-xs ml-1">
+            <span className="text-cyan-400 ml-1">
               {user?.id ? `${user.id.slice(0, 8)}...` : 'null'}
             </span>
           </div>
           <div>
             <span className="text-gray-400">Email:</span> 
-            <span className="text-blue-400 text-xs ml-1">
+            <span className="text-blue-400 ml-1">
               {user?.email || 'null'}
             </span>
           </div>
           <div>
             <span className="text-gray-400">Role:</span> 
-            <span className="text-orange-400 text-xs ml-1">
+            <span className="text-orange-400 ml-1">
               {userProfile?.role || 'null'}
             </span>
           </div>
           <div>
-            <span className="text-gray-400">Current Path:</span> 
-            <span className="text-purple-400 text-xs ml-1">
+            <span className="text-gray-400">Path:</span> 
+            <span className="text-purple-400 ml-1">
               {currentPath || 'Loading...'}
             </span>
           </div>
-          
-          {/* 개발 환경용 캐시 정리 버튼 */}
-          <div className="pt-2 border-t border-gray-600 space-y-1">
-            <button 
-              onClick={() => {
-                console.log('🧹 캐시 정리 실행');
-                localStorage.clear();
-                sessionStorage.clear();
-                // 🚨 로그인 페이지로 이동 후 새로고침 (무한 로딩 방지)
-                window.location.href = '/login';
-              }}
-              className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600 w-full"
-            >
-              🧹 캐시 정리
-            </button>
-            <button 
-              onClick={() => {
-                console.log('🆘 완전 초기화 실행');
-                localStorage.clear();
-                sessionStorage.clear();
-                indexedDB.databases().then(dbs => {
-                  dbs.forEach(db => {
-                    if (db.name) indexedDB.deleteDatabase(db.name);
-                  });
-                });
-                window.location.replace('/login');
-              }}
-              className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 w-full"
-            >
-              🆘 완전 초기화
-            </button>
-          </div>
         </div>
-      </details>
+        
+        <button 
+          onClick={() => {
+            clearAllCache();
+            window.location.href = '/login';
+          }}
+          className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600 w-full"
+        >
+          캐시 정리
+        </button>
+        <button 
+          onClick={emergencyReset}
+          className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 w-full"
+        >
+          긴급 리셋
+        </button>
+      </div>
     </div>
   );
 }
