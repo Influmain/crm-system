@@ -12,17 +12,18 @@ import { LogIn, Sun, Moon, BarChart3, Upload, Users, Shield, Bell } from 'lucide
 
 export default function HomePage() {
   const { isDark, toggle: toggleTheme } = useTheme()
-  const { user, userProfile, loading } = useAuth() // 수정: profile → userProfile
+  const { user, userProfile, loading } = useAuth()
   const toast = useToastHelpers()
   const router = useRouter()
   
   const [mounted, setMounted] = useState(false)
   const [showLoginModal, setShowLoginModal] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
 
   useEffect(() => {
     setMounted(true)
     
-    // 캐시 버전 관리 (무한 로딩 방지)
+    // 캐시 버전 관리
     const handleCacheManagement = () => {
       const CACHE_VERSION = 'crm-v1.1.0'
       const storedVersion = localStorage.getItem('crm_cache_version')
@@ -42,13 +43,61 @@ export default function HomePage() {
     handleCacheManagement()
   }, [])
 
-  // 로딩 중이거나 아직 마운트되지 않은 경우
-  if (!mounted || loading) {
+  // 자동 리다이렉트 로직 개선
+  useEffect(() => {
+    if (!loading && user && userProfile && !redirecting) {
+      const dashboardPath = userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+      console.log('🔄 홈페이지 자동 리다이렉트:', userProfile.role, '→', dashboardPath)
+      
+      setRedirecting(true)
+      
+      // 약간의 지연 후 리다이렉트 (UI 깜빡임 방지)
+      setTimeout(() => {
+        router.push(dashboardPath)
+      }, 500)
+    }
+  }, [loading, user, userProfile, redirecting, router])
+
+  // 로딩 중이거나 리다이렉트 중인 경우
+  if (!mounted || loading || (user && userProfile && redirecting)) {
     return (
       <div className="min-h-screen bg-bg-primary flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-text-secondary">CRM 시스템 로딩 중...</p>
+          <p className="text-text-secondary">
+            {loading ? 'CRM 시스템 로딩 중...' : 
+             redirecting ? '대시보드로 이동 중...' : 
+             'CRM 시스템 로딩 중...'}
+          </p>
+          {user && userProfile && (
+            <p className="text-text-tertiary text-sm mt-2">
+              {userProfile.role === 'admin' ? '관리자' : '상담원'} 계정으로 로그인됨
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // 프로필 로드 실패한 경우 처리
+  if (user && !userProfile && !loading) {
+    console.error('홈페이지: 사용자는 있지만 프로필이 없음')
+    return (
+      <div className="min-h-screen bg-bg-primary flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-error/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Shield className="w-8 h-8 text-error" />
+          </div>
+          <h2 className="text-lg font-semibold text-text-primary mb-2">프로필 로드 실패</h2>
+          <p className="text-text-secondary mb-4">
+            사용자 프로필을 불러올 수 없습니다. 다시 로그인해주세요.
+          </p>
+          <button
+            onClick={() => window.location.href = '/login'}
+            className="px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90"
+          >
+            다시 로그인
+          </button>
         </div>
       </div>
     )
@@ -56,16 +105,18 @@ export default function HomePage() {
 
   const handleLoginSuccess = (user: any, profile: any) => {
     console.log('로그인 성공:', user.email, profile.role)
-    // LoginModal에서 이미 리다이렉트 처리됨
+    // AuthContext에서 자동 리다이렉트 처리됨
   }
 
-  const activeProfile = userProfile // 수정: profile → userProfile
+  const activeProfile = userProfile
 
-  // 디버그 로그 추가
-  console.log('홈페이지 권한 상태:', {
+  // 디버그 로그
+  console.log('홈페이지 상태:', {
     user: user?.email,
     userProfile: userProfile?.role,
-    activeProfile: activeProfile?.role
+    loading,
+    redirecting,
+    mounted
   })
 
   return (
@@ -102,7 +153,7 @@ export default function HomePage() {
                 <button
                   onClick={() => {
                     const dashboardPath = activeProfile?.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
-                    console.log('대시보드 이동:', dashboardPath, '(role:', activeProfile?.role, ')')
+                    console.log('수동 대시보드 이동:', dashboardPath)
                     router.push(dashboardPath)
                   }}
                   className={designSystem.utils.cn(designSystem.components.button.primary, 'text-sm py-2 px-4')}
@@ -268,7 +319,7 @@ export default function HomePage() {
           )}
 
           {/* 로그인된 사용자를 위한 바로가기 섹션 */}
-          {user && (
+          {user && !redirecting && (
             <section className="py-20 max-w-6xl mx-auto">
               <div className="text-center mb-12">
                 <h3 className={designSystem.utils.cn(designSystem.components.typography.h3, 'mb-4')}>

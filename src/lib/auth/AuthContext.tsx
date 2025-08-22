@@ -44,12 +44,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
   const router = useRouter();
 
-  // 프로필 로드 (단순화)
-  const loadUserProfile = async (userId: string) => {
+  // 프로필 로드 (개선된 버전)
+  const loadUserProfile = async (userId: string, retryCount = 0) => {
     try {
-      console.log('프로필 로드:', userId);
+      console.log('프로필 로드 시도:', userId, `(${retryCount + 1}번째)`);
+      setProfileLoading(true);
       
       const { data, error } = await supabase
         .from('users')
@@ -59,14 +61,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (error) {
         console.error('프로필 로드 실패:', error);
+        
+        // 재시도 로직 (최대 2번)
+        if (retryCount < 2) {
+          console.log('프로필 로드 재시도...');
+          await new Promise(resolve => setTimeout(resolve, 1000)); // 1초 대기
+          return await loadUserProfile(userId, retryCount + 1);
+        }
+        
         return null;
       }
 
-      console.log('프로필 로드 성공:', data.email);
+      console.log('✅ 프로필 로드 성공:', data.email, 'role:', data.role);
+      setProfileLoading(false);
       return data;
       
     } catch (error) {
       console.error('프로필 로드 오류:', error);
+      setProfileLoading(false);
+      
+      // 재시도 로직
+      if (retryCount < 2) {
+        console.log('프로필 로드 재시도...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return await loadUserProfile(userId, retryCount + 1);
+      }
+      
       return null;
     }
   };
@@ -126,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // 🔧 핵심 수정: 초기 세션 로드 추가
+  // 초기 세션 로드
   useEffect(() => {
     let mounted = true;
     
@@ -151,8 +171,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           
           // 프로필 로드
           const profile = await loadUserProfile(session.user.id);
-          if (mounted) {
+          if (mounted && profile) {
             setUserProfile(profile);
+            console.log('✅ 프로필 설정 완료:', profile.role);
+          } else if (mounted) {
+            console.error('❌ 프로필 로드 실패 - 로그아웃 처리');
+            // 프로필 로드 실패 시 로그아웃
+            await supabase.auth.signOut();
+            setUser(null);
+            setUserProfile(null);
           }
         } else {
           console.log('❌ 세션 없음 - 로그인 필요');
@@ -176,9 +203,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, []); // 빈 의존성 배열 - 최초 1회만 실행
+  }, []);
 
-  // 인증 상태 리스너 (기존 유지)
+  // 인증 상태 리스너
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
@@ -196,45 +223,65 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           
           // 프로필 로드
           const profile = await loadUserProfile(session.user.id);
-          setUserProfile(profile);
-          
-          // 리다이렉트 (로그인 완료 후만)
-          const currentPath = window.location.pathname;
-          if (currentPath === '/login' || currentPath === '/') {
-            if (profile?.role === 'admin') {
-              window.location.href = '/admin/dashboard';
-            } else if (profile?.role === 'counselor') {
-              window.location.href = '/counselor/dashboard';
+          if (profile) {
+            setUserProfile(profile);
+            
+            // 홈페이지나 로그인 페이지에서만 리다이렉트
+            const currentPath = window.location.pathname;
+            if (currentPath === '/login' || currentPath === '/') {
+              const dashboardPath = profile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard';
+              console.log('🔄 리다이렉트:', dashboardPath);
+              window.location.href = dashboardPath;
             }
+          } else {
+            console.error('❌ 로그인 후 프로필 로드 실패');
+            await supabase.auth.signOut();
           }
           
           setLoading(false);
         } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-          // 토큰 갱신 시에는 리다이렉트 하지 않음
           setUser(session.user);
           
+          // 프로필이 없으면 다시 로드
           if (!userProfile) {
             const profile = await loadUserProfile(session.user.id);
-            setUserProfile(profile);
+            if (profile) {
+              setUserProfile(profile);
+            }
           }
         }
       }
     );
 
     return () => subscription.unsubscribe();
-  }, [userProfile]); // userProfile 의존성 추가
+  }, [userProfile]);
 
-  // 🔧 안전장치: 5초 후 강제 로딩 해제
+  // 개선된 타임아웃 로직
   useEffect(() => {
     const forceStopLoading = setTimeout(() => {
       if (loading) {
-        console.log('⚠️ 5초 초과 - 강제 로딩 해제');
-        setLoading(false);
+        if (user && !userProfile && !profileLoading) {
+          console.log('⚠️ 프로필 로드 재시도 중...');
+          // 프로필 로드 재시도
+          loadUserProfile(user.id).then(profile => {
+            if (profile) {
+              setUserProfile(profile);
+              console.log('✅ 재시도 성공:', profile.role);
+            } else {
+              console.log('❌ 재시도 실패 - 로그아웃');
+              signOut();
+            }
+            setLoading(false);
+          });
+        } else {
+          console.log('⚠️ 8초 초과 - 강제 로딩 해제');
+          setLoading(false);
+        }
       }
-    }, 5000);
+    }, 8000); // 8초로 연장
 
     return () => clearTimeout(forceStopLoading);
-  }, [loading]);
+  }, [loading, user, userProfile, profileLoading]);
 
   // 권한 확인
   const isAdmin = userProfile?.role === 'admin';
