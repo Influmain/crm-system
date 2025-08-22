@@ -12,7 +12,7 @@ import { LogIn, Sun, Moon, BarChart3, Upload, Users, Shield, Bell } from 'lucide
 
 export default function HomePage() {
   const { isDark, toggle: toggleTheme } = useTheme()
-  const { user, profile, loading } = useAuth()
+  const { user, userProfile, loading } = useAuth() // 수정: profile → userProfile
   const toast = useToastHelpers()
   const router = useRouter()
   
@@ -59,7 +59,14 @@ export default function HomePage() {
     // LoginModal에서 이미 리다이렉트 처리됨
   }
 
-  const activeProfile = profile
+  const activeProfile = userProfile // 수정: profile → userProfile
+
+  // 디버그 로그 추가
+  console.log('홈페이지 권한 상태:', {
+    user: user?.email,
+    userProfile: userProfile?.role,
+    activeProfile: activeProfile?.role
+  })
 
   return (
     <div className={designSystem.components.layout.page}>
@@ -95,6 +102,7 @@ export default function HomePage() {
                 <button
                   onClick={() => {
                     const dashboardPath = activeProfile?.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+                    console.log('대시보드 이동:', dashboardPath, '(role:', activeProfile?.role, ')')
                     router.push(dashboardPath)
                   }}
                   className={designSystem.utils.cn(designSystem.components.button.primary, 'text-sm py-2 px-4')}
@@ -178,13 +186,13 @@ export default function HomePage() {
                       'text-lg px-8 py-4 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02] active:scale-[0.98]'
                     )}
                   >
-                    🚀 시작하기
+                    시작하기
                     <LogIn className="w-5 h-5 ml-2" />
                   </button>
                   
                   <div className="text-center">
                     <p className={designSystem.components.typography.bodySm}>
-                      💡 테스트 계정으로 바로 체험 가능
+                      테스트 계정으로 바로 체험 가능
                     </p>
                   </div>
                 </div>
@@ -319,7 +327,7 @@ export default function HomePage() {
               <div className={designSystem.utils.cn(designSystem.components.card.secondary, designSystem.components.card.contentLg)}>
                 <div className="text-center mb-12">
                   <h3 className={designSystem.utils.cn(designSystem.components.typography.h3, 'mb-4')}>
-                    💡 시스템 현황
+                    시스템 현황
                   </h3>
                   <p className={designSystem.components.typography.bodySm}>
                     개발 완료된 기능들과 사용 가능한 서비스
@@ -375,7 +383,7 @@ export default function HomePage() {
             <section className="py-20 max-w-6xl mx-auto">
               <div className="text-center mb-12">
                 <h3 className={designSystem.utils.cn(designSystem.components.typography.h3, 'mb-4')}>
-                  🔐 테스트 계정으로 체험
+                  테스트 계정으로 체험
                 </h3>
                 <p className={designSystem.components.typography.bodySm}>
                   준비된 테스트 계정으로 시스템을 바로 체험해보세요
@@ -427,7 +435,7 @@ export default function HomePage() {
                   onClick={() => setShowLoginModal(true)}
                   className={designSystem.utils.cn(designSystem.components.button.primary, designSystem.components.button.lg)}
                 >
-                  🔐 지금 바로 체험하기
+                  지금 바로 체험하기
                   <LogIn className="w-5 h-5 ml-2" />
                 </button>
               </div>

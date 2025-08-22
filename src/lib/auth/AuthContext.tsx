@@ -126,7 +126,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // 인증 상태 리스너 (단순화)
+  // 🔧 핵심 수정: 초기 세션 로드 추가
+  useEffect(() => {
+    let mounted = true;
+    
+    const initializeAuth = async () => {
+      try {
+        console.log('🚀 인증 초기화 시작');
+        
+        // 기존 세션 확인
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (!mounted) return;
+        
+        if (error) {
+          console.error('세션 로드 오류:', error);
+          setLoading(false);
+          return;
+        }
+
+        if (session?.user) {
+          console.log('✅ 기존 세션 발견:', session.user.email);
+          setUser(session.user);
+          
+          // 프로필 로드
+          const profile = await loadUserProfile(session.user.id);
+          if (mounted) {
+            setUserProfile(profile);
+          }
+        } else {
+          console.log('❌ 세션 없음 - 로그인 필요');
+        }
+        
+        if (mounted) {
+          setLoading(false);
+          console.log('🏁 인증 초기화 완료');
+        }
+        
+      } catch (error) {
+        console.error('인증 초기화 오류:', error);
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    initializeAuth();
+    
+    return () => {
+      mounted = false;
+    };
+  }, []); // 빈 의존성 배열 - 최초 1회만 실행
+
+  // 인증 상태 리스너 (기존 유지)
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
@@ -139,14 +191,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         
-        if (session?.user) {
+        if (event === 'SIGNED_IN' && session?.user) {
           setUser(session.user);
           
           // 프로필 로드
           const profile = await loadUserProfile(session.user.id);
           setUserProfile(profile);
           
-          // 리다이렉트 (단순화)
+          // 리다이렉트 (로그인 완료 후만)
           const currentPath = window.location.pathname;
           if (currentPath === '/login' || currentPath === '/') {
             if (profile?.role === 'admin') {
@@ -155,17 +207,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               window.location.href = '/counselor/dashboard';
             }
           }
-        } else {
-          setUser(null);
-          setUserProfile(null);
+          
+          setLoading(false);
+        } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+          // 토큰 갱신 시에는 리다이렉트 하지 않음
+          setUser(session.user);
+          
+          if (!userProfile) {
+            const profile = await loadUserProfile(session.user.id);
+            setUserProfile(profile);
+          }
         }
-        
-        setLoading(false);
       }
     );
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [userProfile]); // userProfile 의존성 추가
+
+  // 🔧 안전장치: 5초 후 강제 로딩 해제
+  useEffect(() => {
+    const forceStopLoading = setTimeout(() => {
+      if (loading) {
+        console.log('⚠️ 5초 초과 - 강제 로딩 해제');
+        setLoading(false);
+      }
+    }, 5000);
+
+    return () => clearTimeout(forceStopLoading);
+  }, [loading]);
 
   // 권한 확인
   const isAdmin = userProfile?.role === 'admin';
@@ -221,6 +290,7 @@ export function AuthDebugInfo() {
         <div>Loading: {loading ? 'Yes' : 'No'}</div>
         <div>Email: {user?.email || 'None'}</div>
         <div>Role: {userProfile?.role || 'None'}</div>
+        <div>Time: {new Date().toLocaleTimeString()}</div>
       </div>
     </div>
   );
