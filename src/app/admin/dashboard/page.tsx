@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { useToastHelpers } from '@/components/ui/Toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
@@ -37,7 +38,7 @@ interface RecentContract {
   data_source: string;
 }
 
-export default function AdminDashboard() {
+function AdminDashboardContent() {
   const { user } = useAuth();
   const toast = useToastHelpers();
   
@@ -630,5 +631,13 @@ export default function AdminDashboard() {
         </div>
       </div>
     </AdminLayout>
+  );
+}
+
+export default function AdminDashboard() {
+  return (
+    <ProtectedRoute requiredRole="admin">
+      <AdminDashboardContent />
+    </ProtectedRoute>
   );
 }

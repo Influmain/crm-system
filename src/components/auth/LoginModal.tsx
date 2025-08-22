@@ -1,27 +1,26 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth/AuthContext'
 import { useToastHelpers } from '@/components/ui/Toast'
-import { businessIcons } from '@/lib/design-system/icons'
 import { designSystem } from '@/lib/design-system'
 import { RefreshCw, X, Shield, Users, LogIn } from 'lucide-react'
 
 interface LoginModalProps {
   isOpen: boolean
   onClose: () => void
-  onSuccess?: (user: any, profile: any) => void
+  onSuccess?: () => void
 }
 
 export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalProps) {
-  const router = useRouter()
+  const { signIn } = useAuth() // 🔧 useAuth 사용으로 통일
   const toast = useToastHelpers()
   
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // 🔧 단순화된 로그인 처리 (중복 제거)
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     
@@ -33,70 +32,26 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
     setLoading(true)
     
     try {
-      // Supabase 인증
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password: password
-      })
+      // 🔧 AuthContext의 signIn 사용 (중복 로직 제거)
+      const { error } = await signIn(email.trim(), password)
 
-      if (authError) {
-        throw new Error(authError.message)
+      if (error) {
+        throw error
       }
 
-      if (!authData.user) {
-        throw new Error('로그인 데이터를 받을 수 없습니다.')
-      }
-
-      // 사용자 프로필 조회
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', authData.user.id)
-        .single()
-
-      if (profileError) {
-        console.warn('프로필 조회 실패:', profileError)
-        // 프로필이 없어도 로그인은 성공으로 처리
-      }
-
-      const userProfile = profile || { role: 'counselor', full_name: email }
-
-      // 성공 처리
-      if (onSuccess) {
-        onSuccess(authData.user, userProfile)
-      }
-
-      // 토스트 알림
-      toast.success(
-        '로그인 성공! 🎉', 
-        `환영합니다, ${userProfile.full_name || email}님!`,
-        {
-          action: { 
-            label: '대시보드로 이동', 
-            onClick: () => {
-              const dashboardPath = userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
-              router.push(dashboardPath)
-            }
-          }
-        }
-      )
-
-      // 모달 닫기
+      // 🔧 단순한 성공 처리
+      toast.success('로그인 성공', '환영합니다!')
+      
       onClose()
-
-      // 대시보드로 이동
-      setTimeout(() => {
-        const dashboardPath = userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
-        router.push(dashboardPath)
-      }, 1000)
+      onSuccess?.()
 
     } catch (error) {
       console.error('로그인 실패:', error)
       
       let errorMessage = '로그인 중 오류가 발생했습니다.'
-      if (error.message.includes('Invalid login credentials')) {
+      if (error.message?.includes('Invalid login credentials')) {
         errorMessage = '이메일 또는 비밀번호가 올바르지 않습니다.'
-      } else if (error.message.includes('Email not confirmed')) {
+      } else if (error.message?.includes('Email not confirmed')) {
         errorMessage = '이메일 인증이 필요합니다.'
       } else if (error.message) {
         errorMessage = error.message
@@ -120,58 +75,24 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
     }
   }
 
+  // 🔧 단순화된 빠른 로그인
   const quickLogin = async (testEmail: string, testPassword: string, accountType: string) => {
     setEmail(testEmail)
     setPassword(testPassword)
     setLoading(true)
 
-    toast.info(
-      `${accountType} 계정 로그인`,
-      '테스트 계정으로 자동 로그인 중입니다...'
-    )
+    toast.info(`${accountType} 계정 로그인`, '테스트 계정으로 자동 로그인 중입니다...')
 
-    // 자동 로그인 실행
     setTimeout(async () => {
       try {
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-          email: testEmail,
-          password: testPassword
-        })
+        const { error } = await signIn(testEmail, testPassword)
+        
+        if (error) throw error
 
-        if (authError) throw authError
-
-        const { data: profile } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', authData.user.id)
-          .single()
-
-        const userProfile = profile || { role: testEmail.includes('admin') ? 'admin' : 'counselor', full_name: testEmail }
-
-        if (onSuccess) {
-          onSuccess(authData.user, userProfile)
-        }
-
-        toast.success(
-          `${accountType} 로그인 성공! 🎉`,
-          `${userProfile.full_name || testEmail}님으로 로그인되었습니다.`,
-          {
-            action: { 
-              label: '대시보드로 이동', 
-              onClick: () => {
-                const dashboardPath = userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
-                router.push(dashboardPath)
-              }
-            }
-          }
-        )
-
+        toast.success(`${accountType} 로그인 성공`, `${testEmail}님으로 로그인되었습니다.`)
+        
         onClose()
-
-        setTimeout(() => {
-          const dashboardPath = userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
-          router.push(dashboardPath)
-        }, 1000)
+        onSuccess?.()
 
       } catch (error) {
         toast.error('자동 로그인 실패', error.message || '테스트 계정 로그인에 실패했습니다.')
@@ -289,7 +210,7 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
                   <div className="flex-1">
                     <div className="text-sm font-medium text-text-primary">관리자 계정</div>
                     <div className="text-xs text-text-secondary">admin@company.com</div>
-                    <div className="text-xs text-text-tertiary">전체 시스템 관리, 데이터 업로드, 상담원 관리</div>
+                    <div className="text-xs text-text-tertiary">전체 시스템 관리, 데이터 업로드, 영업사원 관리</div>
                   </div>
                   <div className="text-accent opacity-0 group-hover:opacity-100 transition-opacity">
                     →
@@ -298,7 +219,7 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
               </button>
               
               <button
-                onClick={() => quickLogin('counselor1@company.com', 'counselor123', '상담원')}
+                onClick={() => quickLogin('counselor1@company.com', 'counselor123', '영업사원')}
                 disabled={loading}
                 className="w-full p-4 text-left border border-border-primary rounded-lg hover:bg-bg-hover transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -307,9 +228,9 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
                     <Users className="w-5 h-5 text-success" />
                   </div>
                   <div className="flex-1">
-                    <div className="text-sm font-medium text-text-primary">상담원 계정</div>
+                    <div className="text-sm font-medium text-text-primary">영업사원 계정</div>
                     <div className="text-xs text-text-secondary">counselor1@company.com</div>
-                    <div className="text-xs text-text-tertiary">담당 리드 관리, 상담 일정, 진행 상황 업데이트</div>
+                    <div className="text-xs text-text-tertiary">담당 고객 관리, 상담 일정, 진행 상황 업데이트</div>
                   </div>
                   <div className="text-success opacity-0 group-hover:opacity-100 transition-opacity">
                     →
@@ -322,7 +243,7 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
           {/* 추가 안내 */}
           <div className="mt-6 p-3 bg-accent/5 rounded-lg">
             <p className="text-xs text-text-secondary text-center">
-              💡 <strong>개발 환경</strong>에서는 테스트 계정을 사용하여<br/>
+              개발 환경에서는 테스트 계정을 사용하여<br/>
               시스템의 모든 기능을 체험해보실 수 있습니다.
             </p>
           </div>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
 import { supabase } from '@/lib/supabase';
@@ -32,7 +33,7 @@ interface NewCounselorForm {
   department: string;
 }
 
-export default function CounselorsPage() {
+function CounselorsPageContent() {
   const toast = useToastHelpers();
   
   // 기본 상태
@@ -863,7 +864,7 @@ export default function CounselorsPage() {
               {selectedCounselors.length > 1 && (
                 <div className="p-3 bg-accent-light rounded-lg">
                   <p className="text-sm text-text-secondary">
-                    💡 다중 선택 시 빈 칸은 변경되지 않습니다. 변경할 정보만 입력하세요.
+                    다중 선택 시 빈 칸은 변경되지 않습니다. 변경할 정보만 입력하세요.
                   </p>
                 </div>
               )}
@@ -897,5 +898,14 @@ export default function CounselorsPage() {
         </div>
       )}
     </AdminLayout>
+  );
+}
+
+// ✅ ProtectedRoute 추가 - 관리자만 접근 가능
+export default function CounselorsPage() {
+  return (
+    <ProtectedRoute requiredRole="admin">
+      <CounselorsPageContent />
+    </ProtectedRoute>
   );
 }

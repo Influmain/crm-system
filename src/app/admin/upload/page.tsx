@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons, getColumnIcon } from '@/lib/design-system/icons';
 import SmartTable from '@/components/ui/SmartTable';
@@ -47,7 +48,7 @@ const DB_FIELDS = [
   { key: 'extra_info', label: '📝 기타정보', required: false, icon: FileText },
 ];
 
-export default function CustomerUploadPage() {
+function CustomerUploadPageContent() {
   const toast = useToastHelpers();
   
   const [currentStep, setCurrentStep] = useState<UploadStep>('upload');
@@ -456,7 +457,7 @@ export default function CustomerUploadPage() {
 
       console.log('파일 내 중복 (첫 번째 제외):', internalDuplicates.length);
 
-      // DB 중복 검사
+      // DB 중복 검사 (대용량 데이터 최적화)
       let dbDuplicates = [];
       
       if (phoneNumbers.length > 0) {
@@ -466,24 +467,58 @@ export default function CustomerUploadPage() {
           const uniquePhones = [...new Set(phoneNumbers)];
           console.log('중복 검사할 유니크 번호들:', uniquePhones.length);
 
-          const { data: existingLeads, error } = await supabase
-            .from('lead_pool')
-            .select('phone')
-            .in('phone', uniquePhones);
+          // 대용량 데이터를 위한 청크 처리 (500개씩)
+          const CHUNK_SIZE = 500; // IN 절 최적화
+          const existingPhonesSet = new Set<string>();
+          
+          for (let i = 0; i < uniquePhones.length; i += CHUNK_SIZE) {
+            const chunk = uniquePhones.slice(i, i + CHUNK_SIZE);
+            const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
+            const totalChunks = Math.ceil(uniquePhones.length / CHUNK_SIZE);
+            
+            console.log(`DB 중복 검사 진행: ${chunkNum}/${totalChunks} (${chunk.length}개)`);
+            
+            // 청크별 진행상황 표시 (1000개 이상일 때만)
+            if (uniquePhones.length > 100) {
+              toast.info(
+                `중복 검사 진행 중 (${chunkNum}/${totalChunks})`,
+                `${chunk.length}개 전화번호 중복 검사 중...`,
+                { duration: 1000 }
+              );
+            }
 
-          if (error) {
-            console.error('Supabase 오류:', error);
-            throw error;
+            const { data: chunkResults, error } = await supabase
+              .from('lead_pool')
+              .select('phone')
+              .in('phone', chunk);
+
+            if (error) {
+              console.error(`청크 ${chunkNum} 검사 실패:`, error);
+              throw error;
+            }
+
+            // 기존 전화번호들을 Set에 추가
+            chunkResults?.forEach(result => {
+              if (result.phone) {
+                existingPhonesSet.add(result.phone);
+              }
+            });
+
+            console.log(`청크 ${chunkNum} 완료: ${chunkResults?.length || 0}개 중복 발견`);
+            
+            // UI 블로킹 방지를 위한 짧은 대기
+            if (totalChunks > 1) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
           }
 
-          console.log('DB 조회 결과:', existingLeads);
-
-          const existingPhones = new Set(existingLeads?.map(lead => lead.phone) || []);
+          console.log(`✅ 전체 DB 중복 검사 완료: ${existingPhonesSet.size}개 기존 번호 발견`);
           
+          // 중복 데이터 필터링 (메모리 효율적 처리)
           const seenInFile = new Set<string>();
           dbDuplicates = fileData.data.filter(row => {
             const phone = row[phoneField]?.toString().trim();
-            if (!phone || !existingPhones.has(phone)) return false;
+            if (!phone || !existingPhonesSet.has(phone)) return false;
             
             if (seenInFile.has(phone)) return false;
             seenInFile.add(phone);
@@ -493,18 +528,28 @@ export default function CustomerUploadPage() {
             reason: 'DB에 이미 존재하는 번호'
           }));
 
-          console.log('DB 중복 발견:', dbDuplicates.length);
+          console.log('최종 DB 중복 발견:', dbDuplicates.length);
 
         } catch (dbError) {
-          console.warn('DB 중복 검사 실패, 계속 진행:', dbError);
+          console.error('❌ DB 중복 검사 실패:', dbError);
           
-          toast.warning(
-            'DB 접근 제한',
-            'DB 접근 권한 문제가 있습니다. RLS 정책을 확인해주세요. 파일 내 중복만 검사합니다.',
-            { duration: 5000 }
+          // 대용량 데이터에서는 중복 검사 실패가 치명적
+          const errorMessage = dbError.message || '알 수 없는 오류';
+          
+          toast.error(
+            'DB 중복 검사 실패',
+            `중복 검사에 실패했습니다. 데이터 무결성을 위해 업로드를 중단합니다.\n\n오류: ${errorMessage}`,
+            {
+              action: {
+                label: '다시 시도',
+                onClick: () => handleMappingComplete()
+              },
+              duration: 0
+            }
           );
           
-          dbDuplicates = [];
+          // 대용량에서는 중복 검사 없이 업로드하면 안됨
+          throw new Error(`DB 중복 검사 필수: ${errorMessage}`);
         }
       }
 
@@ -540,7 +585,7 @@ export default function CustomerUploadPage() {
       if (totalDuplicates === 0) {
         toast.success(
           '중복 검사 완료',
-          `🎉 중복된 고객 데이터가 없습니다!\n${uniqueRecords.length}개 고객 레코드를 모두 업로드할 수 있습니다.`,
+          `중복된 고객 데이터가 없습니다!\n${uniqueRecords.length}개 고객 레코드를 모두 업로드할 수 있습니다.`,
           {
             action: {
               label: '업로드 진행',
@@ -657,7 +702,7 @@ export default function CustomerUploadPage() {
       }
 
       setUploadProgress(10);
-      console.log('✅ 배치 생성 완료:', batchId);
+      console.log('배치 생성 완료:', batchId);
 
       // 진행상황 토스트 업데이트
       toast.info('배치 생성 완료', '업로드 배치가 생성되었습니다. 데이터 변환 중...', { duration: 2000 });
@@ -715,7 +760,7 @@ export default function CustomerUploadPage() {
       });
 
       setUploadProgress(30);
-      console.log('✅ 데이터 변환 완료. 변환된 레코드 수:', recordsToInsert.length);
+      console.log('데이터 변환 완료. 변환된 레코드 수:', recordsToInsert.length);
 
       // 데이터 변환 완료 토스트
       toast.info('데이터 변환 완료', '레코드 변환이 완료되었습니다. 데이터베이스 업로드 중...', { duration: 2000 });
@@ -775,7 +820,7 @@ export default function CustomerUploadPage() {
             }
           } else {
             uploadedCount += insertedData?.length || chunk.length;
-            console.log(`✅ 청크 ${chunkNumber} 업로드 완료: ${insertedData?.length || chunk.length}개`);
+            console.log(`청크 ${chunkNumber} 업로드 완료: ${insertedData?.length || chunk.length}개`);
           }
 
         } catch (chunkError) {
@@ -811,7 +856,7 @@ export default function CustomerUploadPage() {
       if (batchUpdateError) {
         console.warn('배치 정보 업데이트 실패:', batchUpdateError);
       } else {
-        console.log('✅ 배치 정보 업데이트 완료');
+        console.log('배치 정보 업데이트 완료');
       }
 
       setUploadProgress(100);
@@ -831,7 +876,7 @@ export default function CustomerUploadPage() {
         setTimeout(() => {
           setCurrentStep('complete');
           toast.success(
-            '🎉 업로드 완료!',
+            '업로드 완료!',
             `${uploadedCount}개 고객이 성공적으로 업로드되었습니다.\n\n이제 영업사원에게 배정할 수 있습니다.`,
             {
               action: {
@@ -846,7 +891,7 @@ export default function CustomerUploadPage() {
         setTimeout(() => {
           setCurrentStep('complete');
           toast.warning(
-            '⚠️ 부분 업로드 완료',
+            '부분 업로드 완료',
             `성공: ${uploadedCount}개 고객\n실패: ${errorCount}개\n\n일부 레코드에서 오류가 발생했습니다.`,
             {
               action: {
@@ -870,7 +915,7 @@ export default function CustomerUploadPage() {
       const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
       
       toast.error(
-        '❌ 업로드 실패',
+        '업로드 실패',
         `업로드 중 오류가 발생했습니다.\n\n${errorMessage}`,
         {
           action: {
@@ -915,7 +960,7 @@ export default function CustomerUploadPage() {
               
               {/* 파일 형식 안내 추가 */}
               <div className="mb-6 p-4 bg-bg-secondary rounded-lg text-left">
-                <h4 className="font-medium text-text-primary mb-2">📋 지원되는 파일 형식</h4>
+                <h4 className="font-medium text-text-primary mb-2">지원되는 파일 형식</h4>
                 <ul className="text-sm text-text-secondary space-y-1">
                   <li>• Excel 파일 (.xlsx) - 최대 10MB</li>
                   <li>• CSV 파일 (.csv) - UTF-8 인코딩 권장</li>
@@ -986,7 +1031,7 @@ export default function CustomerUploadPage() {
               {fileData && fileData.data.length > 10 && (
                 <div className="mt-4 p-3 bg-bg-secondary rounded-lg text-center">
                   <p className="text-sm text-text-secondary">
-                    📋 미리보기: 총 {fileData.data.length}개 행 중 처음 10개만 표시됨
+                    미리보기: 총 {fileData.data.length}개 행 중 처음 10개만 표시됨
                   </p>
                 </div>
               )}
@@ -1067,9 +1112,9 @@ export default function CustomerUploadPage() {
                   <div className="space-y-1 text-xs">
                     {Object.entries(columnMapping).map(([csvCol, dbField]) => (
                       <div key={csvCol} className="flex justify-between">
-                        <span className="text-text-secondary">📄 {csvCol}</span>
+                        <span className="text-text-secondary">{csvCol}</span>
                         <span>→</span>
-                        <span className="text-accent">🗃️ {DB_FIELDS.find(f => f.key === dbField)?.label || dbField}</span>
+                        <span className="text-accent">{DB_FIELDS.find(f => f.key === dbField)?.label || dbField}</span>
                       </div>
                     ))}
                     {Object.keys(columnMapping).length === 0 && (
@@ -1091,7 +1136,7 @@ export default function CustomerUploadPage() {
                           <AlertCircle className="w-4 h-4 text-warning" />
                         )}
                         <span className={isMapped ? 'text-success' : 'text-warning'}>
-                          {field.label} {isMapped ? `✓ (${mappedColumn})` : '매핑 필요'}
+                          {field.label} {isMapped ? `(${mappedColumn})` : '매핑 필요'}
                         </span>
                       </div>
                     );
@@ -1373,5 +1418,14 @@ export default function CustomerUploadPage() {
       {/* 단계별 콘텐츠 */}
       {renderStepContent()}
     </AdminLayout>
+  );
+}
+
+// ✅ ProtectedRoute 추가 - 관리자만 접근 가능
+export default function CustomerUploadPage() {
+  return (
+    <ProtectedRoute requiredRole="admin">
+      <CustomerUploadPageContent />
+    </ProtectedRoute>
   );
 }

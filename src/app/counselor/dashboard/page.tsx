@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import CounselorLayout from '@/components/layout/CounselorLayout';
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
 import { useToastHelpers } from '@/components/ui/Toast';
@@ -34,7 +35,7 @@ interface DashboardStats {
   contracted: number;    // 계약
 }
 
-export default function CounselorDashboard() {
+function CounselorDashboardContent() {
   const { user } = useAuth();
   const router = useRouter();
   const toast = useToastHelpers();
@@ -262,8 +263,6 @@ export default function CounselorDashboard() {
           </div>
         </div>
 
-
-
         {/* 최근 배정 고객 목록 */}
         <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
           <div className="p-4 border-b border-border-primary">
@@ -440,5 +439,13 @@ export default function CounselorDashboard() {
         </div>
       </div>
     </CounselorLayout>
+  );
+}
+
+export default function CounselorDashboard() {
+  return (
+    <ProtectedRoute requiredRole="counselor">
+      <CounselorDashboardContent />
+    </ProtectedRoute>
   );
 }

@@ -9,40 +9,41 @@ import { designSystem } from '@/lib/design-system'
 import { ArrowLeft, BarChart3 } from 'lucide-react'
 
 export default function LoginPage() {
-  const { user, profile, loading } = useAuth()
+  // 🔧 변수명 수정: profile -> userProfile
+  const { user, userProfile, loading } = useAuth()
   const router = useRouter()
   const toast = useToastHelpers()
   const [mounted, setMounted] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
-  // 이미 로그인된 경우 대시보드로 리다이렉트
+  // 🔧 단순화된 리다이렉트 로직 (Toast 중복 제거)
   useEffect(() => {
-    if (user && profile && mounted) {
-      const dashboardPath = profile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+    if (user && userProfile && mounted && !redirecting) {
+      console.log('로그인 상태 감지 - 리다이렉트 준비')
+      setRedirecting(true)
       
+      const dashboardPath = userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+      
+      // 🔧 단순한 안내 메시지 (액션 버튼 제거)
       toast.info(
-        '이미 로그인됨',
-        `${profile.full_name || user.email}님으로 로그인되어 있습니다.`,
-        {
-          action: { 
-            label: '대시보드로 이동', 
-            onClick: () => router.push(dashboardPath)
-          }
-        }
+        '로그인 완료',
+        `${userProfile.full_name || user.email}님, 대시보드로 이동합니다.`
       )
       
-      setTimeout(() => {
-        router.push(dashboardPath)
-      }, 2000)
+      // 🔧 즉시 리다이렉트 (지연 제거)
+      router.push(dashboardPath)
     }
-  }, [user, profile, mounted, router, toast])
+  }, [user, userProfile, mounted, redirecting, router, toast])
 
-  const handleLoginSuccess = (user: any, profile: any) => {
-    console.log('로그인 페이지에서 로그인 성공:', user.email, profile.role)
-    // LoginModal에서 이미 리다이렉트와 토스트 처리됨
+  // 🔧 LoginModal 성공 콜백 단순화
+  const handleLoginSuccess = () => {
+    console.log('로그인 성공 콜백 - AuthContext가 자동 처리')
+    // AuthContext에서 모든 상태 업데이트 처리
+    // 별도 리다이렉트나 Toast 불필요
   }
 
   const handleClose = () => {
@@ -61,8 +62,20 @@ export default function LoginPage() {
     )
   }
 
+  // 🔧 리다이렉트 중 표시
+  if (redirecting) {
+    return (
+      <div className="min-h-screen bg-bg-primary flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-success border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-text-secondary">대시보드로 이동 중...</p>
+        </div>
+      </div>
+    )
+  }
+
   // 이미 로그인된 경우 안내 화면
-  if (user && profile) {
+  if (user && userProfile) {
     return (
       <div className="min-h-screen bg-bg-primary flex items-center justify-center">
         <div className="text-center max-w-md mx-auto p-8">
@@ -75,15 +88,13 @@ export default function LoginPage() {
           </h1>
           
           <p className="text-text-secondary mb-6">
-            {profile.full_name || user.email}님으로 로그인되어 있습니다.
-            <br />
-            잠시 후 대시보드로 이동합니다.
+            {userProfile.full_name || user.email}님으로 로그인되어 있습니다.
           </p>
           
           <div className="flex flex-col gap-3">
             <button
               onClick={() => {
-                const dashboardPath = profile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+                const dashboardPath = userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
                 router.push(dashboardPath)
               }}
               className={designSystem.components.button.primary}
@@ -103,7 +114,7 @@ export default function LoginPage() {
     )
   }
 
-  // 로그인이 필요한 경우 - 모달을 페이지 중앙에 고정 표시
+  // 로그인이 필요한 경우
   return (
     <div className="min-h-screen bg-bg-primary">
       {/* 상단 네비게이션 */}
@@ -140,7 +151,7 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* LoginModal을 항상 열린 상태로 표시 */}
+          {/* 🔧 LoginModal 단순화 */}
           <div className="relative">
             <LoginModal 
               isOpen={true} 
@@ -153,7 +164,7 @@ export default function LoginPage() {
           <div className="mt-8 text-center">
             <div className="p-4 bg-bg-secondary rounded-lg">
               <p className="text-sm text-text-secondary mb-2">
-                💡 <strong>URL 직접 접근</strong>
+                URL 직접 접근
               </p>
               <p className="text-xs text-text-tertiary">
                 이 페이지는 북마크하거나 직접 URL로 접근할 때 사용됩니다.
@@ -168,7 +179,7 @@ export default function LoginPage() {
       {/* 푸터 */}
       <footer className="text-center p-6 border-t border-border-primary">
         <p className="text-xs text-text-tertiary">
-          © 2025 CRM Lead Management System
+          2025 CRM Lead Management System
         </p>
       </footer>
     </div>

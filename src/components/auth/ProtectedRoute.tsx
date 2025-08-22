@@ -101,9 +101,29 @@ export default function ProtectedRoute({
   return <>{children}</>;
 }
 
-// 권한 없음 페이지 컴포넌트
+// 🔧 수정된 권한 없음 페이지 컴포넌트
 export function UnauthorizedPage() {
   const { userProfile, signOut } = useAuth();
+  const router = useRouter();
+  
+  // 다른 계정으로 로그인 처리
+  const handleSwitchAccount = async () => {
+    try {
+      console.log('다른 계정 로그인 시작');
+      
+      // 로그아웃 실행
+      await signOut();
+      console.log('로그아웃 완료 - 로그인 페이지로 이동');
+      
+      // 로그인 페이지로 리다이렉트
+      router.push('/login');
+      
+    } catch (error) {
+      console.error('계정 전환 실패:', error);
+      // 오류가 있어도 강제로 로그인 페이지로 이동
+      router.push('/login');
+    }
+  };
   
   return (
     <div className="min-h-screen bg-bg-secondary flex items-center justify-center">
@@ -111,23 +131,29 @@ export function UnauthorizedPage() {
         <div className="text-6xl mb-4">🚫</div>
         <h1 className="text-2xl font-bold text-text-primary mb-2">접근 권한이 없습니다</h1>
         <p className="text-text-secondary mb-6">
-          현재 계정({userProfile?.role})으로는 이 페이지에 접근할 수 없습니다.
+          현재 계정({userProfile?.role === 'admin' ? '관리자' : '영업사원'})으로는 이 페이지에 접근할 수 없습니다.
         </p>
         
         <div className="space-y-3">
           <button
             onClick={() => window.history.back()}
-            className="w-full px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90"
+            className="w-full px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors"
           >
             이전 페이지로 돌아가기
           </button>
           
           <button
-            onClick={signOut}
-            className="w-full px-4 py-2 bg-bg-secondary border border-border-primary text-text-primary rounded-lg hover:bg-bg-hover"
+            onClick={handleSwitchAccount}
+            className="w-full px-4 py-2 bg-bg-secondary border border-border-primary text-text-primary rounded-lg hover:bg-bg-hover transition-colors"
           >
             다른 계정으로 로그인
           </button>
+        </div>
+        
+        <div className="mt-6 p-3 bg-bg-secondary rounded-lg">
+          <p className="text-xs text-text-tertiary">
+            적절한 권한이 있는 계정으로 다시 로그인해주세요.
+          </p>
         </div>
       </div>
     </div>
@@ -156,4 +182,5 @@ export function UnauthorizedPage() {
 1. 로그인 안 한 상태 → /login으로 리다이렉트
 2. 상담원이 관리자 페이지 접근 → /unauthorized로 리다이렉트
 3. 올바른 권한 → 정상 페이지 표시
+4. /unauthorized에서 "다른 계정으로 로그인" → 로그아웃 후 /login 이동
 */

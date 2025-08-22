@@ -11,8 +11,9 @@ import LoginModal from '@/components/auth/LoginModal'
 import { LogIn, Sun, Moon, BarChart3, Upload, Users, Shield, Bell } from 'lucide-react'
 
 export default function HomePage() {
+  // 모든 Hooks를 먼저 선언 (조건 없이)
   const { isDark, toggle: toggleTheme } = useTheme()
-  const { user, userProfile, loading } = useAuth()
+  const { user, userProfile, loading, signOut } = useAuth()
   const toast = useToastHelpers()
   const router = useRouter()
   
@@ -20,12 +21,12 @@ export default function HomePage() {
   const [showLoginModal, setShowLoginModal] = useState(false)
   const [redirecting, setRedirecting] = useState(false)
 
+  // 모든 useEffect를 조건 없이 선언
   useEffect(() => {
     setMounted(true)
     
-    // 캐시 버전 관리
     const handleCacheManagement = () => {
-      const CACHE_VERSION = 'crm-v1.1.0'
+      const CACHE_VERSION = 'crm-v1.2.0'
       const storedVersion = localStorage.getItem('crm_cache_version')
       
       if (storedVersion !== CACHE_VERSION) {
@@ -43,35 +44,62 @@ export default function HomePage() {
     handleCacheManagement()
   }, [])
 
-  // 자동 리다이렉트 로직 개선
   useEffect(() => {
-    if (!loading && user && userProfile && !redirecting) {
+    if (!loading && user && userProfile && !redirecting && mounted) {
       const dashboardPath = userProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
       console.log('🔄 홈페이지 자동 리다이렉트:', userProfile.role, '→', dashboardPath)
       
       setRedirecting(true)
       
-      // 약간의 지연 후 리다이렉트 (UI 깜빡임 방지)
       setTimeout(() => {
         router.push(dashboardPath)
       }, 500)
     }
-  }, [loading, user, userProfile, redirecting, router])
+  }, [loading, user, userProfile, redirecting, router, mounted])
 
-  // 로딩 중이거나 리다이렉트 중인 경우
-  if (!mounted || loading || (user && userProfile && redirecting)) {
+  useEffect(() => {
+    console.log('홈페이지 상태 변화:', {
+      user: user?.email || 'None',
+      userProfile: userProfile?.role || 'None',
+      loading,
+      redirecting,
+      mounted,
+      timestamp: new Date().toLocaleTimeString()
+    })
+  }, [user, userProfile, loading, redirecting, mounted])
+
+  // 핸들러 함수들
+  const handleLoginSuccess = () => {
+    console.log('로그인 성공 - AuthContext가 자동 처리')
+  }
+
+  const handleAutoSignOut = async () => {
+    console.log('프로필 오류로 인한 자동 로그아웃 실행')
+    await signOut()
+    toast.info('세션 재설정', '프로필 문제로 인해 로그아웃되었습니다. 다시 로그인해주세요.')
+    router.push('/login')
+  }
+
+  const activeProfile = userProfile
+
+  // 렌더링 조건 확인
+  const isLoading = !mounted || loading
+  const isRedirecting = user && userProfile && redirecting
+  const hasProfileError = user && !userProfile && !loading && mounted
+  const isLoggedIn = user && activeProfile
+
+  // 로딩 상태
+  if (isLoading || isRedirecting) {
     return (
       <div className="min-h-screen bg-bg-primary flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-text-secondary">
-            {loading ? 'CRM 시스템 로딩 중...' : 
-             redirecting ? '대시보드로 이동 중...' : 
-             'CRM 시스템 로딩 중...'}
+            {isLoading ? 'CRM 시스템 로딩 중...' : '대시보드로 이동 중...'}
           </p>
-          {user && userProfile && (
+          {isRedirecting && (
             <p className="text-text-tertiary text-sm mt-2">
-              {userProfile.role === 'admin' ? '관리자' : '상담원'} 계정으로 로그인됨
+              {userProfile.role === 'admin' ? '관리자' : '영업사원'} 계정으로 로그인됨
             </p>
           )}
         </div>
@@ -79,46 +107,63 @@ export default function HomePage() {
     )
   }
 
-  // 프로필 로드 실패한 경우 처리
-  if (user && !userProfile && !loading) {
-    console.error('홈페이지: 사용자는 있지만 프로필이 없음')
+  // 프로필 오류 상태
+  if (hasProfileError) {
+    console.warn('홈페이지: 사용자 프로필 로드 실패 상황 - 안전한 처리 중')
+    
     return (
       <div className="min-h-screen bg-bg-primary flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-error/10 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Shield className="w-8 h-8 text-error" />
+        <div className="text-center max-w-md mx-auto p-8">
+          <div className="w-16 h-16 bg-warning/10 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Shield className="w-8 h-8 text-warning" />
           </div>
-          <h2 className="text-lg font-semibold text-text-primary mb-2">프로필 로드 실패</h2>
-          <p className="text-text-secondary mb-4">
-            사용자 프로필을 불러올 수 없습니다. 다시 로그인해주세요.
+          
+          <h2 className="text-lg font-semibold text-text-primary mb-4">
+            프로필 로드 중 문제 발생
+          </h2>
+          
+          <p className="text-text-secondary mb-6 leading-relaxed">
+            사용자 프로필 정보를 불러올 수 없습니다.
+            <br />
+            다시 로그인하시거나 잠시 후 시도해주세요.
           </p>
-          <button
-            onClick={() => window.location.href = '/login'}
-            className="px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90"
-          >
-            다시 로그인
-          </button>
+          
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => router.push('/login')}
+              className="px-6 py-3 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors"
+            >
+              로그인 페이지로 이동
+            </button>
+            
+            <button
+              onClick={handleAutoSignOut}
+              className="px-6 py-3 border border-border-primary text-text-primary rounded-lg hover:bg-bg-hover transition-colors"
+            >
+              자동 로그아웃 후 재시도
+            </button>
+            
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 text-text-secondary hover:text-text-primary transition-colors text-sm"
+            >
+              페이지 새로고침
+            </button>
+          </div>
+          
+          <div className="mt-6 p-3 bg-bg-secondary rounded-lg">
+            <p className="text-xs text-text-tertiary">
+              문제가 지속되면 관리자에게 문의해주세요.
+              <br />
+              사용자 ID: {user?.id?.slice(0, 8)}...
+            </p>
+          </div>
         </div>
       </div>
     )
   }
 
-  const handleLoginSuccess = (user: any, profile: any) => {
-    console.log('로그인 성공:', user.email, profile.role)
-    // AuthContext에서 자동 리다이렉트 처리됨
-  }
-
-  const activeProfile = userProfile
-
-  // 디버그 로그
-  console.log('홈페이지 상태:', {
-    user: user?.email,
-    userProfile: userProfile?.role,
-    loading,
-    redirecting,
-    mounted
-  })
-
+  // 메인 페이지 렌더링
   return (
     <div className={designSystem.components.layout.page}>
       <main className="min-h-screen">
@@ -140,19 +185,19 @@ export default function HomePage() {
           
           <div className="flex items-center gap-4">
             {/* 로그인 상태 표시 */}
-            {user ? (
+            {isLoggedIn ? (
               <div className="flex items-center gap-3">
                 <div className="text-right">
                   <div className="text-sm font-medium text-text-primary">
-                    {activeProfile?.full_name || user.email}
+                    {activeProfile.full_name || user.email}
                   </div>
                   <div className="text-xs text-text-secondary">
-                    {activeProfile?.role === 'admin' ? '관리자' : '상담원'}
+                    {activeProfile.role === 'admin' ? '관리자' : '영업사원'}
                   </div>
                 </div>
                 <button
                   onClick={() => {
-                    const dashboardPath = activeProfile?.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+                    const dashboardPath = activeProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
                     console.log('수동 대시보드 이동:', dashboardPath)
                     router.push(dashboardPath)
                   }}
@@ -200,16 +245,16 @@ export default function HomePage() {
               </h2>
               
               <p className={designSystem.utils.cn(designSystem.components.typography.bodyLg, 'mb-12 max-w-2xl mx-auto leading-relaxed')}>
-                Excel 파일 업로드, 상담사 배정, 진행 상황 추적까지 
+                Excel 파일 업로드, 영업사원 배정, 진행 상황 추적까지 
                 리드 관리 업무를 효율적으로 처리할 수 있습니다.
               </p>
               
               {/* 로그인 상태에 따른 CTA 버튼 */}
-              {user ? (
+              {isLoggedIn ? (
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-20">
                   <button 
                     onClick={() => {
-                      const dashboardPath = activeProfile?.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
+                      const dashboardPath = activeProfile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard'
                       router.push(dashboardPath)
                     }}
                     className={designSystem.utils.cn(designSystem.components.button.primary, designSystem.components.button.lg, 'min-w-48')}
@@ -217,7 +262,7 @@ export default function HomePage() {
                     내 대시보드로 이동
                     <BarChart3 className="w-5 h-5 ml-2" />
                   </button>
-                  {activeProfile?.role === 'admin' && (
+                  {activeProfile.role === 'admin' && (
                     <button 
                       onClick={() => router.push('/admin/upload')}
                       className={designSystem.utils.cn(designSystem.components.button.secondary, designSystem.components.button.lg, 'min-w-48')}
@@ -264,7 +309,7 @@ export default function HomePage() {
           </section>
 
           {/* 주요 기능 - 로그인하지 않은 경우에만 표시 */}
-          {!user && (
+          {!isLoggedIn && (
             <section className="py-20 max-w-6xl mx-auto">
               <div className="text-center mb-16">
                 <h3 className={designSystem.utils.cn(designSystem.components.typography.h2, 'mb-4')}>
@@ -285,8 +330,8 @@ export default function HomePage() {
                   },
                   {
                     icon: Users,
-                    title: '상담사 배정',
-                    description: '리드별 최적의 상담사를 자동 또는 수동 배정',
+                    title: '영업사원 배정',
+                    description: '리드별 최적의 영업사원을 자동 또는 수동 배정',
                     color: 'text-success'
                   },
                   {
@@ -319,7 +364,7 @@ export default function HomePage() {
           )}
 
           {/* 로그인된 사용자를 위한 바로가기 섹션 */}
-          {user && !redirecting && (
+          {isLoggedIn && !redirecting && (
             <section className="py-20 max-w-6xl mx-auto">
               <div className="text-center mb-12">
                 <h3 className={designSystem.utils.cn(designSystem.components.typography.h3, 'mb-4')}>
@@ -331,7 +376,7 @@ export default function HomePage() {
               </div>
               
               <div className={designSystem.utils.cn(designSystem.components.grid.base, 'grid-cols-1 md:grid-cols-3 max-w-4xl mx-auto gap-6')}>
-                {activeProfile?.role === 'admin' ? (
+                {activeProfile.role === 'admin' ? (
                   <>
                     <button onClick={() => router.push('/admin/upload')} className={designSystem.utils.cn(designSystem.components.card.interactive, designSystem.components.card.content, 'group text-center')}>
                       <div className={designSystem.utils.cn('w-12 h-12 mx-auto mb-4 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300 bg-accent/10')}>
@@ -349,7 +394,7 @@ export default function HomePage() {
                       <div className={designSystem.utils.cn('w-12 h-12 mx-auto mb-4 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300 bg-warning/10')}>
                         <Shield className="w-6 h-6 text-warning" />
                       </div>
-                      <h4 className={designSystem.components.typography.h6}>상담사 관리</h4>
+                      <h4 className={designSystem.components.typography.h6}>영업사원 관리</h4>
                     </button>
                   </>
                 ) : (
@@ -373,7 +418,7 @@ export default function HomePage() {
           )}
 
           {/* 현재 상황 - 로그인하지 않은 경우에만 표시 */}
-          {!user && (
+          {!isLoggedIn && (
             <section className="py-20 max-w-6xl mx-auto">
               <div className={designSystem.utils.cn(designSystem.components.card.secondary, designSystem.components.card.contentLg)}>
                 <div className="text-center mb-12">
@@ -430,7 +475,7 @@ export default function HomePage() {
           )}
 
           {/* 테스트 계정 안내 - 로그인하지 않은 경우만 */}
-          {!user && (
+          {!isLoggedIn && (
             <section className="py-20 max-w-6xl mx-auto">
               <div className="text-center mb-12">
                 <h3 className={designSystem.utils.cn(designSystem.components.typography.h3, 'mb-4')}>
@@ -455,7 +500,7 @@ export default function HomePage() {
                         <code className="px-2 py-1 bg-bg-secondary rounded text-text-primary">admin@company.com</code>
                       </p>
                       <p className={designSystem.components.typography.bodySm}>
-                        전체 시스템 관리, 데이터 업로드, 상담사 관리
+                        전체 시스템 관리, 데이터 업로드, 영업사원 관리
                       </p>
                     </div>
                   </div>
@@ -468,7 +513,7 @@ export default function HomePage() {
                     </div>
                     <div className="flex-1">
                       <h4 className={designSystem.utils.cn(designSystem.components.typography.h5, 'mb-2')}>
-                        상담사 계정
+                        영업사원 계정
                       </h4>
                       <p className={designSystem.components.typography.bodySm}>
                         <code className="px-2 py-1 bg-bg-secondary rounded text-text-primary">counselor1@company.com</code>
@@ -498,7 +543,7 @@ export default function HomePage() {
         <footer className="border-t border-border-primary mt-20">
           <div className="max-w-6xl mx-auto px-8 py-12 text-center">
             <p className={designSystem.components.typography.bodySm}>
-              © 2025 CRM Lead Management System
+              2025 CRM Lead Management System
             </p>
           </div>
         </footer>

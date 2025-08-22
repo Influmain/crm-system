@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
 import { supabase, leadAssignmentService, leadPoolService } from '@/lib/supabase';
@@ -42,7 +43,7 @@ interface Assignment {
   counselor: Counselor;
 }
 
-export default function AssignmentsPage() {
+function AssignmentsPageContent() {
   const { user } = useAuth();
   const toast = useToastHelpers();
   
@@ -971,5 +972,13 @@ export default function AssignmentsPage() {
         </>
       )}
     </AdminLayout>
+  );
+}
+
+export default function AssignmentsPage() {
+  return (
+    <ProtectedRoute requiredRole="admin">
+      <AssignmentsPageContent />
+    </ProtectedRoute>
   );
 }

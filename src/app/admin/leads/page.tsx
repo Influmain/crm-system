@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { useToastHelpers } from '@/components/ui/Toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
@@ -60,7 +61,7 @@ interface PaginationInfo {
   pageSize: number;
 }
 
-export default function AdminLeadsPage() {
+function AdminLeadsPageContent() {
   const { user, loading: authLoading } = useAuth();
   const toast = useToastHelpers();
   const [mounted, setMounted] = useState(false);
@@ -1039,5 +1040,14 @@ export default function AdminLeadsPage() {
         </div>
       )}
     </AdminLayout>
+  );
+}
+
+// ✅ ProtectedRoute 추가 - 관리자만 접근 가능
+export default function AdminLeadsPage() {
+  return (
+    <ProtectedRoute requiredRole="admin">
+      <AdminLeadsPageContent />
+    </ProtectedRoute>
   );
 }

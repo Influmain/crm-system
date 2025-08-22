@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { designSystem } from '@/lib/design-system';
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { businessIcons } from '@/lib/design-system/icons';
 import { useToastHelpers } from '@/components/ui/Toast';
 import { supabase } from '@/lib/supabase';
@@ -39,7 +40,7 @@ interface CounselorLead {
   customer_reaction?: string
 }
 
-export default function ConsultingMonitor() {
+function ConsultingMonitorContent() {
   const { user } = useAuth()
   const toast = useToastHelpers()
   const router = useRouter()
@@ -639,4 +640,12 @@ export default function ConsultingMonitor() {
       </div>
     </AdminLayout>
   )
+}
+
+export default function ConsultingMonitor() {
+  return (
+    <ProtectedRoute requiredRole="admin">
+      <ConsultingMonitorContent />
+    </ProtectedRoute>
+  );
 }

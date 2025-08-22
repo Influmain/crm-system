@@ -34,7 +34,6 @@ const clearCache = () => {
   try {
     localStorage.clear();
     sessionStorage.clear();
-    console.log('캐시 정리 완료');
   } catch (error) {
     console.log('캐시 정리 실패:', error);
   }
@@ -44,49 +43,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [profileLoading, setProfileLoading] = useState(false);
-  const router = useRouter();
+  const [authProcessing, setAuthProcessing] = useState(false);
 
-  // 프로필 로드 (개선된 버전)
-  const loadUserProfile = async (userId: string, retryCount = 0) => {
+  // 🔧 단순화된 프로필 로드 (재시도 로직 제거)
+  const loadUserProfile = async (userId: string): Promise<UserProfile | null> => {
     try {
-      console.log('프로필 로드 시도:', userId, `(${retryCount + 1}번째)`);
-      setProfileLoading(true);
-      
       const { data, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
         .single();
 
-      if (error) {
+      if (error || !data) {
         console.error('프로필 로드 실패:', error);
-        
-        // 재시도 로직 (최대 2번)
-        if (retryCount < 2) {
-          console.log('프로필 로드 재시도...');
-          await new Promise(resolve => setTimeout(resolve, 1000)); // 1초 대기
-          return await loadUserProfile(userId, retryCount + 1);
-        }
-        
         return null;
       }
 
       console.log('✅ 프로필 로드 성공:', data.email, 'role:', data.role);
-      setProfileLoading(false);
       return data;
       
     } catch (error) {
       console.error('프로필 로드 오류:', error);
-      setProfileLoading(false);
-      
-      // 재시도 로직
-      if (retryCount < 2) {
-        console.log('프로필 로드 재시도...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        return await loadUserProfile(userId, retryCount + 1);
-      }
-      
       return null;
     }
   };
@@ -94,7 +71,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 로그인
   const signIn = async (email: string, password: string) => {
     try {
-      setLoading(true);
+      setAuthProcessing(true);
+      console.log('로그인 시작:', email);
       
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -102,51 +80,64 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (error) {
-        setLoading(false);
+        setAuthProcessing(false); // 🔧 오류 시 즉시 해제
         return { error };
       }
 
       console.log('로그인 성공:', data.user?.email);
+      // 🔧 authProcessing은 onAuthStateChange에서 해제
       return { error: null };
       
     } catch (error) {
       console.error('로그인 오류:', error);
-      setLoading(false);
+      setAuthProcessing(false); // 🔧 예외 시 즉시 해제
       return { error };
     }
   };
 
-  // 로그아웃 (캐시 정리 포함)
+  // 로그아웃 (타임아웃과 강제 처리 추가)
   const signOut = async () => {
     try {
-      setLoading(true);
+      console.log('로그아웃 시작');
+      setAuthProcessing(true);
       
-      // Supabase 로그아웃
-      await supabase.auth.signOut();
+      // 타임아웃을 설정해서 3초 이내에 완료되지 않으면 강제 진행
+      const signOutPromise = supabase.auth.signOut();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('로그아웃 타임아웃')), 3000)
+      );
       
-      // 캐시 정리
+      try {
+        await Promise.race([signOutPromise, timeoutPromise]);
+        console.log('Supabase 로그아웃 완료');
+      } catch (error) {
+        console.warn('Supabase 로그아웃 시간 초과 또는 오류:', error);
+        // 오류가 있어도 계속 진행
+      }
+      
       clearCache();
+      console.log('캐시 정리 완료');
       
-      // 상태 초기화
       setUser(null);
       setUserProfile(null);
+      console.log('상태 초기화 완료');
       
       console.log('로그아웃 완료');
       
-      // 로그인 페이지로 이동
-      window.location.href = '/login';
-      
     } catch (error) {
       console.error('로그아웃 오류:', error);
-      // 오류가 있어도 캐시는 정리하고 로그인 페이지로
+      // 오류가 있어도 강제로 상태 초기화
       clearCache();
       setUser(null);
       setUserProfile(null);
-      window.location.href = '/login';
+      console.log('오류 발생으로 강제 상태 초기화 완료');
+    } finally {
+      setAuthProcessing(false);
+      console.log('로그아웃 처리 종료');
     }
   };
 
-  // 초기 세션 로드
+  // 🔧 단일 useEffect로 통합 - 초기 세션 로드
   useEffect(() => {
     let mounted = true;
     
@@ -154,7 +145,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         console.log('🚀 인증 초기화 시작');
         
-        // 기존 세션 확인
         const { data: { session }, error } = await supabase.auth.getSession();
         
         if (!mounted) return;
@@ -169,20 +159,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log('✅ 기존 세션 발견:', session.user.email);
           setUser(session.user);
           
-          // 프로필 로드
+          // 프로필 로드 (단순화)
           const profile = await loadUserProfile(session.user.id);
-          if (mounted && profile) {
-            setUserProfile(profile);
-            console.log('✅ 프로필 설정 완료:', profile.role);
-          } else if (mounted) {
-            console.error('❌ 프로필 로드 실패 - 로그아웃 처리');
-            // 프로필 로드 실패 시 로그아웃
-            await supabase.auth.signOut();
-            setUser(null);
-            setUserProfile(null);
+          if (mounted) {
+            if (profile) {
+              setUserProfile(profile);
+              console.log('✅ 프로필 설정 완료:', profile.role);
+            } else {
+              console.error('❌ 프로필 로드 실패 - 로그아웃 처리');
+              await supabase.auth.signOut();
+              setUser(null);
+              setUserProfile(null);
+            }
           }
         } else {
-          console.log('❌ 세션 없음 - 로그인 필요');
+          console.log('❌ 세션 없음');
         }
         
         if (mounted) {
@@ -205,41 +196,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // 인증 상태 리스너
+  // 🔧 개선된 인증 상태 리스너 (authProcessing 로직 수정)
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('인증 상태 변경:', event, session?.user?.email);
         
+        // 🔧 authProcessing이 있어도 로그인 성공은 처리
+        if (authProcessing && event !== 'SIGNED_IN') {
+          console.log('인증 처리 중 - 상태 변경 무시 (로그인 제외)');
+          return;
+        }
+        
         if (event === 'SIGNED_OUT') {
+          console.log('🚪 로그아웃 이벤트 감지 - 상태 초기화');
           setUser(null);
           setUserProfile(null);
-          setLoading(false);
+          setAuthProcessing(false);
+          console.log('✅ 로그아웃 상태 초기화 완료');
           return;
         }
         
         if (event === 'SIGNED_IN' && session?.user) {
+          console.log('🔄 로그인 상태 업데이트 시작');
           setUser(session.user);
           
           // 프로필 로드
           const profile = await loadUserProfile(session.user.id);
           if (profile) {
             setUserProfile(profile);
-            
-            // 홈페이지나 로그인 페이지에서만 리다이렉트
-            const currentPath = window.location.pathname;
-            if (currentPath === '/login' || currentPath === '/') {
-              const dashboardPath = profile.role === 'admin' ? '/admin/dashboard' : '/counselor/dashboard';
-              console.log('🔄 리다이렉트:', dashboardPath);
-              window.location.href = dashboardPath;
-            }
+            console.log('✅ 로그인 완료:', profile.role);
           } else {
-            console.error('❌ 로그인 후 프로필 로드 실패');
+            console.warn('❌ 로그인 후 프로필 로드 실패');
             await supabase.auth.signOut();
           }
           
-          setLoading(false);
-        } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+          setAuthProcessing(false); // 🔧 로그인 완료 후 authProcessing 해제
+        }
+        
+        if (event === 'TOKEN_REFRESHED' && session?.user) {
           setUser(session.user);
           
           // 프로필이 없으면 다시 로드
@@ -256,32 +251,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, [userProfile]);
 
-  // 개선된 타임아웃 로직
+  // 🔧 단순화된 타임아웃 (5초로 단축)
   useEffect(() => {
-    const forceStopLoading = setTimeout(() => {
+    const timeout = setTimeout(() => {
       if (loading) {
-        if (user && !userProfile && !profileLoading) {
-          console.log('⚠️ 프로필 로드 재시도 중...');
-          // 프로필 로드 재시도
-          loadUserProfile(user.id).then(profile => {
-            if (profile) {
-              setUserProfile(profile);
-              console.log('✅ 재시도 성공:', profile.role);
-            } else {
-              console.log('❌ 재시도 실패 - 로그아웃');
-              signOut();
-            }
-            setLoading(false);
-          });
-        } else {
-          console.log('⚠️ 8초 초과 - 강제 로딩 해제');
-          setLoading(false);
-        }
+        console.log('⚠️ 5초 초과 - 강제 로딩 해제');
+        setLoading(false);
       }
-    }, 8000); // 8초로 연장
+    }, 5000);
 
-    return () => clearTimeout(forceStopLoading);
-  }, [loading, user, userProfile, profileLoading]);
+    return () => clearTimeout(timeout);
+  }, [loading]);
 
   // 권한 확인
   const isAdmin = userProfile?.role === 'admin';
@@ -312,12 +292,11 @@ export const useAuth = () => {
   return context;
 };
 
-// AuthDebugInfo 컴포넌트 (Hydration 오류 방지)
+// 🔧 Hydration 오류 방지 디버그 컴포넌트
 export function AuthDebugInfo() {
   const { user, userProfile, loading } = useAuth();
   const [mounted, setMounted] = useState(false);
   
-  // 클라이언트에서만 렌더링
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -326,7 +305,6 @@ export function AuthDebugInfo() {
     return null;
   }
   
-  // 개발 환경에서만 표시
   if (process.env.NODE_ENV !== 'development') {
     return null;
   }
