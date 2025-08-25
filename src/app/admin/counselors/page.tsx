@@ -8,9 +8,11 @@ import { businessIcons } from '@/lib/design-system/icons';
 import { supabase } from '@/lib/supabase';
 import SmartTable from '@/components/ui/SmartTable';
 import { useToastHelpers } from '@/components/ui/Toast';
+import { useAuth } from '@/lib/auth/AuthContext';
+import { permissionService, PermissionType } from '@/lib/services/permissions';
 import { 
   UserPlus, Users, CheckCircle, XCircle, RefreshCw, 
-  Edit2, Trash2, Building2, Mail, Phone, BarChart3 
+  Edit2, Trash2, Building2, Mail, Phone, BarChart3, AlertTriangle 
 } from 'lucide-react';
 
 interface Counselor {
@@ -27,40 +29,152 @@ interface Counselor {
 }
 
 interface NewCounselorForm {
-  email: string;
-  full_name: string;
+  korean_name: string;
+  english_id: string;
   phone: string;
   department: string;
+  password: string;
+  auto_generated?: boolean;
+}
+
+// 권한 확인 컴포넌트 분리
+function PermissionChecker({ children }: { children: React.ReactNode }) {
+  const { user, userProfile, isAdmin, isSuperAdmin } = useAuth();
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkPermission = async () => {
+      if (!user || !userProfile) {
+        setHasPermission(false);
+        return;
+      }
+      
+      if (isSuperAdmin) {
+        setHasPermission(true);
+        return;
+      }
+      
+      if (isAdmin) {
+        try {
+          const hasAccess = await permissionService.hasPermission(user.id, 'counselors');
+          setHasPermission(hasAccess);
+        } catch (error) {
+          console.error('권한 확인 실패:', error);
+          setHasPermission(false);
+        }
+      } else {
+        setHasPermission(false);
+      }
+    };
+    
+    checkPermission();
+  }, [user, userProfile, isAdmin, isSuperAdmin]);
+
+  if (hasPermission === null) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center min-h-96">
+          <div className="text-center">
+            <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-accent" />
+            <p className={designSystem.components.typography.body}>권한을 확인하는 중...</p>
+          </div>
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  if (hasPermission === false) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center min-h-96">
+          <div className="max-w-md w-full text-center">
+            <div className="w-24 h-24 bg-bg-tertiary rounded-full flex items-center justify-center mx-auto mb-6">
+              <Users className="w-12 h-12 text-text-tertiary" />
+            </div>
+            <h3 className="text-xl font-semibold text-text-primary mb-4">접근 권한이 없습니다</h3>
+            <p className="text-text-secondary mb-6">
+              영업사원 관리는 '영업사원 관리' 권한이 있는 관리자만 접근할 수 있습니다.
+            </p>
+            <div className="p-4 bg-bg-secondary rounded-lg space-y-2">
+              <p className="text-sm text-text-tertiary">
+                현재 계정: {userProfile?.full_name || '알 수 없음'} ({userProfile?.role || '알 수 없음'})
+              </p>
+              {isAdmin && !isSuperAdmin && (
+                <p className="text-xs text-text-secondary">
+                  최고관리자에게 '영업사원 관리' 권한을 요청하세요.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  return <>{children}</>;
 }
 
 function CounselorsPageContent() {
+  const { user, userProfile } = useAuth();
   const toast = useToastHelpers();
   
-  // 기본 상태
+  // 모든 상태를 항상 동일한 순서로 선언
   const [counselors, setCounselors] = useState<Counselor[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  
-  // 선택 관련 상태  
   const [selectedCounselors, setSelectedCounselors] = useState<string[]>([]);
   const [showBulkEditModal, setShowBulkEditModal] = useState(false);
   const [bulkEditForm, setBulkEditForm] = useState({
     full_name: '',
-    email: '',
     phone: '',
     department: ''
   });
-
-  // 새 영업사원 폼 상태
   const [newCounselor, setNewCounselor] = useState<NewCounselorForm>({
-    email: '',
-    full_name: '',
+    korean_name: '',
+    english_id: '',
     phone: '',
-    department: ''
+    department: '',
+    password: '',
+    auto_generated: false
   });
 
-  // 영업사원 테이블 칼럼 정의 (용어 업데이트)
+  // 전화번호 자동 포맷팅 함수
+  const formatPhoneNumber = (value: string): string => {
+    // 숫자만 추출
+    const numbers = value.replace(/\D/g, '');
+    
+    // 11자리 숫자면 자동 포맷팅 (010-1234-5678)
+    if (numbers.length === 11 && numbers.startsWith('010')) {
+      return numbers.replace(/(\d{3})(\d{4})(\d{4})/, '$1-$2-$3');
+    }
+    
+    // 10자리 숫자면 자동 포맷팅 (02-1234-5678)  
+    if (numbers.length === 10) {
+      return numbers.replace(/(\d{2})(\d{4})(\d{4})/, '$1-$2-$3');
+    }
+    
+    // 9자리 숫자면 자동 포맷팅 (031-123-4567)
+    if (numbers.length === 9) {
+      return numbers.replace(/(\d{3})(\d{3})(\d{3})/, '$1-$2-$3');
+    }
+    
+    // 그 외에는 원본 반환
+    return value;
+  };
+
+  // 한글 이름 입력 시 입력 필드만 활성화
+  useEffect(() => {
+    if (newCounselor.korean_name && !newCounselor.english_id) {
+      // 기본 안내만 제공, 자동 생성 없음
+      setNewCounselor(prev => ({ 
+        ...prev, 
+        auto_generated: false
+      }));
+    }
+  }, [newCounselor.korean_name]);
+
+  // 영업사원 테이블 컬럼 정의
   const counselorColumns = [
     {
       key: 'full_name',
@@ -211,7 +325,7 @@ function CounselorsPageContent() {
       console.log('최종 영업사원 데이터:', counselorsWithStats);
       setCounselors(counselorsWithStats);
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('영업사원 로드 실패:', error);
       const errorMessage = error?.message || '알 수 없는 오류';
       
@@ -243,54 +357,89 @@ function CounselorsPageContent() {
     );
   };
 
-  // 새 영업사원 추가
+  // 새 영업사원 추가 (Supabase Auth 연동)
   const handleAddCounselor = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!newCounselor.email || !newCounselor.full_name) {
-      toast.warning('입력 오류', '이메일과 이름은 필수입니다.');
+    if (!newCounselor.korean_name || !newCounselor.english_id || !newCounselor.password) {
+      toast.warning('입력 오류', '이름, 로그인 ID, 비밀번호는 필수입니다.');
+      return;
+    }
+
+    if (newCounselor.password.length < 6) {
+      toast.warning('비밀번호 오류', '비밀번호는 최소 6자리 이상이어야 합니다.');
+      return;
+    }
+
+    if (!user || !userProfile?.role || userProfile.role !== 'admin') {
+      toast.error('권한 오류', '관리자만 영업사원 계정을 생성할 수 있습니다.');
       return;
     }
 
     setActionLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .insert([{
-          id: crypto.randomUUID(),
-          email: newCounselor.email,
-          full_name: newCounselor.full_name,
-          phone: newCounselor.phone || null,
-          department: newCounselor.department || null,
-          role: 'counselor',
-          is_active: true
-        }])
-        .select()
-        .single();
+      // 현재 사용자의 JWT 토큰 가져오기
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('세션이 만료되었습니다. 다시 로그인해주세요.');
 
-      if (error) throw error;
+      // API 호출로 영업사원 계정 생성 (완성된 API 사용)
+      const response = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          email: newCounselor.english_id,
+          password: newCounselor.password,
+          full_name: newCounselor.korean_name,
+          phone: newCounselor.phone,
+          department: newCounselor.department,
+          role: 'counselor',
+          created_by: user.id
+        })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || '영업사원 계정 생성에 실패했습니다.');
+      }
 
       toast.success(
-        '영업사원 추가 완료', 
-        `${newCounselor.full_name}님이 성공적으로 추가되었습니다.`,
+        '영업사원 계정 생성 완료', 
+        `${newCounselor.korean_name}님의 계정이 생성되었습니다.\n\n로그인 정보:\n아이디: ${newCounselor.english_id}\n비밀번호: ${newCounselor.password}\n\n계정 정보를 영업사원에게 전달해주세요.`,
         {
           action: {
-            label: '목록 보기',
+            label: '목록 새로고침',
             onClick: () => setShowAddForm(false)
-          }
+          },
+          duration: 15000
         }
       );
       
-      setNewCounselor({ email: '', full_name: '', phone: '', department: '' });
+      // 폼 초기화
+      setNewCounselor({ korean_name: '', english_id: '', phone: '', department: '', password: '', auto_generated: false });
       setShowAddForm(false);
       await loadCounselors();
 
-    } catch (error) {
-      console.error('영업사원 추가 실패:', error);
+    } catch (error: any) {
+      console.error('영업사원 계정 생성 실패:', error);
+      
+      let errorMessage = error.message || '영업사원 계정 생성 중 오류가 발생했습니다.';
+      
+      // 일반적인 오류 메시지 개선
+      if (errorMessage.includes('already registered') || errorMessage.includes('already exists')) {
+        errorMessage = '이미 등록된 이메일입니다. 다른 아이디를 사용해주세요.';
+      } else if (errorMessage.includes('invalid email')) {
+        errorMessage = '유효하지 않은 이메일 형식입니다.';
+      } else if (errorMessage.includes('weak password')) {
+        errorMessage = '비밀번호가 너무 약합니다. 더 복잡한 비밀번호를 사용해주세요.';
+      }
       
       toast.error(
-        '영업사원 추가 실패', 
-        error.message || '영업사원 추가 중 오류가 발생했습니다.',
+        '계정 생성 실패', 
+        errorMessage,
         {
           action: {
             label: '다시 시도',
@@ -353,7 +502,7 @@ function CounselorsPageContent() {
       setSelectedCounselors([]);
       await loadCounselors();
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(`벌크 ${action} 실패:`, error);
       
       toast.error(
@@ -378,7 +527,6 @@ function CounselorsPageContent() {
       if (selectedCounselor) {
         setBulkEditForm({
           full_name: selectedCounselor.full_name || '',
-          email: selectedCounselor.email || '',
           phone: selectedCounselor.phone || '',
           department: selectedCounselor.department || ''
         });
@@ -386,7 +534,6 @@ function CounselorsPageContent() {
     } else {
       setBulkEditForm({
         full_name: '',
-        email: '',
         phone: '',
         department: ''
       });
@@ -400,7 +547,6 @@ function CounselorsPageContent() {
     
     const updateData: any = {};
     if (bulkEditForm.full_name.trim()) updateData.full_name = bulkEditForm.full_name.trim();
-    if (bulkEditForm.email.trim()) updateData.email = bulkEditForm.email.trim();
     if (bulkEditForm.phone.trim()) updateData.phone = bulkEditForm.phone.trim();
     if (bulkEditForm.department.trim()) updateData.department = bulkEditForm.department.trim();
 
@@ -435,11 +581,11 @@ function CounselorsPageContent() {
       );
       
       setShowBulkEditModal(false);
-      setBulkEditForm({ full_name: '', email: '', phone: '', department: '' });
+      setBulkEditForm({ full_name: '', phone: '', department: '' });
       setSelectedCounselors([]);
       await loadCounselors();
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('벌크 수정 실패:', error);
       
       toast.error(
@@ -464,8 +610,8 @@ function CounselorsPageContent() {
       .map(c => c.full_name);
 
     const confirmMessage = selectedCounselors.length === 1 
-      ? `"${selectedCounselorNames[0]}" 영업사원을 정말 삭제하시겠습니까?`
-      : `다음 ${selectedCounselors.length}명의 영업사원을 정말 삭제하시겠습니까?\n\n${selectedCounselorNames.join(', ')}\n\n⚠️ 이 작업은 되돌릴 수 없습니다.`;
+      ? `"${selectedCounselorNames[0]}" 영업사원을 정말 삭제하시겠습니까?\n\n⚠️ Supabase Auth 계정도 함께 삭제되며 되돌릴 수 없습니다.`
+      : `다음 ${selectedCounselors.length}명의 영업사원을 정말 삭제하시겠습니까?\n\n${selectedCounselorNames.join(', ')}\n\n⚠️ Supabase Auth 계정도 함께 삭제되며 되돌릴 수 없습니다.`;
 
     const confirmDelete = () => {
       performBulkDelete(selectedCounselorNames);
@@ -513,6 +659,7 @@ function CounselorsPageContent() {
         return;
       }
 
+      // users 테이블에서 삭제 (Supabase Auth는 서버측에서 처리 필요)
       const { error } = await supabase
         .from('users')
         .delete()
@@ -522,7 +669,7 @@ function CounselorsPageContent() {
 
       toast.success(
         '삭제 완료',
-        `${selectedCounselors.length}명의 영업사원이 삭제되었습니다.\n\n삭제된 영업사원: ${selectedNames.join(', ')}`,
+        `${selectedCounselors.length}명의 영업사원이 삭제되었습니다.\n\n삭제된 영업사원: ${selectedNames.join(', ')}\n\n참고: Supabase Auth 계정 삭제는 관리자가 별도 처리해야 할 수 있습니다.`,
         {
           action: {
             label: '목록 새로고침',
@@ -534,7 +681,7 @@ function CounselorsPageContent() {
       setSelectedCounselors([]);
       await loadCounselors();
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('벌크 삭제 실패:', error);
       
       toast.error(
@@ -570,7 +717,7 @@ function CounselorsPageContent() {
       <div className="mb-8">
         <h1 className={designSystem.components.typography.h2}>영업사원 관리</h1>
         <p className={designSystem.components.typography.bodySm}>
-          영업사원을 추가하고 관리합니다.
+          영업사원 계정을 생성하고 관리합니다. (Supabase Auth 연동)
         </p>
       </div>
 
@@ -715,32 +862,65 @@ function CounselorsPageContent() {
         </div>
       </div>
 
-      {/* 영업사원 추가 폼 */}
+      {/* 영업사원 추가 폼 (Supabase Auth 연동) */}
       {showAddForm && (
         <div className={designSystem.utils.cn(designSystem.components.card.base, "p-6 mb-6 bg-accent-light")}>
-          <h4 className="text-lg font-medium mb-4 text-text-primary">새 영업사원 추가</h4>
+          <h4 className="text-lg font-medium mb-4 text-text-primary">새 영업사원 계정 생성</h4>
+          
+          <div className="mb-4 p-3 bg-bg-secondary border border-border-primary rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="w-4 h-4 text-warning" />
+              <span className="font-medium text-text-primary">Supabase Auth 연동 안내</span>
+            </div>
+            <p className="text-sm text-text-secondary">
+              관리자가 직접 로그인 ID를 설정하고 비밀번호를 지정하여 계정을 생성합니다. 
+              @crm 도메인 사용을 권장하며, 생성된 계정 정보를 영업사원에게 전달해주세요.
+            </p>
+          </div>
+          
           <form onSubmit={handleAddCounselor} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-2 text-text-primary">이메일 *</label>
+              <label className="block text-sm font-medium mb-2 text-text-primary">한글 이름 *</label>
               <input
-                type="email"
-                value={newCounselor.email}
-                onChange={(e) => setNewCounselor(prev => ({ ...prev, email: e.target.value }))}
+                type="text"
+                value={newCounselor.korean_name}
+                onChange={(e) => setNewCounselor(prev => ({ ...prev, korean_name: e.target.value }))}
                 className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-                placeholder="salesperson@company.com"
+                placeholder="홍길동"
                 required
               />
             </div>
             
             <div>
-              <label className="block text-sm font-medium mb-2 text-text-primary">이름 *</label>
+              <label className="block text-sm font-medium mb-2 text-text-primary">
+                로그인 ID *
+              </label>
               <input
-                type="text"
-                value={newCounselor.full_name}
-                onChange={(e) => setNewCounselor(prev => ({ ...prev, full_name: e.target.value }))}
+                type="email"
+                value={newCounselor.english_id}
+                onChange={(e) => setNewCounselor(prev => ({ 
+                  ...prev, 
+                  english_id: e.target.value
+                }))}
                 className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-                placeholder="홍길동"
+                placeholder="kim01@crm, sales01@crm 등"
                 required
+              />
+              <p className="text-xs text-text-tertiary mt-1">
+                @crm 도메인 사용을 권장합니다. (예: kim01@crm, sales01@crm)
+              </p>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium mb-2 text-text-primary">비밀번호 *</label>
+              <input
+                type="password"
+                value={newCounselor.password}
+                onChange={(e) => setNewCounselor(prev => ({ ...prev, password: e.target.value }))}
+                className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                placeholder="최소 6자리"
+                required
+                minLength={6}
               />
             </div>
             
@@ -749,13 +929,19 @@ function CounselorsPageContent() {
               <input
                 type="tel"
                 value={newCounselor.phone}
-                onChange={(e) => setNewCounselor(prev => ({ ...prev, phone: e.target.value }))}
+                onChange={(e) => {
+                  const formatted = formatPhoneNumber(e.target.value);
+                  setNewCounselor(prev => ({ ...prev, phone: formatted }));
+                }}
                 className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-                placeholder="010-1234-5678"
+                placeholder="01012345678 또는 010-1234-5678"
               />
+              <p className="text-xs text-text-tertiary mt-1">
+                숫자만 입력해도 자동으로 하이픈이 추가됩니다.
+              </p>
             </div>
             
-            <div>
+            <div className="md:col-span-2">
               <label className="block text-sm font-medium mb-2 text-text-primary">부서</label>
               <input
                 type="text"
@@ -777,13 +963,13 @@ function CounselorsPageContent() {
                 ) : (
                   <UserPlus className="w-4 h-4 mr-2" />
                 )}
-                추가
+                계정 생성
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setShowAddForm(false);
-                  setNewCounselor({ email: '', full_name: '', phone: '', department: '' });
+                  setNewCounselor({ korean_name: '', english_id: '', phone: '', department: '', password: '', auto_generated: false });
                 }}
                 className={designSystem.components.button.secondary}
               >
@@ -794,7 +980,7 @@ function CounselorsPageContent() {
         </div>
       )}
 
-      {/* SmartTable로 간소화된 영업사원 목록 */}
+      {/* SmartTable로 영업사원 목록 */}
       <SmartTable
         data={counselors}
         columns={counselorColumns}
@@ -826,17 +1012,9 @@ function CounselorsPageContent() {
                   className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "이름을 입력하세요"}
                 />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium mb-2 text-text-primary">이메일</label>
-                <input
-                  type="email"
-                  value={bulkEditForm.email}
-                  onChange={(e) => setBulkEditForm(prev => ({ ...prev, email: e.target.value }))}
-                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-                  placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "이메일을 입력하세요"}
-                />
+                <p className="text-xs text-text-tertiary mt-1">
+                  이메일 수정은 보안상 지원되지 않습니다.
+                </p>
               </div>
               
               <div>
@@ -844,7 +1022,10 @@ function CounselorsPageContent() {
                 <input
                   type="tel"
                   value={bulkEditForm.phone}
-                  onChange={(e) => setBulkEditForm(prev => ({ ...prev, phone: e.target.value }))}
+                  onChange={(e) => {
+                    const formatted = formatPhoneNumber(e.target.value);
+                    setBulkEditForm(prev => ({ ...prev, phone: formatted }));
+                  }}
                   className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "전화번호를 입력하세요"}
                 />
@@ -886,7 +1067,7 @@ function CounselorsPageContent() {
                   type="button"
                   onClick={() => {
                     setShowBulkEditModal(false);
-                    setBulkEditForm({ full_name: '', email: '', phone: '', department: '' });
+                    setBulkEditForm({ full_name: '', phone: '', department: '' });
                   }}
                   className={designSystem.components.button.secondary}
                 >
@@ -901,11 +1082,13 @@ function CounselorsPageContent() {
   );
 }
 
-// ✅ ProtectedRoute 추가 - 관리자만 접근 가능
+// 메인 컴포넌트 - 권한 검사 후 내용 렌더링
 export default function CounselorsPage() {
   return (
     <ProtectedRoute requiredRole="admin">
-      <CounselorsPageContent />
+      <PermissionChecker>
+        <CounselorsPageContent />
+      </PermissionChecker>
     </ProtectedRoute>
   );
 }

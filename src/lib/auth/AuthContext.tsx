@@ -14,6 +14,7 @@ interface UserProfile {
   department?: string;
   role: 'admin' | 'counselor';
   is_active: boolean;
+  is_super_admin?: boolean;
 }
 
 // AuthContext 타입
@@ -25,6 +26,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   isAdmin: boolean;
   isCounselor: boolean;
+  isSuperAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -50,7 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return null;
       }
 
-      console.log('프로필 로드 성공:', data.email, 'role:', data.role);
+      console.log('프로필 로드 성공:', data.email, 'role:', data.role, 'super_admin:', data.is_super_admin);
       return data;
       
     } catch (error) {
@@ -204,6 +206,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 권한 확인
   const isAdmin = userProfile?.role === 'admin';
   const isCounselor = userProfile?.role === 'counselor';
+  const isSuperAdmin = userProfile?.is_super_admin || false;
 
   const value = {
     user,
@@ -213,6 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signOut,
     isAdmin,
     isCounselor,
+    isSuperAdmin,
   };
 
   return (
@@ -249,6 +253,7 @@ export function AuthDebugInfo() {
         <div>Loading: {loading ? 'Yes' : 'No'}</div>
         <div>Email: {user?.email || 'None'}</div>
         <div>Role: {userProfile?.role || 'None'}</div>
+        <div>Super Admin: {userProfile?.is_super_admin ? 'Yes' : 'No'}</div>
         <div>Time: {new Date().toLocaleTimeString()}</div>
       </div>
     </div>
