@@ -37,11 +37,11 @@ interface DuplicateResult {
   errorCount?: number;
 }
 
-// DB 필드 목록 (용어 통일: 상담원 → 영업사원, 리드 → 고객)
+// DB 필드 목록 (원래대로, contact_name만 필수 해제)
 const DB_FIELDS = [
   { key: '', label: '매핑하지 않음', required: false, icon: X },
   { key: 'phone', label: '📞 전화번호 (중복검사 기준)', required: true, icon: businessIcons.phone },
-  { key: 'contact_name', label: '🎭 전문가 (영업사원이 사용할 이름)', required: true, icon: businessIcons.contact },
+  { key: 'contact_name', label: '🎭 전문가 (영업사원이 사용할 이름)', required: false, icon: businessIcons.contact }, // 필수 해제
   { key: 'data_source', label: '🏢 DB업체 (제공업체명)', required: false, icon: businessIcons.company },
   { key: 'contact_script', label: '💬 관심내용 (접근 스크립트)', required: false, icon: businessIcons.script },
   { key: 'data_date', label: '📅 일시 (데이터 생성일)', required: false, icon: businessIcons.date },
@@ -89,7 +89,7 @@ function CustomerUploadPageContent() {
     setIsDragOver(false);
   }, []);
 
-  // 파일 업로드 핸들러 (실제 파일 파싱)
+  // 파일 업로드 핸들러 (원래 구조 유지, 1000개 최적화만 적용)
   const handleFileUpload = async (file: File) => {
     const fileType = file.name.endsWith('.xlsx') ? 'xlsx' : 'csv';
     
@@ -108,11 +108,11 @@ function CustomerUploadPageContent() {
       return;
     }
 
-    // 파일 크기 검증 (10MB 제한)
-    if (file.size > 10 * 1024 * 1024) {
+    // 파일 크기 검증 (20MB로 증가, 1000개 지원)
+    if (file.size > 20 * 1024 * 1024) {
       toast.warning(
         '파일 크기 초과',
-        '파일 크기가 10MB를 초과합니다. 더 작은 파일을 선택해주세요.',
+        '파일 크기가 20MB를 초과합니다. 더 작은 파일을 선택해주세요.',
         {
           action: {
             label: '다른 파일 선택',
@@ -171,6 +171,15 @@ function CustomerUploadPageContent() {
         };
       }
       
+      // 1000개 이상 대용량 데이터 안내
+      if (parsedData.totalRows >= 1000) {
+        toast.warning(
+          '대용량 데이터 감지',
+          `${parsedData.totalRows}개 행이 감지되었습니다. 최적화된 배치 처리로 안전하게 업로드됩니다.\n\n처리 시간: 약 ${Math.ceil(parsedData.totalRows / 50)}분 예상`,
+          { duration: 8000 }
+        );
+      }
+      
       // 파일 읽기 성공 토스트
       toast.success(
         '파일 읽기 완료',
@@ -220,20 +229,12 @@ function CustomerUploadPageContent() {
       // 토스트 호출을 비동기로 처리하여 렌더링 사이클 분리
       setTimeout(() => {
         const phoneField = Object.values(newMapping).includes('phone');
-        const contactField = Object.values(newMapping).includes('contact_name');
         
-        if (phoneField && contactField) {
+        if (phoneField) {
           toast.success(
             '필수 매핑 완료',
-            '전화번호와 전문가 매핑이 완료되었습니다. 중복 검사를 진행할 수 있습니다.',
+            '전화번호 매핑이 완료되었습니다. 중복 검사를 진행할 수 있습니다.',
             { duration: 3000 }
-          );
-        } else if (phoneField || contactField) {
-          const remaining = !phoneField ? '전화번호' : '전문가';
-          toast.info(
-            '매핑 진행 중',
-            `${remaining} 매핑이 필요합니다.`,
-            { duration: 2000 }
           );
         }
       }, 0);
@@ -351,7 +352,7 @@ function CustomerUploadPageContent() {
     }
   ];
 
-  // 매핑 완료 및 검증 시작
+  // 매핑 완료 및 검증 시작 (contact_name 필수 체크 제거)
   const handleMappingComplete = async () => {
     if (!fileData) {
       toast.error('데이터 오류', '파일 데이터가 없습니다. 파일을 다시 업로드해주세요.');
@@ -364,11 +365,10 @@ function CustomerUploadPageContent() {
     console.log('샘플 데이터:', fileData.data[0]);
 
     const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone');
-    const contactNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_name');
     
     console.log('매핑된 전화번호 필드:', phoneField);
-    console.log('매핑된 고객명 필드:', contactNameField);
     
+    // 전화번호만 필수 체크
     if (!phoneField) {
       toast.warning(
         '필수 매핑 누락',
@@ -377,7 +377,6 @@ function CustomerUploadPageContent() {
           action: {
             label: '매핑 설정',
             onClick: () => {
-              // 전화번호 같은 필드를 자동으로 찾아서 제안
               const phoneHeaderSuggestion = fileData.headers.find(h => 
                 h.toLowerCase().includes('phone') || h.includes('전화') || h.includes('번호')
               );
@@ -391,33 +390,11 @@ function CustomerUploadPageContent() {
       return;
     }
 
-    if (!contactNameField) {
-      toast.warning(
-        '필수 매핑 누락',
-        '전문가 매핑이 필요합니다. 영업사원이 고객을 식별할 수 있는 이름 필드를 매핑해주세요.',
-        {
-          action: {
-            label: '매핑 설정',
-            onClick: () => {
-              // 이름 같은 필드를 자동으로 찾아서 제안
-              const nameHeaderSuggestion = fileData.headers.find(h => 
-                h.toLowerCase().includes('name') || h.includes('이름') || h.includes('성명')
-              );
-              if (nameHeaderSuggestion) {
-                toast.info('자동 제안', `"${nameHeaderSuggestion}" 필드를 전문가로 매핑하는 것을 권장합니다.`);
-              }
-            }
-          }
-        }
-      );
-      return;
-    }
-
     // 중복 검사 시작 토스트
     toast.info(
       '중복 검사 시작',
       `${fileData.totalRows}개 고객 레코드의 중복 검사를 시작합니다. 잠시만 기다려주세요...`,
-      { duration: 0 } // 검사 완료까지 유지
+      { duration: 0 }
     );
 
     try {
@@ -457,7 +434,7 @@ function CustomerUploadPageContent() {
 
       console.log('파일 내 중복 (첫 번째 제외):', internalDuplicates.length);
 
-      // DB 중복 검사 (대용량 데이터 최적화)
+      // DB 중복 검사 (1000개 최적화: 50개씩 청크 처리)
       let dbDuplicates = [];
       
       if (phoneNumbers.length > 0) {
@@ -467,8 +444,8 @@ function CustomerUploadPageContent() {
           const uniquePhones = [...new Set(phoneNumbers)];
           console.log('중복 검사할 유니크 번호들:', uniquePhones.length);
 
-          // 대용량 데이터를 위한 청크 처리 (500개씩)
-          const CHUNK_SIZE = 500; // IN 절 최적화
+          // 대용량 데이터를 위한 청크 처리 (50개씩으로 축소)
+          const CHUNK_SIZE = 50;
           const existingPhonesSet = new Set<string>();
           
           for (let i = 0; i < uniquePhones.length; i += CHUNK_SIZE) {
@@ -478,11 +455,11 @@ function CustomerUploadPageContent() {
             
             console.log(`DB 중복 검사 진행: ${chunkNum}/${totalChunks} (${chunk.length}개)`);
             
-            // 청크별 진행상황 표시 (1000개 이상일 때만)
-            if (uniquePhones.length > 100) {
+            // 1000개 이상일 때 진행상황 표시
+            if (uniquePhones.length >= 1000) {
               toast.info(
-                `중복 검사 진행 중 (${chunkNum}/${totalChunks})`,
-                `${chunk.length}개 전화번호 중복 검사 중...`,
+                `대용량 중복 검사 (${chunkNum}/${totalChunks})`,
+                `${chunk.length}개 전화번호 중복 검사 중... 예상 소요시간: ${Math.ceil((totalChunks - chunkNum) * 0.5)}초`,
                 { duration: 1000 }
               );
             }
@@ -497,7 +474,6 @@ function CustomerUploadPageContent() {
               throw error;
             }
 
-            // 기존 전화번호들을 Set에 추가
             chunkResults?.forEach(result => {
               if (result.phone) {
                 existingPhonesSet.add(result.phone);
@@ -506,15 +482,15 @@ function CustomerUploadPageContent() {
 
             console.log(`청크 ${chunkNum} 완료: ${chunkResults?.length || 0}개 중복 발견`);
             
-            // UI 블로킹 방지를 위한 짧은 대기
-            if (totalChunks > 1) {
-              await new Promise(resolve => setTimeout(resolve, 100));
+            // 1000개 이상 처리 시 UI 블로킹 방지
+            if (totalChunks > 20) {
+              await new Promise(resolve => setTimeout(resolve, 50));
             }
           }
 
           console.log(`✅ 전체 DB 중복 검사 완료: ${existingPhonesSet.size}개 기존 번호 발견`);
           
-          // 중복 데이터 필터링 (메모리 효율적 처리)
+          // 중복 데이터 필터링
           const seenInFile = new Set<string>();
           dbDuplicates = fileData.data.filter(row => {
             const phone = row[phoneField]?.toString().trim();
@@ -533,12 +509,9 @@ function CustomerUploadPageContent() {
         } catch (dbError) {
           console.error('❌ DB 중복 검사 실패:', dbError);
           
-          // 대용량 데이터에서는 중복 검사 실패가 치명적
-          const errorMessage = dbError.message || '알 수 없는 오류';
-          
           toast.error(
             'DB 중복 검사 실패',
-            `중복 검사에 실패했습니다. 데이터 무결성을 위해 업로드를 중단합니다.\n\n오류: ${errorMessage}`,
+            `중복 검사에 실패했습니다. 데이터 무결성을 위해 업로드를 중단합니다.\n\n오류: ${dbError.message}`,
             {
               action: {
                 label: '다시 시도',
@@ -548,8 +521,7 @@ function CustomerUploadPageContent() {
             }
           );
           
-          // 대용량에서는 중복 검사 없이 업로드하면 안됨
-          throw new Error(`DB 중복 검사 필수: ${errorMessage}`);
+          throw new Error(`DB 중복 검사 필수: ${dbError.message}`);
         }
       }
 
@@ -600,7 +572,7 @@ function CustomerUploadPageContent() {
           {
             action: {
               label: '결과 확인',
-              onClick: () => {} // 이미 validation 단계로 이동됨
+              onClick: () => {}
             }
           }
         );
@@ -634,14 +606,14 @@ function CustomerUploadPageContent() {
         {
           action: {
             label: '계속 진행',
-            onClick: () => {} // 이미 validation으로 이동됨
+            onClick: () => {}
           }
         }
       );
     }
   };
 
-  // 최종 업로드 실행 (실제 Supabase 업로드 구현)
+  // 최종 업로드 실행 (원래 로직 유지, 50개씩 청크만 적용)
   const handleFinalUpload = async () => {
     if (!fileData || !duplicateResult) {
       toast.error('업로드 오류', '업로드할 데이터가 없습니다. 파일을 다시 선택해주세요.');
@@ -665,12 +637,20 @@ function CustomerUploadPageContent() {
     setCurrentStep('processing');
     setUploadProgress(0);
 
-    // 업로드 시작 토스트
-    toast.info(
-      '업로드 시작',
-      `${duplicateResult.uniqueRecords.length}개 고객 레코드 업로드를 시작합니다. 잠시만 기다려주세요...`,
-      { duration: 0 } // 업로드 완료까지 유지
-    );
+    // 1000개 이상 업로드 시작 안내
+    if (duplicateResult.uniqueRecords.length >= 1000) {
+      toast.info(
+        '대용량 업로드 시작',
+        `${duplicateResult.uniqueRecords.length}개 고객 레코드를 50개씩 배치 처리합니다.\n\n예상 소요시간: 약 ${Math.ceil(duplicateResult.uniqueRecords.length / 50)}분`,
+        { duration: 0 }
+      );
+    } else {
+      toast.info(
+        '업로드 시작',
+        `${duplicateResult.uniqueRecords.length}개 고객 레코드 업로드를 시작합니다. 잠시만 기다려주세요...`,
+        { duration: 0 }
+      );
+    }
 
     try {
       console.log('=== 실제 업로드 시작 ===');
@@ -704,29 +684,25 @@ function CustomerUploadPageContent() {
       setUploadProgress(10);
       console.log('배치 생성 완료:', batchId);
 
-      // 진행상황 토스트 업데이트
-      toast.info('배치 생성 완료', '업로드 배치가 생성되었습니다. 데이터 변환 중...', { duration: 2000 });
-
       // 2. 데이터 변환 및 검증
       console.log('2. 데이터 변환 중...');
       const recordsToInsert = duplicateResult.uniqueRecords.map((record, index) => {
         try {
           // 필수 필드 매핑
           const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone');
-          const contactNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_name');
           
-          if (!phoneField || !contactNameField) {
-            throw new Error(`필수 필드 매핑 누락: phone=${phoneField}, contact_name=${contactNameField}`);
+          if (!phoneField) {
+            throw new Error(`필수 필드 매핑 누락: phone=${phoneField}`);
           }
 
           const phone = record[phoneField]?.toString().trim();
-          const contactName = record[contactNameField]?.toString().trim();
 
-          if (!phone || !contactName) {
-            throw new Error(`레코드 ${index + 1}: 필수 데이터 누락 - phone: "${phone}", contact_name: "${contactName}"`);
+          if (!phone) {
+            throw new Error(`레코드 ${index + 1}: 필수 데이터 누락 - phone: "${phone}"`);
           }
 
           // 선택적 필드 매핑
+          const contactNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_name');
           const dataSourceField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_source');
           const contactScriptField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_script');
           const dataDateField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_date');
@@ -735,7 +711,7 @@ function CustomerUploadPageContent() {
           const transformedRecord = {
             id: crypto.randomUUID(),
             phone: phone,
-            contact_name: contactName,
+            contact_name: contactNameField ? (record[contactNameField]?.toString().trim() || null) : null,
             data_source: dataSourceField ? (record[dataSourceField]?.toString().trim() || null) : null,
             contact_script: contactScriptField ? (record[contactScriptField]?.toString().trim() || null) : null,
             data_date: dataDateField ? (record[dataDateField] ? new Date(record[dataDateField]).toISOString() : null) : null,
@@ -762,11 +738,8 @@ function CustomerUploadPageContent() {
       setUploadProgress(30);
       console.log('데이터 변환 완료. 변환된 레코드 수:', recordsToInsert.length);
 
-      // 데이터 변환 완료 토스트
-      toast.info('데이터 변환 완료', '레코드 변환이 완료되었습니다. 데이터베이스 업로드 중...', { duration: 2000 });
-
-      // 3. 배치 업로드 (청크 단위로 처리)
-      const BATCH_SIZE = 100; // 한 번에 100개씩 업로드
+      // 3. 1000개 최적화 배치 업로드 (50개씩 처리)
+      const BATCH_SIZE = 50; // 1000개 지원을 위해 50개로 축소
       let uploadedCount = 0;
       let errorCount = 0;
       const errors: string[] = [];
@@ -780,8 +753,14 @@ function CustomerUploadPageContent() {
         
         console.log(`청크 ${chunkNumber}/${totalChunks} 업로드 중... (${chunk.length}개 레코드)`);
 
-        // 청크별 진행상황 토스트
-        if (totalChunks > 1) {
+        // 1000개 이상일 때 상세 진행상황 토스트
+        if (recordsToInsert.length >= 1000) {
+          toast.info(
+            `대용량 업로드 진행 (${chunkNumber}/${totalChunks})`,
+            `${chunk.length}개 고객 레코드를 업로드하고 있습니다...\n남은 시간: 약 ${Math.ceil((totalChunks - chunkNumber) * 0.5)}분`,
+            { duration: 1000 }
+          );
+        } else if (totalChunks > 1) {
           toast.info(
             `업로드 진행 중 (${chunkNumber}/${totalChunks})`,
             `${chunk.length}개 고객 레코드를 업로드하고 있습니다...`,
@@ -833,8 +812,10 @@ function CustomerUploadPageContent() {
         const progress = 30 + Math.floor((i + chunk.length) / recordsToInsert.length * 60);
         setUploadProgress(progress);
         
-        // UI 업데이트를 위한 잠시 대기
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // 1000개 이상일 때 UI 응답성을 위한 대기
+        if (recordsToInsert.length >= 1000) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
       }
 
       setUploadProgress(95);
@@ -958,14 +939,16 @@ function CustomerUploadPageContent() {
                 Excel (.xlsx) 또는 CSV (.csv) 파일을 지원합니다
               </p>
               
-              {/* 파일 형식 안내 추가 */}
+              {/* 파일 형식 안내 */}
               <div className="mb-6 p-4 bg-bg-secondary rounded-lg text-left">
-                <h4 className="font-medium text-text-primary mb-2">지원되는 파일 형식</h4>
+                <h4 className="font-medium text-text-primary mb-2">1000개 이상 대용량 업로드 지원</h4>
                 <ul className="text-sm text-text-secondary space-y-1">
-                  <li>• Excel 파일 (.xlsx) - 최대 10MB</li>
+                  <li>• Excel 파일 (.xlsx) - 최대 20MB</li>
                   <li>• CSV 파일 (.csv) - UTF-8 인코딩 권장</li>
                   <li>• 첫 번째 행은 헤더(칼럼명)로 사용됩니다</li>
-                  <li>• 전화번호와 전문가 필드는 필수입니다</li>
+                  <li>• <span className="text-accent font-medium">전화번호만 필수 매핑</span> - 나머지 필드는 모두 선택사항</li>
+                  <li>• <span className="text-success font-medium">1000개 이상 최적화 처리</span> - 50개씩 안전한 배치 업로드</li>
+                  <li>• <span className="text-success font-medium">실시간 진행률</span> - 정확한 처리 상황 및 예상 소요시간 표시</li>
                 </ul>
               </div>
               
@@ -998,11 +981,16 @@ function CustomerUploadPageContent() {
                     <h3 className={designSystem.components.typography.h4}>{fileData?.fileName}</h3>
                     <p className={designSystem.components.typography.bodySm}>
                       {fileData?.totalRows}개 행 · {fileData?.headers.length}개 칼럼
+                      {fileData && fileData.totalRows >= 1000 && (
+                        <span className="ml-2 px-2 py-1 bg-accent-light text-accent text-xs rounded">
+                          대용량 데이터
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>
                 
-                {/* 파일 통계 요약 카드 추가 */}
+                {/* 파일 통계 요약 카드 */}
                 <div className="grid grid-cols-2 gap-4 text-center">
                   <div className="p-3 bg-accent-light rounded-lg">
                     <div className="text-lg font-bold text-accent">{fileData?.totalRows || 0}</div>
@@ -1018,10 +1006,10 @@ function CustomerUploadPageContent() {
               {/* SmartTable로 미리보기 */}
               {fileData && (
                 <SmartTable
-                  data={fileData.data.slice(0, 10)} // 처음 10개만 미리보기
+                  data={fileData.data.slice(0, 10)}
                   columns={getPreviewColumns()}
                   getItemId={(item, index) => typeof index === 'number' ? `preview-row-${index}` : `preview-fallback-${Math.random()}`}
-                  enableSearch={false} // 미리보기에서는 검색 비활성화
+                  enableSearch={false}
                   height="300px"
                   emptyMessage="파일 데이터가 없습니다."
                   className="mt-4"
@@ -1103,44 +1091,26 @@ function CustomerUploadPageContent() {
               <div className="mt-6 p-4 bg-bg-secondary rounded-lg border border-border-primary">
                 <h4 className="font-medium mb-3 text-text-primary flex items-center gap-2">
                   <CheckCircle className="w-4 h-4" />
-                  매핑 상태
+                  매핑 상태 - 전화번호만 필수
                 </h4>
                 
-                {/* 전체 매핑 현황 표시 */}
-                <div className="mb-4 p-3 bg-bg-primary rounded border">
-                  <h5 className="text-sm font-medium mb-2 text-text-primary">현재 매핑 현황</h5>
-                  <div className="space-y-1 text-xs">
-                    {Object.entries(columnMapping).map(([csvCol, dbField]) => (
-                      <div key={csvCol} className="flex justify-between">
-                        <span className="text-text-secondary">{csvCol}</span>
-                        <span>→</span>
-                        <span className="text-accent">{DB_FIELDS.find(f => f.key === dbField)?.label || dbField}</span>
-                      </div>
-                    ))}
-                    {Object.keys(columnMapping).length === 0 && (
-                      <div className="text-text-tertiary">아직 매핑된 칼럼이 없습니다.</div>
-                    )}
-                  </div>
-                </div>
-
                 <div className="space-y-2">
-                  {DB_FIELDS.filter(f => f.required).map((field) => {
-                    const isMapped = Object.values(columnMapping).includes(field.key);
-                    const mappedColumn = Object.keys(columnMapping).find(key => columnMapping[key] === field.key);
-                    
-                    return (
-                      <div key={field.key} className="flex items-center gap-2">
-                        {isMapped ? (
-                          <CheckCircle className="w-4 h-4 text-success" />
-                        ) : (
-                          <AlertCircle className="w-4 h-4 text-warning" />
-                        )}
-                        <span className={isMapped ? 'text-success' : 'text-warning'}>
-                          {field.label} {isMapped ? `(${mappedColumn})` : '매핑 필요'}
-                        </span>
-                      </div>
-                    );
-                  })}
+                  {/* 전화번호만 필수로 표시 */}
+                  <div className="flex items-center gap-2">
+                    {Object.values(columnMapping).includes('phone') ? (
+                      <CheckCircle className="w-4 h-4 text-success" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-warning" />
+                    )}
+                    <span className={Object.values(columnMapping).includes('phone') ? 'text-success' : 'text-warning'}>
+                      📞 전화번호 (필수) {Object.values(columnMapping).includes('phone') ? '완료' : '매핑 필요'}
+                    </span>
+                  </div>
+                  
+                  {/* 선택사항들 */}
+                  <div className="text-xs text-text-secondary mt-2">
+                    나머지 모든 필드는 선택사항입니다. 매핑하지 않아도 업로드 가능합니다.
+                  </div>
                 </div>
               </div>
             </div>
@@ -1155,7 +1125,7 @@ function CustomerUploadPageContent() {
               </button>
               <button 
                 onClick={handleMappingComplete}
-                disabled={!Object.values(columnMapping).includes('phone') || !Object.values(columnMapping).includes('contact_name')}
+                disabled={!Object.values(columnMapping).includes('phone')}
                 className={designSystem.components.button.primary}
               >
                 중복 검사 시작
@@ -1189,7 +1159,7 @@ function CustomerUploadPageContent() {
                 </div>
               </div>
 
-              {/* DB 중복 데이터 - SmartTable */}
+              {/* DB 중복 데이터 */}
               {duplicateResult && duplicateResult.dbDuplicates.length > 0 && (
                 <div className="mb-6">
                   <h4 className="font-medium mb-3 text-error flex items-center gap-2">
@@ -1212,7 +1182,7 @@ function CustomerUploadPageContent() {
                 </div>
               )}
 
-              {/* 파일 내 중복 데이터 - SmartTable */}
+              {/* 파일 내 중복 데이터 */}
               {duplicateResult && duplicateResult.internalDuplicates.length > 0 && (
                 <div className="mb-6">
                   <h4 className="font-medium mb-3 text-warning flex items-center gap-2">
@@ -1287,7 +1257,16 @@ function CustomerUploadPageContent() {
                 <p className="text-sm text-text-secondary mt-2">{uploadProgress}% 완료</p>
               </div>
               
-              {/* 업로드 단계별 설명 추가 */}
+              {/* 1000개 이상일 때 상세 진행 안내 */}
+              {duplicateResult && duplicateResult.uniqueRecords.length >= 1000 && (
+                <div className="mt-4 p-3 bg-accent-light border border-accent/20 rounded-lg">
+                  <p className="text-sm text-accent">
+                    대용량 데이터 ({duplicateResult.uniqueRecords.length}개)를 50개씩 안전하게 처리하고 있습니다.
+                  </p>
+                </div>
+              )}
+              
+              {/* 업로드 단계별 설명 */}
               <div className="text-sm text-text-tertiary">
                 {uploadProgress < 10 && '배치 생성 중...'}
                 {uploadProgress >= 10 && uploadProgress < 30 && '데이터 변환 중...'}
@@ -1317,7 +1296,7 @@ function CustomerUploadPageContent() {
                 )}
               </p>
               
-              {/* 업로드 결과 상세 통계 추가 */}
+              {/* 업로드 결과 상세 통계 */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div className="p-3 bg-success-light rounded-lg">
                   <div className="text-lg font-bold text-success">{duplicateResult?.uploadedCount || 0}</div>
@@ -1372,7 +1351,10 @@ function CustomerUploadPageContent() {
       {/* 페이지 헤더 */}
       <div className="mb-8">
         <h1 className={designSystem.components.typography.h2}>고객 데이터 업로드</h1>
-        <p className={designSystem.components.typography.bodySm}>Excel, CSV 파일을 업로드하여 고객 데이터를 관리하세요</p>
+        <p className={designSystem.components.typography.bodySm}>
+          Excel, CSV 파일을 업로드하여 고객 데이터를 관리하세요 
+          <span className="text-success ml-2">• 1000개 이상 대용량 지원 • 전화번호만 필수</span>
+        </p>
       </div>
 
       {/* 진행 단계 표시 */}
@@ -1421,7 +1403,7 @@ function CustomerUploadPageContent() {
   );
 }
 
-// ✅ ProtectedRoute 추가 - 관리자만 접근 가능
+// ProtectedRoute 추가 - 관리자만 접근 가능
 export default function CustomerUploadPage() {
   return (
     <ProtectedRoute requiredRole="admin">
