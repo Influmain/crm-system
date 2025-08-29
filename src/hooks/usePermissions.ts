@@ -1,82 +1,33 @@
-// /hooks/usePermissions.ts
+// 수정된 /hooks/usePermissions.ts
 'use client';
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth/AuthContext';
-import { permissionService, PermissionType, systemSettingsService } from '@/lib/services/permissions';
+import { PermissionType, systemSettingsService } from '@/lib/services/permissions';
 
-// 권한 훅
+// 권한 훅 - AuthContext와 연동하여 중복 제거
 export const usePermissions = () => {
-  const { user, userProfile } = useAuth();
-  const [permissions, setPermissions] = useState<PermissionType[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { 
+    permissions, 
+    hasPermission, 
+    canAccessPage, 
+    isSuperAdmin, 
+    permissionsLoading,
+    refreshPermissions 
+  } = useAuth();
 
-  useEffect(() => {
-    const loadPermissions = async () => {
-      if (!user || !userProfile) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const userPermissions = await permissionService.getUserPermissions(user.id);
-        setPermissions(userPermissions);
-      } catch (error) {
-        console.error('권한 로드 실패:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadPermissions();
-  }, [user, userProfile]);
-
-  // 특정 권한 확인
-  const hasPermission = (permission: PermissionType): boolean => {
-    // 최고관리자는 모든 권한 보유
-    if (userProfile?.is_super_admin) return true;
-    return permissions.includes(permission);
-  };
-
-  // 페이지 접근 권한 확인
-  const canAccessPage = (path: string): boolean => {
-    // 최고관리자는 모든 페이지 접근 가능
-    if (userProfile?.is_super_admin) return true;
-
-    // 설정 페이지는 최고관리자만
-    if (path === '/admin/settings') return false;
-
-    // 대시보드는 모든 관리자 접근 가능
-    if (path === '/admin/dashboard') return true;
-
-    // 페이지별 권한 확인
-    const permission = getPagePermission(path);
-    return permission ? hasPermission(permission) : false;
-  };
-
-  // 페이지별 권한 매핑
-  const getPagePermission = (path: string): PermissionType | null => {
-    const pagePermissions: Record<string, PermissionType> = {
-      '/admin/assignments': 'assignments',
-      '/admin/consulting-monitor': 'consulting_monitor',
-      '/admin/counselors': 'counselors',
-      '/admin/leads': 'leads',
-      '/admin/upload': 'upload'
-    };
-
-    return pagePermissions[path] || null;
-  };
-
+  // AuthContext의 권한 시스템을 그대로 사용
   return {
     permissions,
-    loading,
+    loading: permissionsLoading,
     hasPermission,
     canAccessPage,
-    isSuperAdmin: userProfile?.is_super_admin || false
+    isSuperAdmin,
+    refreshPermissions
   };
 };
 
-// 시스템 설정 훅
+// 시스템 설정 훅 - 기존 로직 유지
 export const useSystemSettings = () => {
   const [settings, setSettings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
@@ -128,9 +79,9 @@ export const useSystemSettings = () => {
   };
 };
 
-// 전화번호 마스킹 유틸리티 훅
+// 전화번호 마스킹 유틸리티 훅 - AuthContext 연동으로 수정
 export const usePhoneMasking = () => {
-  const { hasPermission } = usePermissions();
+  const { hasPermission } = useAuth();
   const { isPhoneMaskingEnabled } = useSystemSettings();
 
   // 전화번호 마스킹 처리
@@ -159,5 +110,20 @@ export const usePhoneMasking = () => {
   return {
     maskPhone,
     canSeeFullPhone: hasPermission('phone_unmask')
+  };
+};
+
+// 컴포넌트에서 직접 권한 체크용 유틸리티 훅
+export const usePagePermission = (requiredPermission: PermissionType) => {
+  const { hasPermission, isSuperAdmin, userProfile } = useAuth();
+  
+  const hasAccess = isSuperAdmin || hasPermission(requiredPermission);
+  const isLoading = !userProfile; // 프로필이 없으면 로딩 중
+  
+  return {
+    hasAccess,
+    isLoading,
+    canView: hasAccess,
+    shouldRedirect: !isLoading && !hasAccess
   };
 };

@@ -30,7 +30,7 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
 
-  // ✅ 업데이트된 관리자 네비게이션 메뉴
+  // 관리자 네비게이션 메뉴 (상담결과분석 제거)
   const navigationItems = [
     {
       href: '/admin/dashboard',
@@ -51,7 +51,7 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
     },
     {
       href: '/admin/counselors',
-      label: '상담사 관리',
+      label: '영업사원 관리',
       badge: '8',
       badgeType: 'success',
       icon: businessIcons.team
@@ -69,11 +69,6 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
       badge: '실시간',
       badgeType: 'success',
       icon: businessIcons.analytics
-    },
-    {
-      href: '/admin/consulting-results',
-      label: '상담 결과 분석',
-      icon: businessIcons.script
     },
     {
       href: '/admin/settings',

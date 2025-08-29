@@ -1085,10 +1085,8 @@ function CounselorsPageContent() {
 // 메인 컴포넌트 - 권한 검사 후 내용 렌더링
 export default function CounselorsPage() {
   return (
-    <ProtectedRoute requiredRole="admin">
-      <PermissionChecker>
-        <CounselorsPageContent />
-      </PermissionChecker>
+    <ProtectedRoute requiredPermission="counselors">
+      <CounselorsPageContent />
     </ProtectedRoute>
   );
 }

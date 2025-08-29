@@ -44,7 +44,7 @@ interface Assignment {
 }
 
 function AssignmentsPageContent() {
-  const { user } = useAuth();
+  const { user, userProfile, hasPermission, isSuperAdmin } = useAuth();
   const toast = useToastHelpers();
   
   // 기본 데이터 상태
@@ -81,6 +81,26 @@ function AssignmentsPageContent() {
   const [reassignTotalPages, setReassignTotalPages] = useState(0);
   const reassignItemsPerPage = 30;
 
+  // 전화번호 마스킹 함수
+  const maskPhoneNumber = (phone: string): string => {
+    if (!phone) return '-';
+    
+    // phone_unmask 권한이 있으면 마스킹하지 않음
+    if (hasPermission('phone_unmask')) {
+      return phone;
+    }
+    
+    // 전화번호 마스킹 처리 (가운데 4자리만)
+    if (phone.length >= 8) {
+      const start = phone.slice(0, 3);
+      const end = phone.slice(-4);
+      return start + '****' + end;
+    }
+    
+    // 8자리 미만은 앞 2자리만 보여주고 나머지는 *
+    return phone.slice(0, 2) + '*'.repeat(phone.length - 2);
+  };
+
   // 텍스트 하이라이트 함수
   const highlightText = (text: string, query: string): React.ReactNode => {
     if (!query.trim()) return text;
@@ -98,7 +118,7 @@ function AssignmentsPageContent() {
     );
   };
 
-  // 고객 목록용 칼럼 정의 (용어 업데이트)
+  // 고객 목록용 칼럼 정의 (전화번호 마스킹 적용)
   const leadColumns = [
     {
       key: 'phone',
@@ -109,7 +129,7 @@ function AssignmentsPageContent() {
         <div className="flex items-center">
           <businessIcons.phone className="w-3 h-3 mr-2 text-text-tertiary flex-shrink-0" />
           <span className="text-sm font-medium text-text-primary truncate">
-            {highlightText(value, searchQuery || '')}
+            {highlightText(maskPhoneNumber(value), searchQuery || '')}
           </span>
         </div>
       )
@@ -168,7 +188,7 @@ function AssignmentsPageContent() {
     }
   ];
 
-  // 재배정용 칼럼 정의 (용어 업데이트)
+  // 재배정용 칼럼 정의 (전화번호 마스킹 적용)
   const reassignmentColumns = [
     {
       key: 'lead_info',
@@ -182,7 +202,7 @@ function AssignmentsPageContent() {
           </div>
           <div className="text-sm text-text-secondary flex items-center">
             <businessIcons.phone className="w-3 h-3 mr-1" />
-            {record.lead?.phone || '전화번호 없음'}
+            {maskPhoneNumber(record.lead?.phone || '')}
           </div>
         </div>
       )
@@ -588,7 +608,7 @@ function AssignmentsPageContent() {
     }
   }, [activeTab]);
 
-  const PaginationComponent = ({ currentPage, totalPages, totalCount, onPageChange, itemsPerPage }: any) => {
+  const PaginationComponent = ({ currentPage, totalPages, totalCount, onPageChange, itemsPerPage }) => {
     const startItem = (currentPage - 1) * itemsPerPage + 1;
     const endItem = Math.min(currentPage * itemsPerPage, totalCount);
 
@@ -977,7 +997,7 @@ function AssignmentsPageContent() {
 
 export default function AssignmentsPage() {
   return (
-    <ProtectedRoute requiredRole="admin">
+    <ProtectedRoute requiredPermission="assignments">
       <AssignmentsPageContent />
     </ProtectedRoute>
   );

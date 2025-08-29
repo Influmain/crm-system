@@ -592,7 +592,7 @@ function AdminSettingsContent() {
 // 최고관리자만 접근 가능 - 임시로 일반 관리자 권한으로 설정
 export default function AdminSettingsPage() {
   return (
-    <ProtectedRoute requiredRole="admin">
+    <ProtectedRoute requiredPermission="settings">
       <AdminSettingsContent />
     </ProtectedRoute>
   );
