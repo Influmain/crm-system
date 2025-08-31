@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { tableSystem } from '@/lib/design-system/table';
+import React, { useState, useEffect } from 'react';
+import { tableSystem, getTableStyles, sortIconStyles, TableMode } from '@/lib/design-system/table';
 import { designSystem } from '@/lib/design-system';
 import { 
   Search, 
@@ -36,97 +36,127 @@ interface SmartTableColumn<T> {
   icon?: React.ComponentType<{ className?: string }>;
   width?: string;
   sortable?: boolean;
+  searchable?: boolean;
   render?: (value: any, record: T, searchQuery?: string) => React.ReactNode;
 }
 
 interface SmartTableProps<T> {
-  // 📊 기본 데이터
+  // 기본 데이터
   data: T[];
   columns: SmartTableColumn<T>[];
   getItemId: (item: T, index?: number) => string;
   
-  // 🎯 선택 시스템 (선택적)
+  // 테이블 모드
+  mode?: TableMode;
+  
+  // 선택 시스템 (선택적)
   selectedItems?: string[];
   onToggleSelection?: (id: string) => void;
   onSelectAll?: () => void;
   
-  // 🔍 검색 설정 (선택적)
+  // 검색 설정 (선택적)
   enableSearch?: boolean;
   searchPlaceholder?: string;
-  searchWidth?: string; // 검색창 너비 커스터마이징
-  searchPosition?: 'left' | 'right' | 'center'; // 검색창 위치
-  debounceMs?: number; // 디바운스 시간 커스터마이징
+  searchWidth?: string;
+  debounceMs?: number;
   
-  // 📐 테이블 크기 설정 (선택적)
+  // 테이블 크기 설정
   height?: string;
   minHeight?: string;
   maxHeight?: string;
   
-  // 🎨 스타일 커스터마이징 (선택적)
-  showSearchResult?: boolean; // 검색 결과 하단 표시 여부
+  // 페이지네이션 설정
+  enablePagination?: boolean;
+  pageSize?: number;
+  currentPage?: number;
+  totalPages?: number;
+  totalItems?: number;
+  onPageChange?: (page: number) => void;
+  
+  // 스타일 커스터마이징
+  showSearchResult?: boolean;
   emptyMessage?: string;
+  emptyTitle?: string;
   className?: string;
+  
+  // 로딩 상태
+  loading?: boolean;
+  
+  // 액션 버튼들
+  actions?: {
+    label: string;
+    icon?: React.ComponentType<{ className?: string }>;
+    onClick: (item: T) => void;
+    className?: string;
+    condition?: (item: T) => boolean;
+  }[];
+
+  // 제목과 카운트 표시
+  title?: string;
+  titleIcon?: React.ComponentType<{ className?: string }>;
 }
 
 export default function SmartTable<T extends Record<string, any>>({
   data,
   columns,
   getItemId,
+  mode = 'normal',
   selectedItems = [],
   onToggleSelection,
   onSelectAll,
   enableSearch = true,
-  searchPlaceholder = "검색...",
-  searchWidth = "w-80",
-  searchPosition = "right",
+  searchPlaceholder = "고객명, 전화번호로 검색...",
+  searchWidth = "w-48",
   debounceMs = 300,
-  height = "60vh",
+  height = "65vh",
   minHeight = "400px", 
   maxHeight = "800px",
-  showSearchResult = true,
-  emptyMessage = "데이터가 없습니다.",
-  className = ""
+  enablePagination = false,
+  pageSize = 100,
+  currentPage = 1,
+  totalPages = 1,
+  totalItems = 0,
+  onPageChange,
+  showSearchResult = false,
+  emptyMessage = "관리자가 고객을 배정하면 여기에 표시됩니다.",
+  emptyTitle = "배정받은 고객이 없습니다",
+  className = "",
+  loading = false,
+  actions = [],
+  title = "배정받은 고객",
+  titleIcon
 }: SmartTableProps<T>) {
   // 검색 상태
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearch = useDebounce(searchQuery, debounceMs);
+  const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearch = useDebounce(searchTerm, debounceMs);
 
   // 정렬 상태
-  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [sortColumn, setSortColumn] = useState<string>('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // 테이블 스타일 가져오기
+  const tableStyles = getTableStyles(mode);
 
   // 정렬 핸들러
-  const handleSort = (key: string) => {
-    setSortConfig(prev => ({
-      key,
-      direction: prev?.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
-    }));
-  };
-
-  // 정렬 아이콘 렌더링
-  const renderSortIcon = (columnKey: string) => {
-    if (!sortConfig || sortConfig.key !== columnKey) {
-      return <ChevronUp className="w-3 h-3 text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity" />;
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc');
     }
-    return sortConfig.direction === 'asc' ? 
-      <ChevronUp className="w-3 h-3 text-accent" /> : 
-      <ChevronDown className="w-3 h-3 text-accent" />;
   };
 
-  // 텍스트 하이라이트
-  const highlightText = (text: string, query: string): React.ReactNode => {
-    if (!query.trim()) return text;
-    
-    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp('(' + escapedQuery + ')', 'gi');
-    const parts = text.split(regex);
-    
-    return parts.map((part, index) => 
-      regex.test(part) ? (
-        <span key={index} className="bg-accent-light text-accent font-medium rounded px-0.5">
-          {part}
-        </span>
-      ) : part
+  // 정렬 아이콘 렌더링 (기존 페이지와 완전 동일)
+  const renderSortIcon = (column: string) => {
+    if (sortColumn !== column) {
+      return <span className={sortIconStyles.default}>{sortIconStyles.symbols.default}</span>;
+    }
+    const isAsc = sortDirection === 'asc';
+    return (
+      <span className={sortIconStyles.active}>
+        {isAsc ? sortIconStyles.symbols.asc : sortIconStyles.symbols.desc}
+      </span>
     );
   };
 
@@ -139,19 +169,65 @@ export default function SmartTable<T extends Record<string, any>>({
       const query = debouncedSearch.toLowerCase();
       filtered = filtered.filter(item => 
         columns.some(column => {
+          if (column.searchable === false) return false;
           const value = item[column.key];
-          return value && value.toString().toLowerCase().includes(query);
+          if (!value) return false;
+          
+          // 특별 처리: customer_grade는 nested object
+          if (column.key === 'customer_grade' && item.customer_grade?.grade) {
+            return item.customer_grade.grade.toLowerCase().includes(query);
+          }
+          
+          return value.toString().toLowerCase().includes(query);
         })
       );
     }
 
-    // 정렬
-    if (sortConfig) {
-      filtered.sort((a, b) => {
-        const aValue = a[sortConfig.key] || '';
-        const bValue = b[sortConfig.key] || '';
+    // 정렬 (기존 상담 페이지 로직과 동일)
+    if (sortColumn) {
+      filtered = filtered.sort((a, b) => {
+        let aValue: any = '';
+        let bValue: any = '';
         
-        if (sortConfig.direction === 'asc') {
+        switch (sortColumn) {
+          case 'phone':
+            aValue = a.phone;
+            bValue = b.phone;
+            break;
+          case 'contact_name':
+            aValue = a.contact_name || '';
+            bValue = b.contact_name || '';
+            break;
+          case 'actual_customer_name':
+            aValue = a.actual_customer_name || a.real_name || '';
+            bValue = b.actual_customer_name || b.real_name || '';
+            break;
+          case 'customer_grade':
+            aValue = a.customer_grade?.grade || '미분류';
+            bValue = b.customer_grade?.grade || '미분류';
+            break;
+          case 'call_attempts':
+            aValue = a.call_attempts;
+            bValue = b.call_attempts;
+            break;
+          case 'last_contact_date':
+            aValue = a.last_contact_date ? new Date(a.last_contact_date).getTime() : 0;
+            bValue = b.last_contact_date ? new Date(b.last_contact_date).getTime() : 0;
+            break;
+          case 'assigned_at':
+            aValue = new Date(a.assigned_at).getTime();
+            bValue = new Date(b.assigned_at).getTime();
+            break;
+          case 'contract_amount':
+            aValue = a.contract_amount || 0;
+            bValue = b.contract_amount || 0;
+            break;
+          default:
+            aValue = a[sortColumn] || '';
+            bValue = b[sortColumn] || '';
+        }
+        
+        if (sortDirection === 'asc') {
           return aValue > bValue ? 1 : -1;
         } else {
           return aValue < bValue ? 1 : -1;
@@ -162,255 +238,290 @@ export default function SmartTable<T extends Record<string, any>>({
     return filtered;
   })();
 
-  // 검색 토글
-  const toggleSearch = () => {
-    if (isSearchOpen) {
-      setSearchQuery('');
-      setIsSearchOpen(false);
-    } else {
-      setIsSearchOpen(true);
-    }
-  };
+  // 페이지네이션 계산
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedData = enablePagination ? processedData.slice(startIndex, endIndex) : processedData;
+  const calculatedTotalPages = Math.ceil(processedData.length / pageSize);
 
-  // 검색창 위치 결정
-  const getSearchPositionClass = () => {
-    switch (searchPosition) {
-      case 'left': return 'justify-start';
-      case 'center': return 'justify-center';
-      case 'right': 
-      default: return 'justify-end';
-    }
-  };
+  if (loading) {
+    return (
+      <div className={tableSystem.container}>
+        <div className={tableSystem.loading.container}>
+          <div className={tableSystem.loading.content}>
+            <FileText className={tableSystem.loading.icon} />
+            <span className={tableSystem.loading.text}>배정 고객 목록 로딩 중...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={designSystem.utils.cn(className)}>
-      {/* 테이블 컨테이너 */}
-      <div className={tableSystem.container}>
-        {/* 테이블 헤더 (검색 통합) */}
-        <div className={tableSystem.header.container}>
-          <table className="min-w-full">
-            <thead>
-              <tr className={tableSystem.header.row}>
-                {columns.map((column, index) => {
-                  const IconComponent = column.icon || FileText;
-                  const isSortable = column.sortable !== false;
-                  const isLastColumn = index === columns.length - 1;
-                  
-                  return (
-                    <th 
-                      key={column.key}
-                      className={designSystem.utils.cn(
-                        isSortable ? tableSystem.header.cellSortable : tableSystem.header.cell,
-                        column.width || '',
-                        isSortable && "group",
-                        isLastColumn && "relative"
-                      )}
-                      onClick={isSortable ? () => handleSort(column.key) : undefined}
-                    >
-                      <div className={tableSystem.header.iconWrapper}>
-                        <IconComponent className={tableSystem.header.icon} />
-                        <span>{column.label}</span>
-                        
-                        {/* 정렬 아이콘 */}
-                        {isSortable && renderSortIcon(column.key)}
-                        
-                        {/* 🔍 마지막 칼럼에 미니멀 검색 통합 */}
-                        {isLastColumn && enableSearch && (
-                          <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                            {!isSearchOpen ? (
-                              /* 검색 아이콘 (헤더에 완전 통합) */
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleSearch();
-                                }}
-                                className="p-1 rounded opacity-60 hover:opacity-100 hover:bg-bg-hover transition-all"
-                                title="검색"
-                              >
-                                <Search className="w-3.5 h-3.5 text-text-tertiary" />
-                              </button>
-                            ) : (
-                              /* 확장된 검색창 (헤더와 동일한 스타일) */
-                              <div 
-                                className="flex items-center space-x-1 bg-bg-primary border border-border-primary rounded px-2 py-1 min-w-56 shadow-sm"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <Search className="w-3.5 h-3.5 text-text-tertiary flex-shrink-0" />
-                                <input
-                                  type="text"
-                                  value={searchQuery}
-                                  onChange={(e) => setSearchQuery(e.target.value)}
-                                  placeholder={searchPlaceholder}
-                                  className="flex-1 bg-transparent text-sm text-text-primary placeholder-text-tertiary focus:outline-none min-w-0"
-                                  autoFocus
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Escape') {
-                                      toggleSearch();
-                                    }
-                                  }}
-                                />
-                                {searchQuery && (
-                                  <button
-                                    onClick={() => setSearchQuery('')}
-                                    className="p-0.5 rounded hover:bg-bg-hover"
-                                  >
-                                    <X className="w-3 h-3 text-text-tertiary hover:text-accent" />
-                                  </button>
-                                )}
-                                <button
-                                  onClick={toggleSearch}
-                                  className="p-0.5 rounded hover:bg-bg-hover"
-                                >
-                                  <X className="w-3 h-3 text-text-tertiary hover:text-accent" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-          </table>
+      {/* 검색 영역 */}
+      {enableSearch && (
+        <div className={tableSystem.search.container}>
+          <div className={tableSystem.search.titleSection}>
+            {titleIcon && React.createElement(titleIcon, { className: tableSystem.search.titleIcon })}
+            <h3 className={tableSystem.search.title}>{title}</h3>
+            <span className={tableSystem.search.count}>
+              {processedData.length}명
+            </span>
+          </div>
+          
+          <div className={tableSystem.search.inputSection}>
+            <Search className={tableSystem.search.inputIcon} />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder={searchPlaceholder}
+              className={tableSystem.search.input}
+            />
+          </div>
         </div>
+      )}
 
-        {/* 스크롤 가능한 테이블 바디 */}
-        <div 
-          className={tableSystem.body.scrollContainer}
-          style={{ 
-            height,
-            minHeight,
-            maxHeight
-          }}
-        >
-          {processedData.length > 0 ? (
-            <table className="min-w-full">
-              <tbody>
-                {processedData.map((item) => {
-                  const itemId = getItemId(item);
-                  const isSelected = selectedItems.includes(itemId);
-                  
-                  return (
-                    <tr 
-                      key={itemId}
-                      className={tableSystem.body.row.base}
-                      onClick={() => onToggleSelection?.(itemId)}
-                    >
-                      {columns.map((column, columnIndex) => {
-                        const value = item[column.key];
-                        const displayValue = value?.toString() || '';
-                        
-                        return (
-                          <td 
-                            key={column.key}
-                            className={designSystem.utils.cn(
-                              tableSystem.body.cell,
-                              column.width || '',
-                              columnIndex === 0 && onToggleSelection && "relative"
-                            )}
-                          >
-                            {/* 첫 번째 칼럼에 노션식 선택 시스템 */}
-                            {columnIndex === 0 && onToggleSelection && (
-                              <>
-                                {/* 선택 표시 (파란 세로선) */}
-                                <div className={`${tableSystem.selection.indicator} ${
-                                  isSelected ? tableSystem.selection.indicatorVisible : tableSystem.selection.indicatorHidden
-                                }`} />
-                                
-                                {/* 호버/선택 시 체크박스 */}
-                                <div className={`${tableSystem.selection.checkbox.container} ${
-                                  isSelected ? tableSystem.selection.checkbox.visible : tableSystem.selection.checkbox.hidden
-                                }`}>
-                                  <div className={`${tableSystem.selection.checkbox.box} ${
-                                    isSelected ? tableSystem.selection.checkbox.selected : tableSystem.selection.checkbox.unselected
-                                  }`}>
-                                    {isSelected && (
-                                      <Check className={tableSystem.selection.checkbox.checkIcon} />
-                                    )}
-                                  </div>
-                                </div>
+      {/* 테이블 */}
+      <div className={tableSystem.container}>
+        {processedData.length > 0 ? (
+          <>
+            <div className={tableStyles.body.scrollContainer} style={{ maxHeight: height }}>
+              <table className={tableStyles.layout}>
+                {/* 헤더 */}
+                <thead className={tableStyles.header.row}>
+                  <tr>
+                    {columns.map((column) => (
+                      <th 
+                        key={column.key}
+                        className={`${column.sortable !== false ? tableStyles.header.cellSortable : tableStyles.header.cell} ${column.width || ''}`}
+                        onClick={column.sortable !== false ? () => handleSort(column.key) : undefined}
+                      >
+                        <div className={tableStyles.header.iconWrapper}>
+                          {column.icon && <column.icon className={tableStyles.header.icon} />}
+                          {column.label}
+                          {column.sortable !== false && renderSortIcon(column.key)}
+                        </div>
+                      </th>
+                    ))}
+                    {actions.length > 0 && (
+                      <th className={`${tableStyles.header.cell} w-12`}>
+                        <div className={tableStyles.header.iconWrapper}>
+                          <FileText className={tableStyles.header.icon} />
+                          액션
+                        </div>
+                      </th>
+                    )}
+                  </tr>
+                </thead>
 
-                                {/* 콘텐츠 (밀림 효과) */}
-                                <div className={`${tableSystem.selection.content.base} ${
-                                  isSelected ? tableSystem.selection.content.selected : tableSystem.selection.content.unselected
-                                }`}>
-                                  {column.render 
-                                    ? column.render(value, item, debouncedSearch)
-                                    : (
-                                      <span className="text-sm font-medium text-text-primary truncate">
-                                        {highlightText(displayValue, debouncedSearch)}
-                                      </span>
-                                    )
-                                  }
-                                </div>
-                              </>
-                            )}
-                            
-                            {/* 나머지 칼럼들 */}
-                            {columnIndex > 0 && (
-                              <div className="text-sm text-text-primary truncate">
-                                {column.render 
-                                  ? column.render(value, item, debouncedSearch)
-                                  : highlightText(displayValue, debouncedSearch)
-                                }
+                {/* 바디 */}
+                <tbody>
+                  {paginatedData.map((item) => {
+                    const itemId = getItemId(item);
+                    const isSelected = selectedItems.includes(itemId);
+                    
+                    return (
+                      <tr 
+                        key={itemId} 
+                        className={tableStyles.body.row.base}
+                        onClick={() => onToggleSelection?.(itemId)}
+                      >
+                        {columns.map((column) => (
+                          <td key={column.key} className={`${tableStyles.body.cell} ${column.width || ''}`}>
+                            {column.render ? (
+                              column.render(item[column.key], item, debouncedSearch)
+                            ) : (
+                              <div className="text-text-primary truncate">
+                                {item[column.key]?.toString() || '-'}
                               </div>
                             )}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-                
-                {/* 목록 끝 표시 */}
-                <tr>
-                  <td colSpan={columns.length} className="py-3 text-center border-t border-border-primary">
-                    <div className="text-xs text-text-tertiary">
-                      • 목록 끝 • ({processedData.length}개 표시됨)
-                      {debouncedSearch && ` • "${debouncedSearch}" 검색 결과`}
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center py-12">
-                {debouncedSearch ? (
-                  <>
-                    <Search className="w-8 h-8 text-text-tertiary mx-auto mb-2" />
-                    <p className="text-text-secondary mb-2">
-                      "{debouncedSearch}"에 대한 검색 결과가 없습니다.
-                    </p>
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="text-accent hover:text-accent/80 text-sm"
-                    >
-                      검색어 지우기
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle className="w-8 h-8 text-text-tertiary mx-auto mb-2" />
-                    <p className="text-text-secondary">{emptyMessage}</p>
-                  </>
-                )}
-              </div>
+                        ))}
+                        
+                        {/* 액션 버튼들 */}
+                        {actions.length > 0 && (
+                          <td className={tableStyles.body.cell}>
+                            <div className="flex items-center justify-center gap-1">
+                              {actions
+                                .filter(action => !action.condition || action.condition(item))
+                                .map((action, index) => (
+                                <button
+                                  key={index}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    action.onClick(item);
+                                  }}
+                                  className={action.className || `${tableSystem.actionButton.base} ${tableSystem.actionButton.primary}`}
+                                >
+                                  {action.icon && <action.icon className={tableSystem.actionButton.icon} />}
+                                  {action.label}
+                                </button>
+                              ))}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          )}
-        </div>
 
-        {/* 검색 상태 표시 (선택적) */}
-        {showSearchResult && debouncedSearch && processedData.length > 0 && (
-          <div className="px-4 py-2 bg-accent-light border-t border-border-primary text-sm">
-            <span className="text-accent">
-              "{debouncedSearch}" 검색 결과: {processedData.length}개
-            </span>
+            {/* 페이지네이션 */}
+            {enablePagination && calculatedTotalPages > 1 && (
+              <div className={tableSystem.pagination.container}>
+                <div className={tableSystem.pagination.wrapper}>
+                  <div className={tableSystem.pagination.info}>
+                    {startIndex + 1}-{Math.min(endIndex, processedData.length)} / {processedData.length}명
+                  </div>
+                  
+                  <div className={tableSystem.pagination.buttonGroup}>
+                    <button
+                      onClick={() => onPageChange?.(1)}
+                      disabled={currentPage === 1}
+                      className={tableSystem.pagination.button}
+                    >
+                      첫페이지
+                    </button>
+                    
+                    <button
+                      onClick={() => onPageChange?.(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                      className={tableSystem.pagination.button}
+                    >
+                      이전
+                    </button>
+                    
+                    <span className={tableSystem.pagination.currentPage}>
+                      {currentPage} / {calculatedTotalPages}
+                    </span>
+                    
+                    <button
+                      onClick={() => onPageChange?.(Math.min(calculatedTotalPages, currentPage + 1))}
+                      disabled={currentPage === calculatedTotalPages}
+                      className={tableSystem.pagination.button}
+                    >
+                      다음
+                    </button>
+                    
+                    <button
+                      onClick={() => onPageChange?.(calculatedTotalPages)}
+                      disabled={currentPage === calculatedTotalPages}
+                      className={tableSystem.pagination.button}
+                    >
+                      마지막
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          /* 빈 상태 */
+          <div className={tableSystem.empty.container}>
+            <FileText className={tableSystem.empty.icon} />
+            <h3 className={tableSystem.empty.title}>
+              {emptyTitle}
+            </h3>
+            <p className={tableSystem.empty.message}>
+              {emptyMessage}
+            </p>
           </div>
         )}
       </div>
     </div>
   );
 }
+
+// 유틸리티 함수들 (상담 페이지에서 사용하던 렌더러들)
+export const renderGradeBadge = (grade?: any) => {
+  if (!grade || !grade.grade) {
+    return (
+      <span className={tableSystem.gradeBadge.unclassified}>
+        미분류
+      </span>
+    );
+  }
+
+  return (
+    <span 
+      className={`${tableSystem.gradeBadge.base} ${tableSystem.gradeBadge.colored}`}
+      style={{ backgroundColor: grade.grade_color }}
+    >
+      {grade.grade}
+    </span>
+  );
+};
+
+export const renderPhoneColumn = (phone: string) => (
+  <div className={tableSystem.text.phone}>
+    {phone}
+  </div>
+);
+
+export const renderCustomerNameColumn = (actualName?: string, realName?: string) => (
+  <div className={tableSystem.text.customerName}>
+    {actualName || realName ? (
+      <span className={tableSystem.text.confirmed}>{actualName || realName}</span>
+    ) : (
+      <span className={tableSystem.text.unconfirmed}>미확인</span>
+    )}
+  </div>
+);
+
+export const renderContactNameColumn = (contactName?: string) => (
+  <div className={tableSystem.text.customerName}>
+    {contactName ? (
+      <span className={tableSystem.text.confirmed}>{contactName}</span>
+    ) : (
+      <span className={tableSystem.text.unconfirmed}>미확인</span>
+    )}
+  </div>
+);
+
+export const renderTooltipColumn = (content?: string, width = "w-20") => (
+  <div className={`${width} ${tableSystem.tooltip.container}`}>
+    {content ? (
+      <>
+        <div className={tableSystem.tooltip.trigger}>
+          {content}
+        </div>
+        <div className={tableSystem.tooltip.popup}>
+          {content}
+        </div>
+      </>
+    ) : (
+      <span className={tableSystem.text.unconfirmed}>미확인</span>
+    )}
+  </div>
+);
+
+export const renderCallAttemptsColumn = (attempts: number) => (
+  <span className={tableSystem.text.callAttempts}>
+    {attempts}
+  </span>
+);
+
+export const renderDateColumn = (date?: string) => (
+  <span className={tableSystem.text.date}>
+    {date 
+      ? new Date(date).toLocaleDateString('ko-KR', {
+          month: '2-digit',
+          day: '2-digit'
+        })
+      : '미확인'
+    }
+  </span>
+);
+
+export const renderContractAmountColumn = (amount?: number) => (
+  amount ? (
+    <span className={tableSystem.text.contractAmount}>
+      {(amount / 10000).toFixed(0)}만
+    </span>
+  ) : (
+    <span className={tableSystem.text.unconfirmed}>미확인</span>
+  )
+);

@@ -106,7 +106,7 @@ function AdminDashboardContent() {
     }
   }, [user, userProfile])
 
-  // v6 패턴 적용한 전체 통계 로드
+  // 뷰 테이블 적용한 전체 통계 로드 (상담원 대시보드와 동일한 방식)
   const loadOverallStats = async (): Promise<DashboardStats> => {
     // 총 고객 수
     const { count: totalCustomers } = await supabase
@@ -120,21 +120,29 @@ function AdminDashboardContent() {
       .eq('role', 'counselor')
       .eq('is_active', true);
 
-    // v6 패턴: 중복 제거된 계약 수 및 매출 계산
-    const { data: assignmentsWithContracts } = await supabase
-      .from('lead_assignments')
-      .select(`
-        id,
-        lead_pool (
-          additional_data
-        ),
-        counseling_activities (
-          contract_status,
-          contract_amount,
-          contact_date
-        )
-      `)
-      .eq('status', 'active');
+    // 뷰 테이블에서 모든 배정 데이터 가져오기 (배치 처리)
+    let allAssignments: any[] = [];
+    let from = 0;
+    const batchSize = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: batch } = await supabase
+        .from('counselor_leads_view')
+        .select('*')
+        .range(from, from + batchSize - 1);
+
+      if (batch && batch.length > 0) {
+        allAssignments = allAssignments.concat(batch);
+        from += batchSize;
+        
+        if (batch.length < batchSize) {
+          hasMore = false;
+        }
+      } else {
+        hasMore = false;
+      }
+    }
 
     let totalContracts = 0;
     let totalRevenue = 0;
@@ -143,34 +151,32 @@ function AdminDashboardContent() {
     let paymentLikely = 0;
     let paymentComplete = 0;
 
-    // 각 assignment별로 최신 상태만 확인 (v6 중복 제거 패턴)
-    assignmentsWithContracts?.forEach(assignment => {
-      const activities = assignment.counseling_activities;
-      
-      if (!activities || activities.length === 0) {
+    // 뷰 데이터에서 통계 계산 (상담원 대시보드와 동일한 로직)
+    allAssignments.forEach(assignment => {
+      // 상태 계산
+      if (!assignment.last_contact_date) {
         notContactedCount++;
       } else {
-        // v6 패턴: contact_date 기준 최신 기록만 사용
-        const latestActivity = activities
-          .sort((a, b) => new Date(b.contact_date).getTime() - new Date(a.contact_date).getTime())[0];
-        
-        if (latestActivity.contract_status === 'contracted') {
+        if (assignment.latest_contract_status === 'contracted') {
           totalContracts++;
-          totalRevenue += latestActivity.contract_amount || 0;
-        } else if (latestActivity.contract_status === 'failed') {
-          // 완료된 상담 (계약 실패)
+          totalRevenue += assignment.contract_amount || 0;
         } else {
           inProgressCount++;
         }
       }
 
-      // 회원등급별 통계 (매출과 분리)
-      const additionalData = assignment.lead_pool?.additional_data as any;
-      if (additionalData?.grade) {
-        if (additionalData.grade === '결제[유력]') {
-          paymentLikely++;
-        } else if (additionalData.grade === '결제[완료]') {
-          paymentComplete++;
+      // 회원등급별 통계
+      if (assignment.additional_data) {
+        const additionalData = typeof assignment.additional_data === 'string' 
+          ? JSON.parse(assignment.additional_data) 
+          : assignment.additional_data;
+        
+        if (additionalData?.grade) {
+          if (additionalData.grade === '결제[유력]') {
+            paymentLikely++;
+          } else if (additionalData.grade === '결제[완료]') {
+            paymentComplete++;
+          }
         }
       }
     });
@@ -184,7 +190,7 @@ function AdminDashboardContent() {
       totalContracts,
       totalRevenue,
       conversionRate,
-      activeAssignments: assignmentsWithContracts?.length || 0,
+      activeAssignments: allAssignments.length,
       notContactedCount,
       inProgressCount,
       paymentLikely,
@@ -357,7 +363,7 @@ function AdminDashboardContent() {
   const renderGradeBadge = (grade?: CustomerGrade) => {
     if (!grade) {
       return (
-        <span className="px-2 py-1 rounded-full text-xs bg-bg-secondary text-text-tertiary">
+        <span className="px-1.5 py-0.5 rounded text-xs bg-bg-secondary text-text-tertiary">
           미분류
         </span>
       )
@@ -365,7 +371,7 @@ function AdminDashboardContent() {
 
     return (
       <span 
-        className="px-2 py-1 rounded-full text-xs text-white font-medium"
+        className="px-1.5 py-0.5 rounded text-xs text-white font-medium"
         style={{ backgroundColor: grade.grade_color }}
       >
         {grade.grade}
@@ -389,8 +395,8 @@ function AdminDashboardContent() {
   return (
     <AdminLayout>
       <div className="p-6 max-w-7xl mx-auto">
-        {/* 헤더 */}
-        <div className="mb-8">
+        {/* 헤더 - 컴팩트하게 */}
+        <div className="mb-6">
           <h1 className={designSystem.components.typography.h2}>관리자 대시보드</h1>
           <p className="text-text-secondary mt-2">
             전체 비즈니스 현황과 영업사원 성과를 관리하세요
@@ -400,54 +406,54 @@ function AdminDashboardContent() {
           </p>
         </div>
 
-        {/* 핵심 통계 카드들 */}
+        {/* 핵심 통계 카드들 - 상담원 대시보드 스타일로 컴팩트 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-text-secondary text-sm">총 고객</p>
-                <p className="text-2xl font-bold text-text-primary">{stats.totalCustomers}</p>
+                <p className="text-xl font-bold text-text-primary">{stats.totalCustomers}</p>
               </div>
-              <businessIcons.contact className="w-8 h-8 text-accent" />
+              <businessIcons.contact className="w-6 h-6 text-accent" />
             </div>
           </div>
 
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-text-secondary text-sm">활성 영업사원</p>
-                <p className="text-2xl font-bold text-text-primary">{stats.totalCounselors}</p>
+                <p className="text-xl font-bold text-text-primary">{stats.totalCounselors}</p>
               </div>
-              <businessIcons.team className="w-8 h-8 text-accent" />
+              <businessIcons.team className="w-6 h-6 text-accent" />
             </div>
           </div>
 
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-text-secondary text-sm">결제유력</p>
-                <p className="text-2xl font-bold text-accent">{stats.paymentLikely}</p>
+                <p className="text-xl font-bold text-accent">{stats.paymentLikely}</p>
               </div>
-              <businessIcons.script className="w-8 h-8 text-accent" />
+              <businessIcons.script className="w-6 h-6 text-accent" />
             </div>
           </div>
 
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-text-secondary text-sm">총 매출</p>
-                <p className="text-2xl font-bold text-success">
+                <p className="text-xl font-bold text-success">
                   {(stats.totalRevenue / 10000).toFixed(0)}만원
                 </p>
               </div>
-              <businessIcons.assignment className="w-8 h-8 text-success" />
+              <businessIcons.assignment className="w-6 h-6 text-success" />
             </div>
           </div>
         </div>
 
-        {/* 상세 현황 카드 */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
+        {/* 상세 현황 카드 - 컴팩트 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-text-secondary text-sm">전체 배정</p>
@@ -457,7 +463,7 @@ function AdminDashboardContent() {
             </div>
           </div>
 
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-text-secondary text-sm">미접촉</p>
@@ -467,7 +473,7 @@ function AdminDashboardContent() {
             </div>
           </div>
 
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-text-secondary text-sm">상담중</p>
@@ -493,153 +499,114 @@ function AdminDashboardContent() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* 영업사원 성과 TOP 5 */}
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
-            <h3 className={designSystem.components.typography.h4}>영업사원 성과 TOP 5</h3>
-            <div className="space-y-4 mt-4">
-              {counselorPerformance
-                .sort((a, b) => b.total_revenue - a.total_revenue)
-                .slice(0, 5)
-                .map((counselor, index) => {
-                  const maxRevenue = Math.max(...counselorPerformance.map(c => c.total_revenue));
-                  const percentage = maxRevenue > 0 ? (counselor.total_revenue / maxRevenue) * 100 : 0;
-                  
-                  return (
-                    <div key={counselor.counselor_id} className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                          <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white ${
-                            index === 0 ? 'bg-yellow-500' :
-                            index === 1 ? 'bg-gray-400' :
-                            index === 2 ? 'bg-orange-500' :
-                            'bg-accent'
-                          }`}>
-                            {index + 1}
-                          </span>
-                          <div>
-                            <div className="text-text-primary font-medium">{counselor.counselor_name}</div>
-                            <div className="text-xs text-text-tertiary">
-                              계약 {counselor.contracted}건 · 전환율 {counselor.conversion_rate.toFixed(1)}%
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-accent font-bold">
-                            {(counselor.total_revenue / 10000).toFixed(0)}만원
-                          </div>
-                        </div>
-                      </div>
-                      <div className="w-full bg-bg-secondary rounded-full h-2">
-                        <div 
-                          className="bg-accent h-2 rounded-full transition-all duration-1000"
-                          style={{ width: `${percentage}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  );
-                })}
+        {/* 최근 계약 완료 테이블 */}
+        <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
+          <div className="p-4 border-b border-border-primary">
+            <div className="flex items-center gap-2">
+              <businessIcons.analytics className="w-4 h-4 text-accent" />
+              <h3 className="text-sm font-medium text-text-primary">최근 계약 완료</h3>
+              <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
+                {recentContracts.length}건
+              </span>
             </div>
-            
-            {counselorPerformance.length === 0 && (
-              <div className="text-center py-8 text-text-secondary">
-                영업사원 성과 데이터가 없습니다.
-              </div>
-            )}
           </div>
 
-          {/* 최근 계약 현황 */}
-          <div className="bg-bg-primary border border-border-primary rounded-lg p-6">
-            <h3 className={designSystem.components.typography.h4}>최근 계약 현황</h3>
-            <div className="mt-4">
-              {recentContracts.length > 0 ? (
-                <div className="space-y-3">
+          {recentContracts.length > 0 ? (
+            <div className="overflow-auto" style={{ maxHeight: '50vh' }}>
+              <table className="w-full table-fixed">
+                <thead className="bg-bg-secondary sticky top-0 z-10">
+                  <tr>
+                    <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <businessIcons.contact className="w-3 h-3" />
+                        고객명
+                      </div>
+                    </th>
+                    <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-14">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <businessIcons.team className="w-3 h-3" />
+                        영업사원
+                      </div>
+                    </th>
+                    <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <businessIcons.assignment className="w-3 h-3" />
+                        계약금액
+                      </div>
+                    </th>
+                    <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-12">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <businessIcons.date className="w-3 h-3" />
+                        계약일
+                      </div>
+                    </th>
+                    <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-14">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <businessIcons.script className="w-3 h-3" />
+                        출처
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
                   {recentContracts.map((contract) => (
-                    <div key={contract.id} className="flex justify-between items-center p-3 bg-bg-secondary rounded-lg">
-                      <div>
-                        <div className="font-medium text-text-primary">
+                    <tr 
+                      key={contract.id} 
+                      className="border-b border-border-primary hover:bg-bg-hover transition-colors"
+                    >
+                      {/* 고객명 */}
+                      <td className="py-1 px-1 text-center">
+                        <div className="text-xs font-medium text-text-primary truncate">
                           {contract.customer_name}
                         </div>
-                        <div className="text-sm text-text-secondary">
-                          {contract.counselor_name} · {contract.data_source}
+                      </td>
+
+                      {/* 영업사원 */}
+                      <td className="py-1 px-1 text-center">
+                        <div className="text-xs text-text-primary truncate">
+                          {contract.counselor_name}
                         </div>
-                        <div className="text-xs text-text-tertiary">
-                          {new Date(contract.contact_date).toLocaleDateString('ko-KR')}
+                      </td>
+
+                      {/* 계약금액 */}
+                      <td className="py-1 px-1 text-center">
+                        <span className="font-bold text-success text-xs">
+                          {(contract.contract_amount / 10000).toFixed(0)}만원
+                        </span>
+                      </td>
+
+                      {/* 계약일 */}
+                      <td className="py-1 px-1 text-center">
+                        <span className="text-text-secondary text-xs whitespace-nowrap">
+                          {new Date(contract.contact_date).toLocaleDateString('ko-KR', {
+                            month: '2-digit',
+                            day: '2-digit'
+                          })}
+                        </span>
+                      </td>
+
+                      {/* 출처 */}
+                      <td className="py-1 px-1 text-center">
+                        <div className="text-xs text-text-secondary truncate">
+                          {contract.data_source}
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold text-success">
-                          {contract.contract_amount.toLocaleString()}원
-                        </div>
-                      </div>
-                    </div>
+                      </td>
+                    </tr>
                   ))}
-                </div>
-              ) : (
-                <div className="text-center py-8 text-text-secondary">
-                  아직 계약 데이터가 없습니다.
-                </div>
-              )}
+                </tbody>
+              </table>
             </div>
-          </div>
-        </div>
-
-        {/* 빠른 관리 링크 */}
-        <div className="bg-bg-primary border border-border-primary rounded-lg p-6 mt-6">
-          <h3 className={designSystem.components.typography.h4}>빠른 관리</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-            <button 
-              onClick={() => router.push('/admin/counselor-management')}
-              className="p-4 bg-bg-secondary hover:bg-bg-hover rounded-lg transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <businessIcons.team className="w-6 h-6 text-accent" />
-                <div>
-                  <div className="font-medium text-text-primary">영업사원 관리</div>
-                  <div className="text-sm text-text-secondary">계정 및 권한 관리</div>
-                </div>
-              </div>
-            </button>
-
-            <button 
-              onClick={() => router.push('/admin/upload')}
-              className="p-4 bg-bg-secondary hover:bg-bg-hover rounded-lg transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <businessIcons.script className="w-6 h-6 text-accent" />
-                <div>
-                  <div className="font-medium text-text-primary">고객 데이터 업로드</div>
-                  <div className="text-sm text-text-secondary">Excel/CSV 업로드</div>
-                </div>
-              </div>
-            </button>
-
-            <button 
-              onClick={() => router.push('/admin/consulting-monitor')}
-              className="p-4 bg-bg-secondary hover:bg-bg-hover rounded-lg transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <businessIcons.analytics className="w-6 h-6 text-accent" />
-                <div>
-                  <div className="font-medium text-text-primary">실시간 모니터링</div>
-                  <div className="text-sm text-text-secondary">상담 현황 모니터링</div>
-                </div>
-              </div>
-            </button>
-
-            <button 
-              onClick={() => router.push('/admin/assignments')}
-              className="p-4 bg-bg-secondary hover:bg-bg-hover rounded-lg transition-colors text-left"
-            >
-              <div className="flex items-center gap-3">
-                <businessIcons.assignment className="w-6 h-6 text-accent" />
-                <div>
-                  <div className="font-medium text-text-primary">고객 배정</div>
-                  <div className="text-sm text-text-secondary">영업사원별 배정 관리</div>
-                </div>
-              </div>
-            </button>
-          </div>
+          ) : (
+            <div className="text-center py-12">
+              <businessIcons.analytics className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-text-primary mb-2">
+                아직 계약 데이터가 없습니다
+              </h3>
+              <p className="text-text-secondary">
+                영업사원이 계약을 완료하면 여기에 표시됩니다.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </AdminLayout>

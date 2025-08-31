@@ -10,9 +10,6 @@ import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
 import { 
   Search, 
-  Filter, 
-  Edit, 
-  Trash2, 
   RefreshCw, 
   ChevronLeft, 
   ChevronRight,
@@ -21,15 +18,16 @@ import {
   User,
   Phone,
   Calendar,
-  Building2,
   MessageSquare,
   UserCheck,
   UserX,
   FileCheck,
-  AlertTriangle
+  AlertTriangle,
+  Edit,
+  Trash2
 } from 'lucide-react';
 
-// 타입 정의
+// 뷰 기반 타입 정의
 interface Lead {
   id: string;
   phone: string;
@@ -39,27 +37,27 @@ interface Lead {
   contact_script: string;
   data_date: string;
   extra_info: string;
-  status: 'available' | 'assigned' | 'contracted';
+  lead_status: 'available' | 'assigned' | 'contracted';
   created_at: string;
   upload_batch_id: string;
   additional_data?: any;
-  assignment_info?: {
-    counselor_name: string;
-    assigned_at: string;
-    latest_contact_result?: string;
-    contract_amount?: number;
-  };
-  customer_grade?: {
-    grade: string;
-    grade_color: string;
-    grade_memo?: string;
-    updated_at?: string;
-    updated_by?: string;
-  };
+  
+  // 뷰에서 직접 제공되는 배정/상담 정보
+  assignment_id?: string;
+  counselor_id?: string;
+  counselor_name?: string;
+  assigned_at?: string;
+  latest_contact_result?: string;
+  contract_status?: string;
+  contract_amount?: number;
+  last_contact_date?: string;
+  counseling_memo?: string;
+  actual_customer_name?: string;
+  call_attempts?: number;
 }
 
 interface FilterOptions {
-  status: string; // 'all' | grade values | '미분류' | '미배정' | '배정됨'
+  status: string; // 'all' | grade values
   dataSource: string;
   dateRange: 'all' | 'today' | 'week' | 'month';
 }
@@ -98,7 +96,7 @@ function AdminLeadsPageContent() {
     dateRange: 'all'
   });
 
-  // 전체 통계 상태
+  // 통계 상태
   const [overallStats, setOverallStats] = useState({
     totalLeads: 0,
     totalAssigned: 0,
@@ -107,7 +105,10 @@ function AdminLeadsPageContent() {
     totalRevenue: 0
   });
 
-  // 페이지네이션 상태 - 300개씩
+  // 등급별 통계 상태
+  const [gradeStats, setGradeStats] = useState<Record<string, number>>({});
+
+  // 페이지네이션 상태
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(300);
   const [totalCount, setTotalCount] = useState(0);
@@ -122,12 +123,12 @@ function AdminLeadsPageContent() {
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
-  // v7: Hydration 오류 방지
+  // Hydration 오류 방지
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // 검색어 디바운싱 - 엔터키 처리 제외
+  // 검색어 디바운싱
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
@@ -144,66 +145,159 @@ function AdminLeadsPageContent() {
     }
   };
 
-  // 전체 통계 로드 함수
+  // 통계 로드 - Supabase 1000개 제한 해결
   const loadOverallStats = useCallback(async () => {
     try {
       setStatsLoading(true);
       
-      const { count: totalLeads } = await supabase
-        .from('lead_pool')
-        .select('*', { count: 'exact', head: true });
+      // 배치 처리로 전체 데이터 가져오기
+      let allLeads: any[] = [];
+      let from = 0;
+      const batchSize = 1000;
+      let hasMore = true;
 
-      const { data: allAssignments, count: totalAssigned } = await supabase
-        .from('lead_assignments')
-        .select('lead_id', { count: 'exact' })
-        .eq('status', 'active');
-
-      const { data: assignmentsWithActivities } = await supabase
-        .from('lead_assignments')
-        .select(`
-          id,
-          counseling_activities (
-            contract_status,
-            contact_date,
-            contract_amount
-          )
-        `)
-        .eq('status', 'active');
-
-      let totalContracted = 0;
-      let totalRevenue = 0;
-      
-      assignmentsWithActivities?.forEach(assignment => {
-        const activities = assignment.counseling_activities;
-        if (activities && activities.length > 0) {
-          const latestActivity = activities
-            .sort((a, b) => new Date(b.contact_date).getTime() - new Date(a.contact_date).getTime())[0];
-
-          if (latestActivity?.contract_status === 'contracted') {
-            totalContracted++;
-            if (latestActivity.contract_amount) {
-              totalRevenue += latestActivity.contract_amount;
-            }
+      while (hasMore) {
+        const { data: batch } = await supabase
+          .from('admin_leads_view')
+          .select('id, assignment_id, contract_status, contract_amount')
+          .range(from, from + batchSize - 1);
+        
+        if (batch && batch.length > 0) {
+          allLeads = allLeads.concat(batch);
+          from += batchSize;
+          
+          if (batch.length < batchSize) {
+            hasMore = false;
           }
+        } else {
+          hasMore = false;
         }
-      });
+      }
+
+      const totalLeads = allLeads.length;
+      const totalAssigned = allLeads.filter(lead => lead.assignment_id).length;
+      const totalUnassigned = totalLeads - totalAssigned;
+      
+      // 계약 통계 - contract_status가 'contracted'인 것만
+      const contractedLeads = allLeads.filter(lead => 
+        lead.contract_status === 'contracted'
+      );
+      
+      const totalRevenue = contractedLeads.reduce((sum, lead) => 
+        sum + (lead.contract_amount || 0), 0
+      );
 
       setOverallStats({
-        totalLeads: totalLeads || 0,
-        totalAssigned: totalAssigned || 0,
-        totalUnassigned: (totalLeads || 0) - (totalAssigned || 0),
-        totalContracted: totalContracted,
-        totalRevenue: totalRevenue
+        totalLeads,
+        totalAssigned,
+        totalUnassigned,
+        totalContracted: contractedLeads.length,
+        totalRevenue
       });
+
+      console.log(`통계 계산 완료 (총 ${totalLeads}개): 배정 ${totalAssigned}, 계약 ${contractedLeads.length}, 매출 ${totalRevenue}`);
 
     } catch (error) {
       console.error('전체 통계 로드 실패:', error);
+      toast.error('통계 로드 실패', error.message);
     } finally {
       setStatsLoading(false);
     }
-  }, []);
+  }, [toast]);
 
-  // 서버사이드 페이징으로 데이터 로드 (배정 관리 페이지 방식 적용)
+  // 등급별 통계 로드 - Supabase 1000개 제한 해결
+  const loadGradeStats = useCallback(async () => {
+    try {
+      // 전체 데이터를 가져오기 위해 배치로 처리
+      let allLeads: any[] = [];
+      let from = 0;
+      const batchSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        let query = supabase
+          .from('admin_leads_view')
+          .select('additional_data')
+          .range(from, from + batchSize - 1);
+
+        // 현재 적용된 필터와 동일하게 적용
+        if (debouncedSearchTerm.trim()) {
+          query = query.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
+        }
+
+        if (filters.dataSource) {
+          query = query.eq('data_source', filters.dataSource);
+        }
+
+        if (filters.dateRange !== 'all') {
+          const now = new Date();
+          let startDate = new Date();
+
+          switch (filters.dateRange) {
+            case 'today':
+              startDate.setHours(0, 0, 0, 0);
+              break;
+            case 'week':
+              startDate.setDate(now.getDate() - 7);
+              break;
+            case 'month':
+              startDate.setMonth(now.getMonth() - 1);
+              break;
+          }
+
+          query = query.gte('created_at', startDate.toISOString());
+        }
+
+        const { data: batch } = await query;
+        
+        if (batch && batch.length > 0) {
+          allLeads = allLeads.concat(batch);
+          from += batchSize;
+          
+          // 배치 크기보다 적게 가져왔으면 마지막 배치
+          if (batch.length < batchSize) {
+            hasMore = false;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+        
+      const stats: Record<string, number> = {};
+      gradeOptions.forEach(option => {
+        stats[option.value] = 0;
+      });
+      
+      // 미분류 개수 계산
+      let unclassifiedCount = 0;
+      
+      allLeads.forEach(lead => {
+        if (lead.additional_data && lead.additional_data !== null) {
+          const additionalData = typeof lead.additional_data === 'string' 
+            ? JSON.parse(lead.additional_data) 
+            : lead.additional_data;
+          
+          if (additionalData?.grade && stats.hasOwnProperty(additionalData.grade)) {
+            stats[additionalData.grade]++;
+          } else {
+            unclassifiedCount++;
+          }
+        } else {
+          unclassifiedCount++;
+        }
+      });
+      
+      // 미분류도 통계에 추가
+      stats['미분류'] = unclassifiedCount;
+      
+      setGradeStats(stats);
+      console.log(`등급별 통계 (총 ${allLeads.length}개):`, stats);
+    } catch (error) {
+      console.error('등급별 통계 로드 실패:', error);
+    }
+  }, [debouncedSearchTerm, filters]);
+
+  // 메인 데이터 로드 - 단일 뷰 쿼리로 대폭 간소화
   const loadLeads = useCallback(async (page: number = 1) => {
     if (authLoading || !mounted) return;
 
@@ -213,19 +307,19 @@ function AdminLeadsPageContent() {
       const startRange = (page - 1) * pageSize;
       const endRange = startRange + pageSize - 1;
 
-      // 기본 쿼리 구성 - count만 가져오기
-      let countQuery = supabase
-        .from('lead_pool')
-        .select('*', { count: 'exact', head: true });
+      // 단일 뷰 쿼리 - 모든 조인이 이미 완료됨
+      let query = supabase
+        .from('admin_leads_view')
+        .select('*', { count: 'exact' });
 
       // 검색어 적용
       if (debouncedSearchTerm.trim()) {
-        countQuery = countQuery.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%`);
+        query = query.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
       }
 
       // 데이터 출처 필터
       if (filters.dataSource) {
-        countQuery = countQuery.eq('data_source', filters.dataSource);
+        query = query.eq('data_source', filters.dataSource);
       }
 
       // 날짜 필터
@@ -245,120 +339,49 @@ function AdminLeadsPageContent() {
             break;
         }
 
-        countQuery = countQuery.gte('created_at', startDate.toISOString());
+        query = query.gte('created_at', startDate.toISOString());
       }
 
-      const { count } = await countQuery;
-
-      // 실제 데이터 쿼리 - 페이지네이션 적용
-      let dataQuery = supabase
-        .from('lead_pool')
-        .select(`
-          id,
-          phone,
-          contact_name,
-          real_name,
-          data_source,
-          contact_script,
-          data_date,
-          extra_info,
-          status,
-          created_at,
-          upload_batch_id,
-          additional_data
-        `);
-
-      // 동일한 필터 적용
-      if (debouncedSearchTerm.trim()) {
-        dataQuery = dataQuery.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%`);
-      }
-
-      if (filters.dataSource) {
-        dataQuery = dataQuery.eq('data_source', filters.dataSource);
-      }
-
-      if (filters.dateRange !== 'all') {
-        const now = new Date();
-        let startDate = new Date();
-
-        switch (filters.dateRange) {
-          case 'today':
-            startDate.setHours(0, 0, 0, 0);
-            break;
-          case 'week':
-            startDate.setDate(now.getDate() - 7);
-            break;
-          case 'month':
-            startDate.setMonth(now.getMonth() - 1);
-            break;
+      // 등급 필터 적용 (서버사이드로 이동 가능)
+      if (filters.status !== 'all') {
+        if (filters.status === '미분류') {
+          // 미분류: additional_data가 null이거나 grade가 없는 경우
+          query = query.or('additional_data.is.null,additional_data.not.cs.{"grade"}');
+        } else {
+          // 특정 등급: additional_data에 해당 grade가 있는 경우
+          query = query.contains('additional_data', { grade: filters.status });
         }
-
-        dataQuery = dataQuery.gte('created_at', startDate.toISOString());
       }
 
       // 정렬 적용
-      dataQuery = dataQuery.order(sortColumn, { ascending: sortDirection === 'asc' });
+      query = query.order(sortColumn, { ascending: sortDirection === 'asc' });
       
-      // 페이지네이션 적용 - 중요! range를 반드시 적용
-      dataQuery = dataQuery.range(startRange, endRange);
+      // 페이지네이션 적용
+      query = query.range(startRange, endRange);
 
-      const { data: leadsData, error: leadsError } = await dataQuery;
+      const { data: viewData, error: viewError, count } = await query;
 
-      if (leadsError) throw leadsError;
+      if (viewError) throw viewError;
 
-      console.log(`페이지 ${page}: ${leadsData?.length}개 로드 (전체: ${count}개)`);
-
-      // 배정 정보와 등급 정보 보강
-      const enrichedLeads = await Promise.all(
-        (leadsData || []).map(async (lead) => {
-          // 배정 정보 조회
-          const { data: assignmentData } = await supabase
-            .from('lead_assignments')
-            .select(`
-              id,
-              assigned_at,
-              counselor_id,
-              users!lead_assignments_counselor_id_fkey (full_name)
-            `)
-            .eq('lead_id', lead.id)
-            .eq('status', 'active')
-            .maybeSingle();
-
-          let assignmentInfo = undefined;
-          let callAttempts = 0;
-          let lastContactDate = null;
-          let counselingMemo = null;
-          
-          if (assignmentData) {
-            const { data: activities } = await supabase
-              .from('counseling_activities')
-              .select('contact_result, contract_status, contract_amount, contact_date, counseling_memo, actual_customer_name')
-              .eq('assignment_id', assignmentData.id)
-              .order('contact_date', { ascending: false });
-
-            const latestActivity = activities?.[0];
-            callAttempts = activities?.length || 0;
-            lastContactDate = latestActivity?.contact_date || null;
-            counselingMemo = latestActivity?.counseling_memo || null;
-
-            assignmentInfo = {
-              counselor_name: assignmentData.users?.full_name || '알 수 없음',
-              assigned_at: assignmentData.assigned_at,
-              latest_contact_result: latestActivity?.contact_result,
-              contract_amount: latestActivity?.contract_amount,
-              actual_customer_name: latestActivity?.actual_customer_name
-            };
-          }
-
-          // 등급 정보 추출 - 상담진행페이지와 동일한 방식
-          let customerGrade = undefined;
+      // 뷰 데이터를 기존 인터페이스에 맞게 변환
+      const enrichedLeads = viewData?.map(lead => ({
+        ...lead,
+        status: lead.lead_status, // 뷰의 lead_status를 기존 status로 매핑
+        assignment_info: lead.assignment_id ? {
+          counselor_name: lead.counselor_name || '알 수 없음',
+          assigned_at: lead.assigned_at,
+          latest_contact_result: lead.latest_contact_result,
+          contract_amount: lead.contract_amount,
+          actual_customer_name: lead.actual_customer_name
+        } : undefined,
+        customer_grade: (() => {
           if (lead.additional_data) {
             const additionalData = typeof lead.additional_data === 'string' 
               ? JSON.parse(lead.additional_data) 
               : lead.additional_data;
             
             if (additionalData && additionalData.grade) {
-              customerGrade = {
+              return {
                 grade: additionalData.grade,
                 grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280',
                 grade_memo: additionalData.grade_memo,
@@ -367,136 +390,17 @@ function AdminLeadsPageContent() {
               };
             }
           }
+          return undefined;
+        })()
+      })) || [];
 
-          return {
-            ...lead,
-            assignment_info: assignmentInfo,
-            customer_grade: customerGrade,
-            call_attempts: callAttempts,
-            last_contact_date: lastContactDate,
-            counseling_memo: counselingMemo
-          };
-        })
-      );
+      setLeads(enrichedLeads);
+      setTotalCount(count || 0);
+      setTotalPages(Math.ceil((count || 0) / pageSize));
+      setCurrentPage(page);
 
-      // 계약상태 필터는 서버에서 처리할 수 없으므로 전체 데이터 필요
-      // 계약상태 필터가 있을 경우 모든 페이지 데이터를 가져와야 함
-      if (filters.status !== 'all' && filters.status !== '미배정') {
-        // 모든 데이터를 가져오기 위한 배치 처리
-        const allData = [];
-        const totalBatches = Math.ceil((count || 0) / 1000);
-        
-        for (let i = 0; i < totalBatches; i++) {
-          const batchStart = i * 1000;
-          const batchEnd = batchStart + 999;
-          
-          let batchQuery = supabase
-            .from('lead_pool')
-            .select(`
-              id,
-              phone,
-              contact_name,
-              real_name,
-              data_source,
-              contact_script,
-              data_date,
-              extra_info,
-              status,
-              created_at,
-              upload_batch_id,
-              additional_data
-            `)
-            .range(batchStart, batchEnd)
-            .order(sortColumn, { ascending: sortDirection === 'asc' });
-
-          // 검색 필터 적용
-          if (debouncedSearchTerm.trim()) {
-            batchQuery = batchQuery.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%`);
-          }
-
-          const { data: batchData } = await batchQuery;
-          if (batchData) allData.push(...batchData);
-        }
-
-        // 모든 데이터에 대해 enrichment와 필터링
-        const allEnrichedLeads = await Promise.all(
-          allData.map(async (lead) => {
-            // 위와 동일한 enrichment 로직
-            const { data: assignmentData } = await supabase
-              .from('lead_assignments')
-              .select(`
-                id,
-                assigned_at,
-                counselor_id,
-                users!lead_assignments_counselor_id_fkey (full_name)
-              `)
-              .eq('lead_id', lead.id)
-              .eq('status', 'active')
-              .maybeSingle();
-
-            let assignmentInfo = undefined;
-            if (assignmentData) {
-              assignmentInfo = {
-                counselor_name: assignmentData.users?.full_name || '알 수 없음',
-                assigned_at: assignmentData.assigned_at
-              };
-            }
-
-            let customerGrade = undefined;
-            if (lead.additional_data) {
-              const additionalData = typeof lead.additional_data === 'string' 
-                ? JSON.parse(lead.additional_data) 
-                : lead.additional_data;
-              
-              if (additionalData && additionalData.grade) {
-                customerGrade = {
-                  grade: additionalData.grade,
-                  grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280'
-                };
-              }
-            }
-
-            return {
-              ...lead,
-              assignment_info: assignmentInfo,
-              customer_grade: customerGrade
-            };
-          })
-        );
-
-        // 계약상태 필터 적용
-        let filteredData = allEnrichedLeads;
-        if (filters.status === '배정됨') {
-          filteredData = filteredData.filter(lead => lead.assignment_info && !lead.customer_grade);
-        } else if (filters.status === '미분류') {
-          filteredData = filteredData.filter(lead => !lead.customer_grade);
-        } else {
-          // 특정 등급 필터
-          filteredData = filteredData.filter(lead => lead.customer_grade?.grade === filters.status);
-        }
-
-        // 페이지네이션 적용
-        const paginatedData = filteredData.slice(startRange, endRange);
-        
-        setLeads(paginatedData);
-        setTotalCount(filteredData.length);
-        setTotalPages(Math.ceil(filteredData.length / pageSize));
-        setCurrentPage(page);
-
-        console.log(`계약상태 필터 적용: 전체 ${allData.length}개 중 필터된 ${filteredData.length}개, 현재 페이지 ${paginatedData.length}개`);
-
-      } else {
-        // 계약상태 필터가 없거나 '미배정'인 경우 일반 처리
-        let filteredLeads = enrichedLeads;
-        if (filters.status === '미배정') {
-          filteredLeads = filteredLeads.filter(lead => !lead.assignment_info);
-        }
-
-        setLeads(filteredLeads);
-        setTotalCount(count || 0);
-        setTotalPages(Math.ceil((count || 0) / pageSize));
-        setCurrentPage(page);
-      }
+      console.log(`뷰 기반 최적화 완료: 페이지 ${page}, ${enrichedLeads.length}개 로드 (전체: ${count}개)`);
+      console.log(`단일 뷰 쿼리로 모든 조인 작업 완료 - 성능 대폭 향상`);
 
     } catch (error) {
       console.error('고객 데이터 로드 실패:', error);
@@ -506,7 +410,7 @@ function AdminLeadsPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [authLoading, mounted, debouncedSearchTerm, filters, sortColumn, sortDirection, pageSize]);
+  }, [authLoading, mounted, debouncedSearchTerm, filters, sortColumn, sortDirection, pageSize, toast]);
 
   // 정렬 변경 핸들러
   const handleSort = (column: string) => {
@@ -516,7 +420,7 @@ function AdminLeadsPageContent() {
       setSortColumn(column);
       setSortDirection('desc');
     }
-    setCurrentPage(1); // 정렬 변경시 첫 페이지로
+    setCurrentPage(1);
   };
 
   // 정렬 아이콘 렌더링
@@ -532,10 +436,10 @@ function AdminLeadsPageContent() {
   // 필터 변경
   const handleFilterChange = (newFilters: Partial<FilterOptions>) => {
     setFilters(prev => ({ ...prev, ...newFilters }));
-    setCurrentPage(1); // 필터 변경시 첫 페이지로
+    setCurrentPage(1);
   };
 
-  // 개별 선택 토글
+  // 선택 관련 함수들
   const toggleSelectLead = (leadId: string) => {
     setSelectedLeads(prev => {
       const newSet = new Set(prev);
@@ -548,7 +452,6 @@ function AdminLeadsPageContent() {
     });
   };
 
-  // 전체 선택 토글
   const toggleSelectAll = () => {
     if (selectedLeads.size === leads.length) {
       setSelectedLeads(new Set());
@@ -602,6 +505,7 @@ function AdminLeadsPageContent() {
 
       loadLeads(currentPage);
       loadOverallStats();
+      loadGradeStats();
 
     } catch (error) {
       console.error('고객 삭제 실패:', error);
@@ -613,7 +517,7 @@ function AdminLeadsPageContent() {
     }
   };
 
-  // 일괄 삭제
+  // 일괄 삭제 - 배치 삭제로 최적화
   const handleBulkDelete = async () => {
     if (selectedLeads.size === 0) {
       toast.warning('선택된 고객 없음', '삭제할 고객을 먼저 선택해주세요.');
@@ -627,50 +531,38 @@ function AdminLeadsPageContent() {
     try {
       setLoading(true);
       const selectedIds = Array.from(selectedLeads);
-      let successCount = 0;
-      let errorCount = 0;
+      
+      // 배치 삭제로 최적화
+      const { data: assignments } = await supabase
+        .from('lead_assignments')
+        .select('id')
+        .in('lead_id', selectedIds);
 
-      for (const leadId of selectedIds) {
-        try {
-          const { data: assignments } = await supabase
-            .from('lead_assignments')
-            .select('id')
-            .eq('lead_id', leadId);
-
-          if (assignments && assignments.length > 0) {
-            const assignmentIds = assignments.map(a => a.id);
-            await supabase
-              .from('counseling_activities')
-              .delete()
-              .in('assignment_id', assignmentIds);
-          }
-
-          await supabase
-            .from('lead_assignments')
-            .delete()
-            .eq('lead_id', leadId);
-
-          await supabase
-            .from('lead_pool')
-            .delete()
-            .eq('id', leadId);
-
-          successCount++;
-
-        } catch (error) {
-          console.error(`고객 ${leadId} 삭제 실패:`, error);
-          errorCount++;
-        }
+      if (assignments && assignments.length > 0) {
+        const assignmentIds = assignments.map(a => a.id);
+        await supabase
+          .from('counseling_activities')
+          .delete()
+          .in('assignment_id', assignmentIds);
       }
 
-      if (successCount > 0) {
-        toast.success('일괄 삭제 완료', `${successCount}개 고객이 삭제되었습니다.${errorCount > 0 ? ` (${errorCount}개 실패)` : ''}`);
-        setSelectedLeads(new Set());
-        loadLeads(currentPage);
-        loadOverallStats();
-      } else {
-        toast.error('일괄 삭제 실패', '모든 고객 삭제에 실패했습니다.');
-      }
+      await supabase
+        .from('lead_assignments')
+        .delete()
+        .in('lead_id', selectedIds);
+
+      const { error: leadError } = await supabase
+        .from('lead_pool')
+        .delete()
+        .in('id', selectedIds);
+
+      if (leadError) throw leadError;
+
+      toast.success('일괄 삭제 완료', `${selectedIds.length}개 고객이 삭제되었습니다.`);
+      setSelectedLeads(new Set());
+      loadLeads(currentPage);
+      loadOverallStats();
+      loadGradeStats();
 
     } catch (error) {
       console.error('일괄 삭제 실패:', error);
@@ -754,6 +646,7 @@ function AdminLeadsPageContent() {
   useEffect(() => {
     if (!authLoading && user && mounted) {
       loadOverallStats();
+      loadGradeStats();
       loadLeads(1);
     }
   }, [authLoading, user, mounted]);
@@ -761,7 +654,8 @@ function AdminLeadsPageContent() {
   // 필터나 정렬, 검색어 변경시 데이터 다시 로드
   useEffect(() => {
     if (!authLoading && user && mounted) {
-      loadLeads(currentPage);
+      loadGradeStats(); // 등급별 통계도 함께 업데이트
+      loadLeads(1); // 필터 변경시 첫 페이지로
     }
   }, [filters, sortColumn, sortDirection, debouncedSearchTerm]);
 
@@ -772,13 +666,10 @@ function AdminLeadsPageContent() {
       <div className="p-6 max-w-7xl mx-auto">
         {/* 헤더 */}
         <div className="mb-8">
-          <h1 className={designSystem.components.typography.h2}>고객 리드 관리</h1>
-          <p className="text-text-secondary mt-2">
-            업로드된 고객 데이터를 조회, 수정, 삭제할 수 있습니다
-          </p>
+          <h1 className={designSystem.components.typography.h2}>고객 리드 관리 (뷰 최적화)</h1>
         </div>
 
-        {/* 통계 카드 - 5개로 확장 */}
+        {/* 통계 카드 */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
           <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
@@ -840,23 +731,24 @@ function AdminLeadsPageContent() {
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-text-secondary text-sm">계약상태 필터:</span>
+              <span className="text-text-secondary text-sm">계약상태:</span>
               <select
                 value={filters.status}
                 onChange={(e) => handleFilterChange({ status: e.target.value })}
-                className="px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
               >
-                <option value="all">전체 상태</option>
-                <option value="미분류">미분류</option>
-                <option value="미배정">미배정</option>
-                <option value="배정됨">배정됨 (미분류)</option>
-                <optgroup label="회원 등급">
-                  {gradeOptions.map(grade => (
+                <option value="all">전체</option>
+                {gradeOptions.map(grade => {
+                  const count = gradeStats[grade.value] || 0;
+                  return (
                     <option key={grade.value} value={grade.value}>
-                      {grade.label}
+                      {grade.label} ({count})
                     </option>
-                  ))}
-                </optgroup>
+                  );
+                })}
+                <option value="미분류">
+                  미분류 ({gradeStats['미분류'] || 0})
+                </option>
               </select>
             </div>
           </div>
@@ -864,15 +756,16 @@ function AdminLeadsPageContent() {
           <button
             onClick={() => {
               loadOverallStats();
+              loadGradeStats();
               loadLeads(currentPage);
             }}
-            disabled={loading}
+            disabled={loading || statsLoading}
             className={designSystem.utils.cn(
               designSystem.components.button.secondary,
               "px-4 py-2"
             )}
           >
-            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 mr-2 ${(loading || statsLoading) ? 'animate-spin' : ''}`} />
             새로고침
           </button>
         </div>
@@ -885,6 +778,9 @@ function AdminLeadsPageContent() {
             <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
               전체 {totalCount.toLocaleString()}명 (페이지당 {pageSize}명)
             </span>
+            {loading && (
+              <span className="text-xs text-accent animate-pulse">로딩 중...</span>
+            )}
           </div>
           
           <div className="relative">
@@ -995,10 +891,10 @@ function AdminLeadsPageContent() {
                           상담메모
                         </div>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-8">
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-10">
                         <div className="flex items-center justify-center gap-0.5">
                           <businessIcons.phone className="w-3 h-3" />
-                          횟수
+                          <span className="leading-tight">횟수</span>
                         </div>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
@@ -1078,11 +974,11 @@ function AdminLeadsPageContent() {
                           {renderGradeBadge(lead.customer_grade)}
                         </td>
 
-                        {/* 고객명 (실제 고객명 우선) */}
+                        {/* 고객명 */}
                         <td className="py-1 px-1 text-center">
                           <div className="text-xs whitespace-nowrap truncate">
-                            {lead.assignment_info?.actual_customer_name ? (
-                              <span className="text-text-primary font-medium">{lead.assignment_info.actual_customer_name}</span>
+                            {lead.actual_customer_name ? (
+                              <span className="text-text-primary font-medium">{lead.actual_customer_name}</span>
                             ) : lead.real_name ? (
                               <span className="text-text-primary">{lead.real_name}</span>
                             ) : lead.contact_name ? (
@@ -1158,9 +1054,9 @@ function AdminLeadsPageContent() {
 
                         {/* 계약금액 */}
                         <td className="py-1 px-1 text-center">
-                          {lead.assignment_info?.contract_amount ? (
+                          {lead.contract_amount ? (
                             <span className="font-medium text-success text-xs">
-                              {(lead.assignment_info.contract_amount / 10000).toFixed(0)}만
+                              {(lead.contract_amount / 10000).toFixed(0)}만
                             </span>
                           ) : (
                             <span className="text-text-tertiary text-xs">-</span>
@@ -1203,7 +1099,7 @@ function AdminLeadsPageContent() {
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => loadLeads(1)}
-                        disabled={currentPage === 1}
+                        disabled={currentPage === 1 || loading}
                         className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
                       >
                         첫페이지
@@ -1211,7 +1107,7 @@ function AdminLeadsPageContent() {
                       
                       <button
                         onClick={() => loadLeads(currentPage - 1)}
-                        disabled={currentPage === 1}
+                        disabled={currentPage === 1 || loading}
                         className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
                       >
                         <ChevronLeft className="w-3 h-3" />
@@ -1223,7 +1119,7 @@ function AdminLeadsPageContent() {
                       
                       <button
                         onClick={() => loadLeads(currentPage + 1)}
-                        disabled={currentPage === totalPages}
+                        disabled={currentPage === totalPages || loading}
                         className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
                       >
                         <ChevronRight className="w-3 h-3" />
@@ -1231,7 +1127,7 @@ function AdminLeadsPageContent() {
                       
                       <button
                         onClick={() => loadLeads(totalPages)}
-                        disabled={currentPage === totalPages}
+                        disabled={currentPage === totalPages || loading}
                         className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
                       >
                         마지막

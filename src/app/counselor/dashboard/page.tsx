@@ -29,7 +29,7 @@ interface AssignedLead {
   lead_id: string
   phone: string
   contact_name: string
-  real_name?: string           // 실제 고객명 (DB에 포함된 경우)
+  real_name?: string
   data_source: string
   contact_script: string
   assigned_at: string
@@ -67,8 +67,8 @@ interface DashboardStats {
   not_contacted: number;
   in_progress: number;
   contracted: number;
-  payment_likely: number;    // 결제[유력]
-  payment_complete: number;  // 결제[완료]
+  payment_likely: number;
+  payment_complete: number;
 }
 
 function CounselorDashboardContent() {
@@ -86,6 +86,8 @@ function CounselorDashboardContent() {
     payment_complete: 0
   });
   const [loading, setLoading] = useState(true);
+  const [gradeFilter, setGradeFilter] = useState<string>('all');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // 권한 체크 - 상담 진행 페이지와 동일
   useEffect(() => {
@@ -96,94 +98,86 @@ function CounselorDashboardContent() {
     }
   }, [user, userProfile])
 
-  // v6 패턴 적용한 데이터 로드
+  // 뷰 테이블 적용한 데이터 로드 (1000개 제한 해결)
   const loadDashboardData = async () => {
     if (!user?.id) return;
 
     setLoading(true);
     try {
-      console.log('영업사원 대시보드 데이터 로드 시작:', user.id);
+      console.log('영업사원 대시보드 데이터 로드 시작 (뷰 최적화):', user.id);
 
-      // 본인에게 배정된 리드만 조회 (보안) - 상담 진행 페이지와 동일 로직
-      const { data: leadsData, error: leadsError } = await supabase
-        .from('lead_assignments')
-        .select(`
-          id,
-          lead_id,
-          assigned_at,
+      // 배치 처리로 전체 데이터 가져오기 (1000개 제한 해결)
+      let allLeads: any[] = [];
+      let from = 0;
+      const batchSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data: batch } = await supabase
+          .from('counselor_leads_view')
+          .select('*')
+          .eq('counselor_id', user.id)
+          .range(from, from + batchSize - 1)
+          .order('assigned_at', { ascending: false });
+
+        if (batch && batch.length > 0) {
+          allLeads = allLeads.concat(batch);
+          from += batchSize;
+          
+          if (batch.length < batchSize) {
+            hasMore = false;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      console.log('뷰에서 조회된 배정 고객 수:', allLeads.length);
+
+      // 뷰 데이터를 기존 인터페이스에 맞게 변환
+      const enrichedLeads = allLeads.map(lead => {
+        // 상태 계산
+        let status: AssignedLead['status'] = 'not_contacted';
+        if (lead.last_contact_date) {
+          if (lead.latest_contract_status === 'contracted') {
+            status = 'contracted';
+          } else {
+            status = 'in_progress';
+          }
+        }
+
+        // 회원등급 정보 추출
+        let customerGrade: CustomerGrade | undefined;
+        if (lead.additional_data) {
+          const additionalData = typeof lead.additional_data === 'string' 
+            ? JSON.parse(lead.additional_data) 
+            : lead.additional_data;
+          
+          if (additionalData && additionalData.grade) {
+            customerGrade = additionalData;
+          }
+        }
+
+        return {
+          assignment_id: lead.assignment_id,
+          lead_id: lead.lead_id,
+          phone: lead.phone || '',
+          contact_name: lead.contact_name || '',
+          real_name: lead.real_name || '',
+          data_source: lead.data_source || '미지정',
+          contact_script: lead.contact_script || '',
+          assigned_at: lead.assigned_at,
+          last_contact_date: lead.last_contact_date || null,
+          call_attempts: lead.call_attempts || 0,
+          latest_contact_result: lead.latest_contact_result || null,
+          latest_contract_status: lead.latest_contract_status || null,
+          contract_amount: lead.contract_amount || null,
+          actual_customer_name: lead.actual_customer_name || null,
+          counseling_memo: lead.counseling_memo || null,
           status,
-          lead_pool (
-            id,
-            phone,
-            contact_name,
-            real_name,
-            data_source,
-            contact_script,
-            additional_data
-          )
-        `)
-        .eq('counselor_id', user.id)
-        .eq('status', 'active')
-        .order('assigned_at', { ascending: false });
-
-      if (leadsError) throw leadsError;
-
-      console.log('조회된 배정 고객 수:', leadsData?.length || 0);
-
-      // v6 패턴: 각 리드별 최신 상담 기록 조회 
-      const enrichedLeads = await Promise.all(
-        leadsData?.map(async (assignment) => {
-          // 해당 assignment의 모든 상담 기록 조회 - v6 패턴
-          const { data: allActivities } = await supabase
-            .from('counseling_activities')
-            .select('contact_date, contact_result, contract_status, contract_amount, actual_customer_name, counseling_memo')
-            .eq('assignment_id', assignment.id)
-            .order('contact_date', { ascending: false })
-
-          // v6 패턴: 최신 기록만 사용 (중복 집계 방지)
-          const latestConsulting = allActivities?.[0] || null
-          const callAttempts = allActivities?.length || 0
-
-          // 상태 계산
-          let status: AssignedLead['status'] = 'not_contacted'
-          if (latestConsulting) {
-            if (latestConsulting.contract_status === 'contracted') {
-              status = 'contracted'
-            } else {
-              status = 'in_progress'
-            }
-          }
-
-          // 회원등급 정보 추출 - 상담 진행 페이지와 동일
-          let customerGrade: CustomerGrade | undefined
-          if (assignment.lead_pool?.additional_data) {
-            const additionalData = assignment.lead_pool.additional_data as any
-            if (additionalData.grade) {  // customer_grade → grade로 수정
-              customerGrade = additionalData
-            }
-          }
-
-          return {
-            assignment_id: assignment.id,
-            lead_id: assignment.lead_id,
-            phone: assignment.lead_pool?.phone || '',
-            contact_name: assignment.lead_pool?.contact_name || null,
-            real_name: assignment.lead_pool?.real_name || null,
-            data_source: assignment.lead_pool?.data_source || '미지정',
-            contact_script: assignment.lead_pool?.contact_script || '',
-            assigned_at: assignment.assigned_at,
-            last_contact_date: latestConsulting?.contact_date || null,
-            call_attempts: callAttempts,
-            latest_contact_result: latestConsulting?.contact_result || null,
-            latest_contract_status: latestConsulting?.contract_status || null,
-            contract_amount: latestConsulting?.contract_amount || null,
-            actual_customer_name: latestConsulting?.actual_customer_name || null,
-            counseling_memo: latestConsulting?.counseling_memo || null,
-            status,
-            customer_grade: customerGrade
-          }
-        }) || []
-      );
+          customer_grade: customerGrade
+        };
+      });
 
       setLeads(enrichedLeads);
 
@@ -226,6 +220,43 @@ function CounselorDashboardContent() {
     }
   }, [user?.id]);
 
+  // 등급별 통계 계산
+  const getGradeStats = () => {
+    const stats = {};
+    gradeOptions.forEach(option => {
+      stats[option.value] = leads.filter(lead => lead.customer_grade?.grade === option.value).length;
+    });
+    stats['미분류'] = leads.filter(lead => !lead.customer_grade?.grade).length;
+    return stats;
+  };
+
+  // 필터링된 리드 계산 (검색 기능 추가)
+  const getFilteredLeads = () => {
+    let filtered = leads;
+    
+    // 등급 필터
+    if (gradeFilter !== 'all') {
+      if (gradeFilter === '미분류') {
+        filtered = filtered.filter(lead => !lead.customer_grade?.grade);
+      } else {
+        filtered = filtered.filter(lead => lead.customer_grade?.grade === gradeFilter);
+      }
+    }
+    
+    // 검색 필터
+    if (searchTerm.trim()) {
+      filtered = filtered.filter(lead => 
+        lead.phone.includes(searchTerm) ||
+        (lead.contact_name && lead.contact_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (lead.real_name && lead.real_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (lead.actual_customer_name && lead.actual_customer_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (lead.contact_script && lead.contact_script.toLowerCase().includes(searchTerm.toLowerCase()))
+      );
+    }
+    
+    return filtered;
+  };
+
   // 등급별 배지 렌더링 - 상담 진행 페이지와 동일
   const renderGradeBadge = (grade?: CustomerGrade) => {
     if (!grade) {
@@ -258,6 +289,9 @@ function CounselorDashboardContent() {
       </CounselorLayout>
     );
   }
+
+  const gradeStats = getGradeStats();
+  const filteredLeads = getFilteredLeads();
 
   return (
     <CounselorLayout>
@@ -333,8 +367,32 @@ function CounselorDashboardContent() {
           </div>
         </div>
 
-        {/* 새로고침 버튼 */}
-        <div className="flex justify-end mb-6">
+        {/* 등급 필터 및 새로고침 */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-text-secondary text-sm">등급:</span>
+              <select
+                value={gradeFilter}
+                onChange={(e) => setGradeFilter(e.target.value)}
+                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+              >
+                <option value="all">전체</option>
+                {gradeOptions.map(grade => {
+                  const count = gradeStats[grade.value] || 0;
+                  return (
+                    <option key={grade.value} value={grade.value}>
+                      {grade.label} ({count})
+                    </option>
+                  );
+                })}
+                <option value="미분류">
+                  미분류 ({gradeStats['미분류'] || 0})
+                </option>
+              </select>
+            </div>
+          </div>
+          
           <button
             onClick={loadDashboardData}
             disabled={loading}
@@ -354,7 +412,7 @@ function CounselorDashboardContent() {
             <businessIcons.team className="w-3 h-3 text-accent" />
             <h3 className="text-xs font-medium text-text-primary">최근 배정 고객</h3>
             <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
-              {leads.length}명
+              {filteredLeads.length}명
             </span>
           </div>
           
@@ -362,17 +420,17 @@ function CounselorDashboardContent() {
             <businessIcons.script className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
             <input
               type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="고객명, 전화번호로 검색..."
               className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
-              readOnly
-              onClick={() => router.push('/counselor/consulting')}
             />
           </div>
         </div>
 
         {/* 최근 배정 고객 목록 */}
         <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
-          {leads.length > 0 ? (
+          {filteredLeads.length > 0 ? (
             <div className="overflow-auto" style={{ maxHeight: '65vh' }}>
               <table className="w-full table-fixed">
                 <thead className="bg-bg-secondary sticky top-0 z-10">
@@ -446,7 +504,7 @@ function CounselorDashboardContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {leads.map((lead) => (
+                  {filteredLeads.map((lead) => (
                     <tr 
                       key={lead.assignment_id} 
                       className="border-b border-border-primary hover:bg-bg-hover transition-colors"
@@ -581,15 +639,15 @@ function CounselorDashboardContent() {
             <div className="text-center py-12">
               <businessIcons.contact className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
               <h3 className="text-lg font-medium text-text-primary mb-2">
-                배정받은 고객이 없습니다
+                {gradeFilter === 'all' && !searchTerm ? '배정받은 고객이 없습니다' : 
+                 searchTerm ? `"${searchTerm}"에 대한 검색 결과가 없습니다` :
+                 `${gradeFilter === '미분류' ? '미분류' : gradeFilter} 등급 고객이 없습니다`}
               </h3>
               <p className="text-text-secondary">
-                관리자가 고객을 배정하면 여기에 표시됩니다.
+                {searchTerm ? '다른 검색어를 시도해보세요.' : '관리자가 고객을 배정하면 여기에 표시됩니다.'}
               </p>
             </div>
           )}
-
-          {/* 더보기 링크 제거 - 전체 목록 표시하므로 불필요 */}
         </div>
       </div>
     </CounselorLayout>

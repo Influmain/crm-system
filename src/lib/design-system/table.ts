@@ -1,23 +1,21 @@
 /**
- * 노션 스타일 테이블 시스템 (업데이트 버전)
- * 모든 테이블 컴포넌트에서 일관된 스타일을 사용하기 위한 디자인 시스템
+ * 노션 스타일 테이블 시스템 (상담 페이지 스타일 통합)
+ * 기존 상담 페이지의 컴팩트한 스타일과 일반적인 테이블 스타일을 모두 지원
  */
 export const tableSystem = {
-  // 🎨 기본 컨테이너
-  container: "relative bg-bg-primary border border-border-primary rounded-lg overflow-hidden",
+  // 기본 컨테이너
+  container: "bg-bg-primary border border-border-primary rounded-lg overflow-hidden",
   
-  // 📋 헤더 스타일 (고정)
+  // 헤더 스타일 (일반 모드)
   header: {
     container: "overflow-x-auto border-b border-border-primary",
     row: "bg-bg-secondary",
-    cell: "text-left py-2 px-3 text-xs font-medium text-text-tertiary uppercase tracking-wider",
-    cellSortable: "text-left py-2 px-3 text-xs font-medium text-text-tertiary uppercase tracking-wider cursor-pointer hover:bg-bg-hover transition-colors",
+    cell: "text-left py-3 px-3 text-sm font-medium text-text-tertiary uppercase tracking-wider",
+    cellSortable: "text-left py-3 px-3 text-sm font-medium text-text-tertiary uppercase tracking-wider cursor-pointer hover:bg-bg-hover transition-colors",
     iconWrapper: "flex items-center space-x-2",
-    icon: "w-3 h-3 text-text-tertiary", // 노션 스타일: 작고 무채색
-    sortIcon: "w-3 h-3 text-text-tertiary ml-1 transition-transform",
-    sortIconActive: "w-3 h-3 text-accent ml-1 transition-transform",
+    icon: "w-4 h-4 text-text-tertiary",
     
-    // 🆕 노션 스타일 검색 관련 추가
+    // 검색 관련
     searchButton: "p-1 rounded hover:bg-bg-hover transition-colors opacity-0 group-hover:opacity-100",
     searchIcon: "w-3.5 h-3.5 text-text-tertiary hover:text-accent",
     searchContainer: "flex items-center space-x-2 bg-bg-primary border border-accent rounded px-2 py-1 min-w-48",
@@ -26,45 +24,60 @@ export const tableSystem = {
     searchClearIcon: "w-3 h-3 text-text-tertiary hover:text-accent"
   },
   
-  // 🔍 검색/필터 영역 (기존 - 대형 검색용)
-  search: {
-    container: "p-4 border-b border-border-primary bg-bg-secondary/50",
-    inputWrapper: "relative",
-    input: "w-full pl-10 pr-4 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent",
-    inputIcon: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-text-tertiary",
-    clearButton: "absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-text-tertiary hover:text-accent cursor-pointer",
-    filterRow: "flex items-center space-x-3 mt-3",
-    filterSelect: "px-3 py-1 text-sm border border-border-primary rounded bg-bg-primary text-text-primary",
-    activeFilters: "flex items-center space-x-2 mt-2",
-    filterTag: "px-2 py-1 text-xs bg-accent-light text-accent rounded-full flex items-center space-x-1",
-    filterTagClose: "w-3 h-3 cursor-pointer hover:text-error",
-    
-    // 🆕 검색 결과 상태 표시
-    resultBar: "p-3 bg-accent-light border-t border-border-primary",
-    resultText: "text-accent",
-    resultClear: "text-accent hover:text-accent/80 font-medium"
+  // 컴팩트 헤더 스타일 (상담 페이지 스타일)
+  compactHeader: {
+    container: "overflow-x-auto border-b border-border-primary",
+    row: "bg-bg-secondary sticky top-0 z-10",
+    cell: "text-center py-2 px-1 font-medium text-text-secondary text-xs",
+    cellSortable: "text-center py-2 px-1 font-medium text-text-secondary text-xs cursor-pointer hover:bg-bg-hover transition-colors",
+    iconWrapper: "flex items-center justify-center gap-0.5",
+    icon: "w-3 h-3",
+    sortIcon: "text-text-tertiary text-xs ml-0.5",
+    sortIconActive: "text-accent text-xs ml-0.5"
   },
   
-  // 📜 스크롤 가능한 바디
+  // 바디 스타일 (일반 모드)
   body: {
-    scrollContainer: "overflow-auto", 
-    // 사용 시 동적 높이 설정: style={{ height: '60vh', minHeight: '400px', maxHeight: '800px' }}
+    scrollContainer: "overflow-auto",
     row: {
       base: "border-b border-border-primary hover:bg-bg-hover transition-all duration-200 group cursor-pointer hover:shadow-sm relative"
     },
-    cell: "py-2 px-3",
-    // 🔍 검색 하이라이트 (개선)
-    highlightText: "bg-accent-light text-accent font-medium rounded px-0.5"
+    cell: "py-3 px-3 text-sm"
   },
   
-  // ✅ 노션식 선택 시스템
+  // 컴팩트 바디 스타일 (상담 페이지 스타일)
+  compactBody: {
+    scrollContainer: "overflow-auto",
+    row: {
+      base: "border-b border-border-primary hover:bg-bg-hover transition-colors"
+    },
+    cell: "py-1 px-1 text-center text-xs"
+  },
+  
+  // 테이블 레이아웃
+  layout: {
+    normal: "w-full min-w-full",
+    fixed: "w-full table-fixed"
+  },
+  
+  // 검색/필터 영역
+  search: {
+    container: "flex items-center justify-between mb-3",
+    titleSection: "flex items-center gap-2",
+    titleIcon: "w-3 h-3 text-accent",
+    title: "text-xs font-medium text-text-primary",
+    count: "text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded",
+    inputSection: "relative",
+    inputIcon: "absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary",
+    input: "pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+  },
+  
+  // 선택 시스템 (노션 스타일)
   selection: {
-    // 파란 세로선 (선택 표시)
     indicator: "absolute left-0 top-0 h-full w-1 bg-accent transition-opacity duration-200",
     indicatorVisible: "opacity-100",
     indicatorHidden: "opacity-0",
     
-    // 체크박스 시스템
     checkbox: {
       container: "absolute left-1 top-1/2 transform -translate-y-1/2 transition-all duration-200",
       hidden: "opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100",
@@ -75,7 +88,6 @@ export const tableSystem = {
       checkIcon: "w-2.5 h-2.5 text-white"
     },
     
-    // 콘텐츠 밀림 효과
     content: {
       base: "transition-all duration-200",
       unselected: "ml-1 group-hover:ml-6", 
@@ -83,7 +95,7 @@ export const tableSystem = {
     }
   },
   
-  // 📊 상태 표시 스타일
+  // 상태 표시 스타일
   status: {
     success: "px-2 py-1 text-xs rounded-full bg-success-light text-success",
     warning: "px-2 py-1 text-xs rounded-full bg-warning-light text-warning",
@@ -91,14 +103,49 @@ export const tableSystem = {
     info: "px-2 py-1 text-xs rounded-full bg-accent-light text-accent"
   },
   
-  // 📄 빈 상태 표시 (개선)
+  // 등급 뱃지 (상담 페이지에서 사용)
+  gradeBadge: {
+    base: "px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap",
+    unclassified: "px-1.5 py-0.5 rounded text-xs bg-bg-secondary text-text-tertiary whitespace-nowrap",
+    colored: "text-white" // backgroundColor는 동적으로 설정
+  },
+  
+  // 텍스트 스타일 (상담 페이지 전용)
+  text: {
+    phone: "font-mono text-text-primary font-medium text-xs truncate",
+    customerName: "text-xs whitespace-nowrap truncate",
+    confirmed: "text-text-primary",
+    unconfirmed: "text-text-tertiary",
+    contractAmount: "font-medium text-success text-xs",
+    callAttempts: "font-medium text-text-primary text-xs",
+    date: "text-text-secondary text-xs whitespace-nowrap"
+  },
+  
+  // 툴팁 시스템 (상담 페이지에서 사용)
+  tooltip: {
+    container: "group mx-auto relative",
+    trigger: "text-text-primary text-xs truncate cursor-help",
+    popup: "absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-10 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+  },
+  
+  // 페이지네이션 (상담 페이지 스타일)
+  pagination: {
+    container: "p-3 border-t border-border-primary bg-bg-secondary",
+    wrapper: "flex items-center justify-between",
+    info: "text-xs text-text-secondary",
+    buttonGroup: "flex items-center gap-1",
+    button: "px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors",
+    currentPage: "px-2 py-1 text-xs text-white bg-accent rounded"
+  },
+  
+  // 빈 상태 표시
   empty: {
-    container: "flex items-center justify-center h-full",
-    content: "text-center py-12",
-    icon: "w-8 h-8 text-text-tertiary mx-auto mb-2",
-    text: "text-text-secondary",
+    container: "text-center py-12",
+    icon: "w-16 h-16 text-text-tertiary mx-auto mb-4",
+    title: "text-lg font-medium text-text-primary mb-2",
+    message: "text-text-secondary",
     
-    // 🆕 검색 결과 없음 상태
+    // 검색 결과 없음 상태
     searchEmpty: {
       icon: "w-8 h-8 text-text-tertiary mx-auto mb-2",
       title: "text-text-secondary mb-2",
@@ -106,19 +153,26 @@ export const tableSystem = {
     }
   },
   
-  // 🏁 목록 끝 표시 (개선)
-  footer: {
-    container: "py-3 text-center border-t border-border-primary",
-    text: "text-xs text-text-tertiary",
-    
-    // 🆕 검색 결과와 함께 표시될 때
-    withSearch: "text-xs text-text-tertiary"
+  // 액션 버튼 (상담 페이지에서 사용)
+  actionButton: {
+    base: "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap",
+    primary: "bg-accent text-bg-primary",
+    secondary: "border border-border-primary bg-bg-primary text-text-primary hover:bg-bg-hover",
+    icon: "w-3 h-3"
+  },
+  
+  // 로딩 상태
+  loading: {
+    container: "flex items-center justify-center h-64",
+    content: "flex items-center gap-3 text-text-secondary",
+    icon: "w-6 h-6 animate-spin",
+    text: "text-text-secondary"
   }
 };
 
-/**
- * 테이블 정렬 타입
- */
+// 테이블 타입 정의
+export type TableMode = 'normal' | 'compact';
+
 export type SortDirection = 'asc' | 'desc' | null;
 
 export interface SortConfig {
@@ -126,18 +180,12 @@ export interface SortConfig {
   direction: SortDirection;
 }
 
-/**
- * 테이블 검색/필터 타입
- */
 export interface SearchConfig {
   query: string;
   column?: string;
   filters: Record<string, string>;
 }
 
-/**
- * 테이블 행 선택 시스템을 위한 유틸리티 타입
- */
 export interface TableSelectionProps {
   selectedItems: string[];
   onToggleSelection: (id: string) => void;
@@ -145,9 +193,6 @@ export interface TableSelectionProps {
   onClearSelection?: () => void;
 }
 
-/**
- * 테이블 칼럼 정의 타입 (확장)
- */
 export interface TableColumn {
   key: string;
   label: string;
@@ -157,3 +202,23 @@ export interface TableColumn {
   searchable?: boolean;
   render?: (value: any, record: any, searchQuery?: string) => React.ReactNode;
 }
+
+// 유틸리티 함수들
+export const getTableStyles = (mode: TableMode = 'normal') => {
+  return {
+    header: mode === 'compact' ? tableSystem.compactHeader : tableSystem.header,
+    body: mode === 'compact' ? tableSystem.compactBody : tableSystem.body,
+    layout: mode === 'compact' ? tableSystem.layout.fixed : tableSystem.layout.normal
+  };
+};
+
+// 정렬 아이콘 스타일 클래스들
+export const sortIconStyles = {
+  default: "text-text-tertiary text-xs ml-0.5",
+  active: "text-accent text-xs ml-0.5",
+  symbols: {
+    default: "↕",
+    asc: "↑", 
+    desc: "↓"
+  }
+};

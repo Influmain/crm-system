@@ -40,6 +40,8 @@ interface CustomerGrade {
     date: string;
     memo?: string;
   }>;
+  estimated_contract_amount?: number;
+  confirmed_contract_amount?: number;
 }
 
 interface AssignedLead {
@@ -134,104 +136,107 @@ function CounselorConsultingContent() {
     setCurrentPage(1)
   }, [filteredLeads])
 
+  // 뷰 테이블 적용한 데이터 로드 (1000개 제한 해결)
   const loadAssignedLeads = async () => {
     if (!user?.id) return
 
     setLoading(true)
     try {
-      console.log('영업사원 배정 고객 조회 시작:', user.id);
-      
-      const { data: leadsData, error: leadsError } = await supabase
-        .from('lead_assignments')
-        .select(`
-          id,
-          lead_id,
-          assigned_at,
+      console.log('상담 진행 데이터 로드 시작 (뷰 최적화):', user.id);
+
+      // 배치 처리로 전체 데이터 가져오기 (1000개 제한 해결)
+      let allLeads: any[] = [];
+      let from = 0;
+      const batchSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data: batch } = await supabase
+          .from('counselor_leads_view')
+          .select('*')
+          .eq('counselor_id', user.id)
+          .range(from, from + batchSize - 1)
+          .order('assigned_at', { ascending: false });
+
+        if (batch && batch.length > 0) {
+          allLeads = allLeads.concat(batch);
+          from += batchSize;
+          
+          if (batch.length < batchSize) {
+            hasMore = false;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      console.log('뷰에서 조회된 배정 고객 수:', allLeads.length);
+
+      // 뷰 데이터를 기존 인터페이스에 맞게 변환
+      const enrichedLeads = allLeads.map(lead => {
+        // 상태 계산 (기존 로직 유지)
+        let status: AssignedLead['status'] = 'not_contacted';
+        if (lead.last_contact_date) {
+          if (lead.latest_contract_status === 'contracted') {
+            status = 'contracted';
+          } else {
+            status = 'in_progress';
+          }
+        }
+
+        // 회원등급 정보 추출 (기존 로직 유지)
+        let customerGrade: CustomerGrade | undefined;
+        if (lead.additional_data) {
+          const additionalData = typeof lead.additional_data === 'string' 
+            ? JSON.parse(lead.additional_data) 
+            : lead.additional_data;
+          
+          if (additionalData && additionalData.grade) {
+            customerGrade = additionalData;
+          }
+        }
+
+        return {
+          assignment_id: lead.assignment_id,
+          lead_id: lead.lead_id,
+          phone: lead.phone || '',
+          contact_name: lead.contact_name || '',
+          real_name: lead.real_name || '',
+          data_source: lead.data_source || '미지정',
+          contact_script: lead.contact_script || '',
+          assigned_at: lead.assigned_at,
+          last_contact_date: lead.last_contact_date || null,
+          call_attempts: lead.call_attempts || 0,
+          latest_contact_result: lead.latest_contact_result || null,
+          latest_contract_status: lead.latest_contract_status || null,
+          contract_amount: lead.contract_amount || null,
+          actual_customer_name: lead.actual_customer_name || null,
+          counseling_memo: lead.counseling_memo || null,
           status,
-          lead_pool (
-            id,
-            phone,
-            contact_name,
-            real_name,
-            data_source,
-            contact_script,
-            additional_data
-          )
-        `)
-        .eq('counselor_id', user.id)
-        .eq('status', 'active')
-        .order('assigned_at', { ascending: false })
+          customer_grade: customerGrade
+        };
+      });
 
-      if (leadsError) throw leadsError
-
-      console.log('조회된 배정 고객 수:', leadsData?.length || 0);
-
-      const enrichedLeads = await Promise.all(
-        leadsData?.map(async (assignment) => {
-          const { data: allActivities } = await supabase
-            .from('counseling_activities')
-            .select('contact_date, contact_result, contract_status, contract_amount, actual_customer_name, counseling_memo')
-            .eq('assignment_id', assignment.id)
-            .order('contact_date', { ascending: false })
-
-          const latestConsulting = allActivities?.[0] || null
-          const callAttempts = allActivities?.length || 0
-
-          let status: AssignedLead['status'] = 'not_contacted'
-          if (latestConsulting) {
-            if (latestConsulting.contract_status === 'contracted') {
-              status = 'contracted'
-            } else {
-              status = 'in_progress'
-            }
-          }
-
-          let customerGrade: CustomerGrade | undefined
-          if (assignment.lead_pool?.additional_data) {
-            const additionalData = assignment.lead_pool.additional_data as any
-            if (additionalData.grade) {
-              customerGrade = additionalData
-            }
-          }
-
-          return {
-            assignment_id: assignment.id,
-            lead_id: assignment.lead_id,
-            phone: assignment.lead_pool?.phone || '',
-            contact_name: assignment.lead_pool?.contact_name || null,
-            real_name: assignment.lead_pool?.real_name || null,
-            data_source: assignment.lead_pool?.data_source || '미지정',
-            contact_script: assignment.lead_pool?.contact_script || null,
-            assigned_at: assignment.assigned_at,
-            last_contact_date: latestConsulting?.contact_date || null,
-            call_attempts: callAttempts,
-            latest_contact_result: latestConsulting?.contact_result || null,
-            latest_contract_status: latestConsulting?.contract_status || null,
-            contract_amount: latestConsulting?.contract_amount || null,
-            actual_customer_name: latestConsulting?.actual_customer_name || null,
-            counseling_memo: latestConsulting?.counseling_memo || null,
-            status,
-            customer_grade: customerGrade
-          }
-        }) || []
-      )
-
-      setLeads(enrichedLeads)
+      setLeads(enrichedLeads);
       toast.success('고객 목록 로드 완료', `${enrichedLeads.length}명의 배정 고객을 불러왔습니다.`)
 
     } catch (error: any) {
-      console.error('데이터 로드 오류:', error)
+      console.error('상담 진행 데이터 로드 오류:', error);
+      setLeads([]);
+      setFilteredLeads([]);
+      
       toast.error('데이터 로드 실패', error.message, {
         action: { label: '다시 시도', onClick: () => loadAssignedLeads() }
-      })
+      });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const applyFilter = () => {
     let filtered = leads
 
+    // 등급 필터
     if (gradeFilter !== 'all') {
       if (gradeFilter === '미분류') {
         filtered = filtered.filter(lead => !lead.customer_grade?.grade)
@@ -240,10 +245,13 @@ function CounselorConsultingContent() {
       }
     }
 
-    if (searchTerm) {
+    // 검색 필터
+    if (searchTerm.trim()) {
       filtered = filtered.filter(lead => 
-        (lead.contact_name && lead.contact_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         lead.phone.includes(searchTerm) ||
+        (lead.contact_name && lead.contact_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (lead.real_name && lead.real_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (lead.actual_customer_name && lead.actual_customer_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (lead.contact_script && lead.contact_script.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (lead.customer_grade?.grade && lead.customer_grade.grade.toLowerCase().includes(searchTerm.toLowerCase()))
       )
@@ -327,6 +335,7 @@ function CounselorConsultingContent() {
       <span className="text-accent text-xs ml-0.5">↓</span>
   }
 
+  // 기존 상담 기록 로드 (원본 테이블에서 조회 - 변경 없음)
   const loadExistingConsultingRecordWithLead = async (assignmentId: string, lead: AssignedLead) => {
     try {
       console.log('기존 상담 기록 로드 시작:', assignmentId)
@@ -419,6 +428,7 @@ function CounselorConsultingContent() {
     })
   }
 
+  // 상담 기록 저장 (원본 테이블 저장 - 변경 없음)
   const saveConsultingRecord = async () => {
     if (!selectedLead || !user?.id || !userProfile?.full_name) return
 
@@ -494,6 +504,7 @@ function CounselorConsultingContent() {
         console.log('새로운 상담 기록 추가 성공')
       }
 
+      // 등급 정보 저장 (원본 테이블 저장 - 변경 없음)
       if (consultingForm.customer_grade) {
         console.log('등급 정보 업데이트 시작:', consultingForm.customer_grade)
 
@@ -679,11 +690,11 @@ function CounselorConsultingContent() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-text-secondary text-sm">계약완료</p>
-                <p className="text-2xl font-bold text-accent">
+                <p className="text-2xl font-bold text-success">
                   {leads.filter(l => l.status === 'contracted').length}
                 </p>
               </div>
-              <businessIcons.script className="w-8 h-8 text-accent" />
+              <businessIcons.script className="w-8 h-8 text-success" />
             </div>
           </div>
         </div>
@@ -692,19 +703,24 @@ function CounselorConsultingContent() {
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-text-secondary text-sm">등급 필터:</span>
+              <span className="text-text-secondary text-sm">등급:</span>
               <select
                 value={gradeFilter}
                 onChange={(e) => setGradeFilter(e.target.value)}
-                className="px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
               >
-                <option value="all">전체 등급</option>
-                {gradeOptions.map(grade => (
-                  <option key={grade.value} value={grade.value}>
-                    {grade.label} ({gradeStats[grade.value] || 0})
-                  </option>
-                ))}
-                <option value="미분류">미분류 ({gradeStats['미분류'] || 0})</option>
+                <option value="all">전체</option>
+                {gradeOptions.map(grade => {
+                  const count = gradeStats[grade.value] || 0;
+                  return (
+                    <option key={grade.value} value={grade.value}>
+                      {grade.label} ({count})
+                    </option>
+                  );
+                })}
+                <option value="미분류">
+                  미분류 ({gradeStats['미분류'] || 0})
+                </option>
               </select>
             </div>
           </div>
@@ -921,7 +937,7 @@ function CounselorConsultingContent() {
                           </span>
                         </td>
 
-                        {/* 배정일자 (신규 컬럼) */}
+                        {/* 배정일자 */}
                         <td className="py-1 px-1 text-center">
                           <span className="text-text-secondary text-xs whitespace-nowrap">
                             {new Date(lead.assigned_at).toLocaleDateString('ko-KR', {
@@ -1020,7 +1036,7 @@ function CounselorConsultingContent() {
           )}
         </div>
 
-        {/* 상담 기록 모달 */}
+        {/* 상담 기록 모달 (기존 로직 완전 유지) */}
         {showConsultingModal && selectedLead && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">

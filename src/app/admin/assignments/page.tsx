@@ -8,14 +8,30 @@ import { businessIcons } from '@/lib/design-system/icons';
 import { supabase, leadAssignmentService, leadPoolService } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useToastHelpers } from '@/components/ui/Toast';
-import SmartTable from '@/components/ui/SmartTable';
-import { RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { 
+  RefreshCw, 
+  Search, 
+  ChevronLeft, 
+  ChevronRight,
+  CheckSquare,
+  Square,
+  Phone,
+  User,
+  Calendar,
+  MessageSquare,
+  Building,
+  FileText,
+  UserCheck,
+  UserX,
+  AlertTriangle
+} from 'lucide-react';
 
 interface Lead {
   id: string;
   phone: string;
   name: string;
   contact_name: string;
+  real_name?: string;
   data_source: string;
   contact_script: string;
   data_date: string;
@@ -28,6 +44,7 @@ interface Counselor {
   id: string;
   full_name: string;
   email: string;
+  department: string;
   assigned_count: number;
   active_count: number;
   completed_count: number;
@@ -39,7 +56,22 @@ interface Assignment {
   counselor_id: string;
   assigned_at: string;
   status: string;
-  lead: Lead;
+  lead: Lead & {
+    // 재배정 관리용 추가 필드들
+    assignment_id?: string;
+    counselor_name?: string;
+    latest_contact_result?: string;
+    contract_status?: string;
+    contract_amount?: number;
+    last_contact_date?: string;
+    counseling_memo?: string;
+    actual_customer_name?: string;
+    call_attempts?: number;
+    customer_grade?: {
+      grade: string;
+      grade_color: string;
+    };
+  };
   counselor: Counselor;
 }
 
@@ -60,44 +92,91 @@ function AssignmentsPageContent() {
 
   // 선택 관련 상태
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('');
   const [selectedCounselor, setSelectedCounselor] = useState<string>('');
   
   // 재배정 관련 상태
   const [selectedCounselorForView, setSelectedCounselorForView] = useState<string>('');
   const [counselorAssignments, setCounselorAssignments] = useState<Assignment[]>([]);
   const [selectedAssignments, setSelectedAssignments] = useState<string[]>([]);
+  const [newDepartmentForReassign, setNewDepartmentForReassign] = useState<string>('');
   const [newCounselorForReassign, setNewCounselorForReassign] = useState<string>('');
   const [loadingCounselorData, setLoadingCounselorData] = useState(false);
+
+  // 재배정 필터 상태
+  const [reassignFilters, setReassignFilters] = useState({
+    contractStatus: 'all',
+    selectedDepartmentForView: ''
+  });
 
   // 페이지네이션 상태
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
-  const itemsPerPage = 50;
+  const itemsPerPage = 300;
 
-  // 재배정 페이지네이션 상태 추가
+  // 재배정 페이지네이션 상태
   const [reassignPage, setReassignPage] = useState(1);
   const [reassignTotalCount, setReassignTotalCount] = useState(0);
   const [reassignTotalPages, setReassignTotalPages] = useState(0);
-  const reassignItemsPerPage = 30;
+  const reassignItemsPerPage = 200;
+
+  // 검색 상태
+  const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const [reassignSearchTerm, setReassignSearchTerm] = useState('');
+  const [debouncedReassignSearchTerm, setDebouncedReassignSearchTerm] = useState('');
+
+  // 부서 목록 상태
+  const [departments, setDepartments] = useState<string[]>([]);
+
+  // 등급 옵션 (재배정 관리용)
+  const gradeOptions = [
+    { value: '신규', label: '신규', color: '#3b82f6' },
+    { value: '재상담 신청', label: '재상담 신청', color: '#8b5cf6' },
+    { value: '무방 입장[안내]', label: '무방 입장[안내]', color: '#06b6d4' },
+    { value: '무방 입장[완료]', label: '무방 입장[완료]', color: '#10b981' },
+    { value: '관리', label: '관리', color: '#f59e0b' },
+    { value: '결제[유력]', label: '결제[유력]', color: '#ef4444' },
+    { value: '결제[완료]', label: '결제[완료]', color: '#22c55e' },
+    { value: 'AS 신청', label: 'AS 신청', color: '#ec4899' },
+    { value: '부재', label: '부재', color: '#6b7280' },
+    { value: '[지속] 부재', label: '[지속] 부재', color: '#4b5563' },
+    { value: '이탈[조짐]', label: '이탈[조짐]', color: '#f97316' },
+    { value: '이탈', label: '이탈', color: '#dc2626' },
+    { value: '불가', label: '불가', color: '#991b1b' },
+    { value: '이관 DB', label: '이관 DB', color: '#7c3aed' }
+  ];
+
+  // 검색어 디바운싱
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedReassignSearchTerm(reassignSearchTerm);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [reassignSearchTerm]);
 
   // 전화번호 마스킹 함수
   const maskPhoneNumber = (phone: string): string => {
     if (!phone) return '-';
     
-    // phone_unmask 권한이 있으면 마스킹하지 않음
     if (hasPermission('phone_unmask')) {
       return phone;
     }
     
-    // 전화번호 마스킹 처리 (가운데 4자리만)
     if (phone.length >= 8) {
       const start = phone.slice(0, 3);
       const end = phone.slice(-4);
       return start + '****' + end;
     }
     
-    // 8자리 미만은 앞 2자리만 보여주고 나머지는 *
     return phone.slice(0, 2) + '*'.repeat(phone.length - 2);
   };
 
@@ -118,147 +197,76 @@ function AssignmentsPageContent() {
     );
   };
 
-  // 고객 목록용 칼럼 정의 (전화번호 마스킹 적용)
-  const leadColumns = [
-    {
-      key: 'phone',
-      label: '연락처',
-      icon: businessIcons.phone,
-      width: 'w-40',
-      render: (value: string, record: Lead, searchQuery?: string) => (
-        <div className="flex items-center">
-          <businessIcons.phone className="w-3 h-3 mr-2 text-text-tertiary flex-shrink-0" />
-          <span className="text-sm font-medium text-text-primary truncate">
-            {highlightText(maskPhoneNumber(value), searchQuery || '')}
-          </span>
-        </div>
-      )
-    },
-    {
-      key: 'contact_name',
-      label: '고객명',
-      icon: businessIcons.contact,
-      width: 'w-32',
-      render: (value: string, record: Lead, searchQuery?: string) => (
-        <div className="text-sm text-accent truncate font-medium">
-          {highlightText(value || '미설정', searchQuery || '')}
-        </div>
-      )
-    },
-    {
-      key: 'contact_script',
-      label: '영업 상품',
-      icon: businessIcons.script,
-      width: 'w-32',
-      render: (value: string, record: Lead, searchQuery?: string) => (
-        <div className="text-sm text-text-secondary truncate">
-          {highlightText(value || '미분류', searchQuery || '')}
-        </div>
-      )
-    },
-    {
-      key: 'data_source',
-      label: 'DB 출처',
-      icon: businessIcons.company,
-      width: 'w-40',
-      render: (value: string, record: Lead, searchQuery?: string) => (
-        <div>
-          <div className="text-sm text-text-primary truncate font-medium">
-            {highlightText(value, searchQuery || '')}
-          </div>
-          <div className="text-xs text-text-tertiary truncate">
-            {highlightText(record.batch_name, searchQuery || '')}
-          </div>
-        </div>
-      )
-    },
-    {
-      key: 'created_at',
-      label: '등록일',
-      icon: businessIcons.date,
-      width: 'w-28',
-      render: (value: string) => (
-        <div className="text-sm text-text-tertiary">
-          {new Date(value).toLocaleDateString('ko-KR', { 
-            month: 'numeric', 
-            day: 'numeric' 
-          })}
-        </div>
-      )
+  // 등급별 배지 렌더링 함수
+  const renderGradeBadge = (grade?: any) => {
+    if (!grade) {
+      return (
+        <span className="px-1.5 py-0.5 rounded text-xs bg-bg-secondary text-text-tertiary whitespace-nowrap">
+          미분류
+        </span>
+      );
     }
-  ];
 
-  // 재배정용 칼럼 정의 (전화번호 마스킹 적용)
-  const reassignmentColumns = [
-    {
-      key: 'lead_info',
-      label: '고객 정보',
-      icon: businessIcons.phone,
-      width: 'w-48',
-      render: (value: any, record: Assignment) => (
-        <div>
-          <div className="font-medium text-text-primary">
-            {record.lead?.name || record.lead?.contact_name || '고객명 없음'}
-          </div>
-          <div className="text-sm text-text-secondary flex items-center">
-            <businessIcons.phone className="w-3 h-3 mr-1" />
-            {maskPhoneNumber(record.lead?.phone || '')}
-          </div>
-        </div>
-      )
-    },
-    {
-      key: 'data_source',
-      label: 'DB 출처',
-      icon: businessIcons.company,
-      width: 'w-32',
-      render: (value: any, record: Assignment) => (
-        <div className="flex items-center space-x-1">
-          <businessIcons.company className="w-3 h-3 text-text-tertiary flex-shrink-0" />
-          <span className="text-sm text-text-primary truncate">{record.lead?.data_source || '출처 없음'}</span>
-        </div>
-      )
-    },
-    {
-      key: 'contact_script',
-      label: '영업 상품',
-      icon: businessIcons.script,
-      width: 'w-32',
-      render: (value: any, record: Assignment) => (
-        <div className="text-sm text-text-secondary truncate">
-          {record.lead?.contact_script || '미분류'}
-        </div>
-      )
-    },
-    {
-      key: 'assigned_at',
-      label: '배정일',
-      icon: businessIcons.date,
-      width: 'w-28',
-      render: (value: string) => (
-        <div className="flex items-center space-x-1">
-          <businessIcons.date className="w-3 h-3 text-text-tertiary flex-shrink-0" />
-          <span className="text-sm text-text-primary">
-            {new Date(value).toLocaleDateString('ko-KR', { 
-              month: 'numeric', 
-              day: 'numeric' 
-            })}
-          </span>
-        </div>
-      )
-    }
-  ];
+    const gradeOption = gradeOptions.find(g => g.value === grade.grade);
+    return (
+      <span 
+        className="px-1.5 py-0.5 rounded text-xs text-white font-medium whitespace-nowrap"
+        style={{ backgroundColor: gradeOption?.color || grade.grade_color || '#6b7280' }}
+      >
+        {grade.grade}
+      </span>
+    );
+  };
 
   // 전체 DB 고객 수 로드 함수
   const loadTotalLeadsCount = async () => {
     try {
-      const { count } = await supabase
-        .from('lead_pool')
-        .select('*', { count: 'exact', head: true });
+      // 배치 처리로 전체 데이터 가져오기
+      let allLeads: any[] = [];
+      let from = 0;
+      const batchSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data: batch } = await supabase
+          .from('lead_pool')
+          .select('id', { count: 'exact' })
+          .range(from, from + batchSize - 1);
+        
+        if (batch && batch.length > 0) {
+          allLeads = allLeads.concat(batch);
+          from += batchSize;
+          
+          if (batch.length < batchSize) {
+            hasMore = false;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
       
-      setTotalLeadsInDB(count || 0);
+      setTotalLeadsInDB(allLeads.length);
     } catch (error) {
       console.error('전체 고객 수 조회 실패:', error);
+    }
+  };
+
+  // 부서 목록 로드
+  const loadDepartments = async () => {
+    try {
+      const { data: departmentData, error } = await supabase
+        .from('users')
+        .select('department')
+        .eq('role', 'counselor')
+        .eq('is_active', true)
+        .not('department', 'is', null);
+
+      if (error) throw error;
+
+      const uniqueDepartments = [...new Set(departmentData?.map(d => d.department).filter(Boolean))] as string[];
+      setDepartments(uniqueDepartments.sort());
+    } catch (error) {
+      console.error('부서 목록 로드 실패:', error);
     }
   };
 
@@ -270,11 +278,11 @@ function AssignmentsPageContent() {
         .select('*')
         .eq('role', 'counselor')
         .eq('is_active', true)
+        .order('department', { ascending: true })
         .order('full_name', { ascending: true });
 
       if (counselorsError) throw counselorsError;
 
-      // 각 영업사원의 배정 통계 조회
       const counselorsWithStats = await Promise.all(
         (counselorsData || []).map(async (counselor) => {
           const { count: activeCount } = await supabase
@@ -299,10 +307,10 @@ function AssignmentsPageContent() {
     }
   };
 
-  // 사용 가능한 고객 로드
+  // 사용 가능한 고객 로드 - 배치 처리로 수정
   const loadAvailableLeads = async (page: number = 1, searchQuery: string = '') => {
     try {
-      console.log(`=== 고객 로드: 페이지 ${page} ===`);
+      console.log('=== 배정 가능 고객 로드 (배치 처리) ===');
       
       const startRange = (page - 1) * itemsPerPage;
       const endRange = startRange + itemsPerPage - 1;
@@ -311,53 +319,52 @@ function AssignmentsPageContent() {
         .from('lead_pool')
         .select(`
           id, phone, name, contact_name, data_source, contact_script, 
-          created_at, upload_batch_id, status, data_date
+          created_at, upload_batch_id, status, data_date, real_name
         `, { count: 'exact' })
         .eq('status', 'available')
-        .order('created_at', { ascending: false })
-        .range(startRange, endRange);
+        .order('created_at', { ascending: false });
 
       if (searchQuery.trim()) {
-        query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,data_source.ilike.%${searchQuery}%`);
+        query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,data_source.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%`);
       }
+
+      // 페이지네이션 적용
+      query = query.range(startRange, endRange);
 
       const { data: leadsData, error: leadsError, count } = await query;
 
       if (leadsError) throw leadsError;
 
-      const leadsWithBatch = await Promise.all(
-        (leadsData || []).map(async (lead) => {
-          let batchName = 'Unknown Batch';
-          
-          if (lead.upload_batch_id) {
-            try {
-              const { data: batch } = await supabase
-                .from('upload_batches')
-                .select('file_name')
-                .eq('id', lead.upload_batch_id)
-                .single();
-              
-              if (batch) {
-                batchName = batch.file_name;
-              }
-            } catch (error) {
-              console.warn('배치 정보 조회 실패:', error);
-            }
-          }
-          
-          return {
-            ...lead,
-            batch_name: batchName
-          };
-        })
-      );
+      // 배치 ID들을 한 번에 조회
+      const uniqueBatchIds = [...new Set(leadsData?.map(lead => lead.upload_batch_id).filter(Boolean))] as string[];
+      
+      let batchMap: Record<string, string> = {};
+      if (uniqueBatchIds.length > 0) {
+        const { data: batchesData } = await supabase
+          .from('upload_batches')
+          .select('id, file_name')
+          .in('id', uniqueBatchIds);
+        
+        if (batchesData) {
+          batchMap = batchesData.reduce((acc, batch) => {
+            acc[batch.id] = batch.file_name;
+            return acc;
+          }, {} as Record<string, string>);
+        }
+      }
+
+      // 배치 정보를 매핑
+      const leadsWithBatch = (leadsData || []).map(lead => ({
+        ...lead,
+        batch_name: lead.upload_batch_id ? (batchMap[lead.upload_batch_id] || 'Unknown Batch') : 'No Batch'
+      }));
 
       setAvailableLeads(leadsWithBatch);
       setTotalCount(count || 0);
       setTotalPages(Math.ceil((count || 0) / itemsPerPage));
       setCurrentPage(page);
 
-      console.log(`페이지 ${page}: ${leadsWithBatch.length}개 로드, 전체: ${count}개`);
+      console.log(`페이지 ${page}: ${leadsWithBatch.length}개 로드, 총: ${count}개`);
 
     } catch (error) {
       console.error('고객 로드 실패:', error);
@@ -365,7 +372,7 @@ function AssignmentsPageContent() {
     }
   };
 
-  // 배정 실행
+  // 배정 실행 - 배치 처리로 최적화
   const handleAssign = async () => {
     if (!selectedCounselor || selectedLeads.length === 0) {
       toast.warning('선택 확인', '영업사원과 고객을 선택해주세요.');
@@ -381,9 +388,35 @@ function AssignmentsPageContent() {
     try {
       const counselorName = counselors.find(c => c.id === selectedCounselor)?.full_name;
       
-      for (const leadId of selectedLeads) {
-        await leadAssignmentService.assign(leadId, selectedCounselor, user.id);
-      }
+      console.log(`=== 배치 배정 시작: ${selectedLeads.length}개 ===`);
+      const startTime = Date.now();
+
+      // 배치 처리: 한번에 모든 배정 레코드 생성
+      const assignmentRecords = selectedLeads.map(leadId => ({
+        lead_id: leadId,
+        counselor_id: selectedCounselor,
+        assigned_by: user.id,
+        assigned_at: new Date().toISOString(),
+        status: 'active'
+      }));
+
+      // 1. 배정 레코드 일괄 생성
+      const { error: assignError } = await supabase
+        .from('lead_assignments')
+        .insert(assignmentRecords);
+
+      if (assignError) throw assignError;
+
+      // 2. 고객 상태 일괄 업데이트
+      const { error: updateError } = await supabase
+        .from('lead_pool')
+        .update({ status: 'assigned' })
+        .in('id', selectedLeads);
+
+      if (updateError) throw updateError;
+
+      const endTime = Date.now();
+      console.log(`배치 배정 완료: ${endTime - startTime}ms`);
 
       toast.success(
         '고객 배정 완료', 
@@ -397,9 +430,10 @@ function AssignmentsPageContent() {
       );
       
       setSelectedLeads([]);
+      setSelectedDepartment('');
       setSelectedCounselor('');
       
-      await loadAvailableLeads(currentPage);
+      await loadAvailableLeads(currentPage, debouncedSearchTerm);
       await loadCounselors();
       await loadTotalLeadsCount();
 
@@ -420,55 +454,84 @@ function AssignmentsPageContent() {
     }
   };
 
-  // 특정 영업사원의 배정 목록 로드 (페이지네이션 추가)
-  const loadCounselorAssignments = async (counselorId: string, page: number = 1) => {
+  // 특정 영업사원의 배정 목록 로드 - admin_leads_view 사용
+  const loadCounselorAssignments = async (counselorId: string, page: number = 1, searchQuery: string = '') => {
     if (!counselorId) {
       setCounselorAssignments([]);
       setReassignTotalCount(0);
-      setReassignTotalPages(0);
       return;
     }
 
     setLoadingCounselorData(true);
     try {
-      console.log(`=== 영업사원 ${counselorId}의 배정 목록 로드 (페이지 ${page}) ===`);
+      console.log(`=== 영업사원 ${counselorId}의 배정 목록 로드 (뷰 기반) ===`);
       
       const startRange = (page - 1) * reassignItemsPerPage;
       const endRange = startRange + reassignItemsPerPage - 1;
-      
-      const { data: assignmentsData, error: assignmentsError, count } = await supabase
-        .from('lead_assignments')
+
+      let query = supabase
+        .from('admin_leads_view')
         .select('*', { count: 'exact' })
         .eq('counselor_id', counselorId)
-        .eq('status', 'active')
-        .order('assigned_at', { ascending: false })
-        .range(startRange, endRange);
+        .not('assignment_id', 'is', null)
+        .order('assigned_at', { ascending: false });
 
-      if (assignmentsError) throw assignmentsError;
+      // 계약 상태 필터
+      if (reassignFilters.contractStatus !== 'all') {
+        if (reassignFilters.contractStatus === '미분류') {
+          query = query.or('additional_data.is.null,additional_data.not.cs.{"grade"}');
+        } else {
+          query = query.contains('additional_data', { grade: reassignFilters.contractStatus });
+        }
+      }
 
-      console.log(`영업사원 배정 목록: ${assignmentsData?.length || 0}개 (페이지 ${page})`);
+      // 검색어 적용
+      if (searchQuery.trim()) {
+        query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%,actual_customer_name.ilike.%${searchQuery}%`);
+      }
 
-      const enrichedAssignments = await Promise.all(
-        (assignmentsData || []).map(async (assignment) => {
-          const { data: leadData } = await supabase
-            .from('lead_pool')
-            .select('id, phone, name, contact_name, data_source, contact_script')
-            .eq('id', assignment.lead_id)
-            .single();
+      // 페이지네이션 적용
+      query = query.range(startRange, endRange);
 
-          const { data: counselorData } = await supabase
-            .from('users')
-            .select('id, full_name, email')
-            .eq('id', assignment.counselor_id)
-            .single();
+      const { data: viewData, error, count } = await query;
 
-          return {
-            ...assignment,
-            lead: leadData || { id: assignment.lead_id, phone: '알 수 없음', name: '알 수 없음', contact_name: '알 수 없음', data_source: '알 수 없음' },
-            counselor: counselorData || { id: assignment.counselor_id, full_name: '알 수 없음', email: '알 수 없음' }
-          };
-        })
-      );
+      if (error) throw error;
+
+      console.log(`영업사원 배정 뷰: ${viewData?.length || 0}개 (페이지 ${page})`);
+
+      // 뷰 데이터를 Assignment 형태로 변환
+      const enrichedAssignments = (viewData || []).map(lead => ({
+        id: lead.assignment_id || lead.id,
+        lead_id: lead.id,
+        counselor_id: lead.counselor_id,
+        assigned_at: lead.assigned_at,
+        status: 'active',
+        lead: {
+          ...lead,
+          // 추가 필드들 매핑
+          customer_grade: (() => {
+            if (lead.additional_data) {
+              const additionalData = typeof lead.additional_data === 'string' 
+                ? JSON.parse(lead.additional_data) 
+                : lead.additional_data;
+              
+              if (additionalData && additionalData.grade) {
+                return {
+                  grade: additionalData.grade,
+                  grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280'
+                };
+              }
+            }
+            return undefined;
+          })()
+        },
+        counselor: {
+          id: lead.counselor_id,
+          full_name: lead.counselor_name || '알 수 없음',
+          email: '',
+          department: ''
+        }
+      }));
 
       setCounselorAssignments(enrichedAssignments);
       setReassignTotalCount(count || 0);
@@ -485,7 +548,7 @@ function AssignmentsPageContent() {
     }
   };
 
-  // 재배정 실행
+  // 재배정 실행 - 배치 처리로 최적화
   const handleReassign = async () => {
     if (!newCounselorForReassign || selectedAssignments.length === 0) {
       toast.warning('선택 확인', '새로운 영업사원과 재배정할 고객을 선택해주세요.');
@@ -499,19 +562,40 @@ function AssignmentsPageContent() {
 
     setActionLoading(true);
     try {
-      console.log(`=== 재배정 실행: ${selectedAssignments.length}개 ===`);
+      console.log(`=== 배치 재배정 시작: ${selectedAssignments.length}개 ===`);
+      const startTime = Date.now();
 
-      for (const assignmentId of selectedAssignments) {
-        await supabase
-          .from('lead_assignments')
-          .delete()
-          .eq('id', assignmentId);
-
+      // 1. 기존 배정 레코드들에서 lead_id 추출
+      const leadIds = selectedAssignments.map(assignmentId => {
         const assignment = counselorAssignments.find(a => a.id === assignmentId);
-        if (assignment) {
-          await leadAssignmentService.assign(assignment.lead_id, newCounselorForReassign, user.id);
-        }
-      }
+        return assignment?.lead_id;
+      }).filter(Boolean);
+
+      // 2. 기존 배정 레코드 일괄 삭제
+      const { error: deleteError } = await supabase
+        .from('lead_assignments')
+        .delete()
+        .in('id', selectedAssignments);
+
+      if (deleteError) throw deleteError;
+
+      // 3. 새로운 배정 레코드 일괄 생성
+      const newAssignmentRecords = leadIds.map(leadId => ({
+        lead_id: leadId,
+        counselor_id: newCounselorForReassign,
+        assigned_by: user.id,
+        assigned_at: new Date().toISOString(),
+        status: 'active'
+      }));
+
+      const { error: insertError } = await supabase
+        .from('lead_assignments')
+        .insert(newAssignmentRecords);
+
+      if (insertError) throw insertError;
+
+      const endTime = Date.now();
+      console.log(`배치 재배정 완료: ${endTime - startTime}ms`);
 
       const oldCounselor = counselors.find(c => c.id === selectedCounselorForView)?.full_name;
       const newCounselor = counselors.find(c => c.id === newCounselorForReassign)?.full_name;
@@ -527,9 +611,10 @@ function AssignmentsPageContent() {
         }
       );
       
-      await loadCounselorAssignments(selectedCounselorForView, reassignPage);
+      await loadCounselorAssignments(selectedCounselorForView, reassignPage, debouncedReassignSearchTerm);
       await loadCounselors();
       setSelectedAssignments([]);
+      setNewDepartmentForReassign('');
       setNewCounselorForReassign('');
 
     } catch (error) {
@@ -549,21 +634,12 @@ function AssignmentsPageContent() {
     }
   };
 
-  // 배정 선택/해제
   const toggleAssignmentSelection = (assignmentId: string) => {
     setSelectedAssignments(prev => 
       prev.includes(assignmentId) 
         ? prev.filter(id => id !== assignmentId)
         : [...prev, assignmentId]
     );
-  };
-
-  const toggleAllAssignments = () => {
-    if (selectedAssignments.length === counselorAssignments.length) {
-      setSelectedAssignments([]);
-    } else {
-      setSelectedAssignments(counselorAssignments.map(assignment => assignment.id));
-    }
   };
 
   const toggleLeadSelection = (leadId: string) => {
@@ -574,7 +650,8 @@ function AssignmentsPageContent() {
     );
   };
 
-  const toggleAllLeads = () => {
+  // 전체 선택/해제
+  const toggleSelectAllLeads = () => {
     if (selectedLeads.length === availableLeads.length) {
       setSelectedLeads([]);
     } else {
@@ -582,12 +659,35 @@ function AssignmentsPageContent() {
     }
   };
 
+  const toggleSelectAllAssignments = () => {
+    if (selectedAssignments.length === counselorAssignments.length) {
+      setSelectedAssignments([]);
+    } else {
+      setSelectedAssignments(counselorAssignments.map(assignment => assignment.id));
+    }
+  };
+
+  // 부서 선택시 해당 부서의 영업사원들로 필터링
+  const filteredCounselors = counselors.filter(counselor => 
+    !selectedDepartment || counselor.department === selectedDepartment
+  );
+
+  const filteredCounselorsForReassign = counselors.filter(counselor => 
+    (!newDepartmentForReassign || counselor.department === newDepartmentForReassign) &&
+    counselor.id !== selectedCounselorForView
+  );
+
+  const filteredCounselorsForView = counselors.filter(counselor =>
+    !reassignFilters.selectedDepartmentForView || counselor.department === reassignFilters.selectedDepartmentForView
+  );
+
   const loadData = async () => {
     setLoading(true);
     try {
       await Promise.all([
+        loadDepartments(),
         loadCounselors(),
-        loadAvailableLeads(currentPage),
+        loadAvailableLeads(1, ''),
         loadTotalLeadsCount()
       ]);
     } catch (error) {
@@ -604,56 +704,28 @@ function AssignmentsPageContent() {
 
   useEffect(() => {
     if (activeTab === 'assign') {
-      loadAvailableLeads(currentPage);
+      loadAvailableLeads(currentPage, debouncedSearchTerm);
     }
-  }, [activeTab]);
+  }, [activeTab, currentPage, debouncedSearchTerm]);
 
-  const PaginationComponent = ({ currentPage, totalPages, totalCount, onPageChange, itemsPerPage }) => {
-    const startItem = (currentPage - 1) * itemsPerPage + 1;
-    const endItem = Math.min(currentPage * itemsPerPage, totalCount);
+  useEffect(() => {
+    if (selectedCounselorForView) {
+      loadCounselorAssignments(selectedCounselorForView, reassignPage, debouncedReassignSearchTerm);
+    }
+  }, [selectedCounselorForView, reassignPage, debouncedReassignSearchTerm, reassignFilters]);
 
-    return (
-      <div className="flex items-center justify-between px-4 py-3 bg-bg-primary border-t border-border-primary">
-        <div className="flex items-center text-sm text-text-secondary">
-          <span>
-            총 {totalCount.toLocaleString()}개 중 {startItem.toLocaleString()}-{endItem.toLocaleString()}개 표시
-          </span>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={() => onPageChange(currentPage - 1)}
-            disabled={currentPage <= 1}
-            className={designSystem.utils.cn(
-              "p-2 rounded-lg border",
-              currentPage <= 1
-                ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
-                : "bg-bg-primary text-text-primary hover:bg-bg-hover border-border-primary"
-            )}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          
-          <span className="px-3 py-2 text-sm text-text-primary">
-            {currentPage} / {totalPages}
-          </span>
-          
-          <button
-            onClick={() => onPageChange(currentPage + 1)}
-            disabled={currentPage >= totalPages}
-            className={designSystem.utils.cn(
-              "p-2 rounded-lg border",
-              currentPage >= totalPages
-                ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
-                : "bg-bg-primary text-text-primary hover:bg-bg-hover border-border-primary"
-            )}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    );
-  };
+  // 부서 변경시 영업사원 선택 초기화
+  useEffect(() => {
+    setSelectedCounselor('');
+  }, [selectedDepartment]);
+
+  useEffect(() => {
+    setNewCounselorForReassign('');
+  }, [newDepartmentForReassign]);
+
+  useEffect(() => {
+    setSelectedCounselorForView('');
+  }, [reassignFilters.selectedDepartmentForView]);
 
   if (loading) {
     return (
@@ -670,327 +742,847 @@ function AssignmentsPageContent() {
 
   return (
     <AdminLayout>
-      <div className="mb-8">
-        <h1 className={designSystem.components.typography.h2}>고객 배정 관리</h1>
-        <p className={designSystem.components.typography.bodySm}>
-          영업사원에게 고객을 배정하고 관리합니다.
-        </p>
-      </div>
-
-      {/* 탭 네비게이션 */}
-      <div className="mb-6">
-        <div className="border-b border-border-primary">
-          <nav className="-mb-px flex space-x-8">
-            <button
-              onClick={() => setActiveTab('assign')}
-              className={designSystem.utils.cn(
-                "py-2 px-1 border-b-2 font-medium text-sm",
-                activeTab === 'assign'
-                  ? "border-accent text-accent"
-                  : "border-transparent text-text-secondary hover:text-text-primary hover:border-border-secondary"
-              )}
-            >
-              신규 배정
-            </button>
-            <button
-              onClick={() => setActiveTab('manage')}
-              className={designSystem.utils.cn(
-                "py-2 px-1 border-b-2 font-medium text-sm",
-                activeTab === 'manage'
-                  ? "border-accent text-accent"
-                  : "border-transparent text-text-secondary hover:text-text-primary hover:border-border-secondary"
-              )}
-            >
-              재배정 관리
-            </button>
-          </nav>
+      <div className="p-6 max-w-7xl mx-auto">
+        {/* 헤더 */}
+        <div className="mb-8">
+          <h1 className={designSystem.components.typography.h2}>고객 배정 관리</h1>
+          <p className={designSystem.components.typography.bodySm}>
+            영업사원에게 고객을 배정하고 관리합니다.
+          </p>
         </div>
-      </div>
 
-      {activeTab === 'assign' ? (
-        <>
-          {/* 상단 통계 요약 */}
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
-            <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-text-secondary">전체 고객</p>
-                  <p className="text-2xl font-bold text-text-primary">{totalLeadsInDB.toLocaleString()}</p>
-                </div>
-                <businessIcons.analytics className="w-8 h-8 text-text-tertiary" />
-              </div>
-            </div>
-
-            <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-text-secondary">배정 대기</p>
-                  <p className="text-2xl font-bold text-text-primary">{totalCount.toLocaleString()}</p>
-                </div>
-                <businessIcons.contact className="w-8 h-8 text-text-tertiary" />
-              </div>
-            </div>
-
-            <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-text-secondary">활성 영업사원</p>
-                  <p className="text-2xl font-bold text-text-primary">{counselors.length}</p>
-                </div>
-                <businessIcons.team className="w-8 h-8 text-text-tertiary" />
-              </div>
-            </div>
-
-            <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-text-secondary">선택된 고객</p>
-                  <p className="text-2xl font-bold text-accent">{selectedLeads.length}</p>
-                </div>
-                <businessIcons.success className="w-8 h-8 text-accent" />
-              </div>
-            </div>
-
-            <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-text-secondary">배정된 고객</p>
-                  <p className="text-2xl font-bold text-text-primary">{counselors.reduce((sum, c) => sum + c.active_count, 0)}</p>
-                </div>
-                <businessIcons.assignment className="w-8 h-8 text-text-tertiary" />
-              </div>
-            </div>
+        {/* 탭 네비게이션 */}
+        <div className="mb-6">
+          <div className="border-b border-border-primary">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('assign')}
+                className={designSystem.utils.cn(
+                  "py-2 px-1 border-b-2 font-medium text-sm",
+                  activeTab === 'assign'
+                    ? "border-accent text-accent"
+                    : "border-transparent text-text-secondary hover:text-text-primary hover:border-border-secondary"
+                )}
+              >
+                신규 배정
+              </button>
+              <button
+                onClick={() => setActiveTab('manage')}
+                className={designSystem.utils.cn(
+                  "py-2 px-1 border-b-2 font-medium text-sm",
+                  activeTab === 'manage'
+                    ? "border-accent text-accent"
+                    : "border-transparent text-text-secondary hover:text-text-primary hover:border-border-secondary"
+                )}
+              >
+                재배정 관리
+              </button>
+            </nav>
           </div>
+        </div>
 
-          {/* 벌크 액션 바 */}
-          {selectedLeads.length > 0 && (
-            <div className="sticky top-0 bg-bg-primary border border-border-primary p-4 z-10 shadow-sm mb-6 rounded-lg">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-text-primary">
-                  {selectedLeads.length}개 고객 선택됨
+        {activeTab === 'assign' ? (
+          <>
+            {/* 상단 통계 요약 */}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
+              <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-text-secondary">전체 고객</p>
+                    <p className="text-2xl font-bold text-text-primary">{totalLeadsInDB.toLocaleString()}</p>
+                  </div>
+                  <businessIcons.analytics className="w-8 h-8 text-text-tertiary" />
+                </div>
+              </div>
+
+              <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-text-secondary">배정 대기</p>
+                    <p className="text-2xl font-bold text-text-primary">{totalCount.toLocaleString()}</p>
+                  </div>
+                  <businessIcons.contact className="w-8 h-8 text-text-tertiary" />
+                </div>
+              </div>
+
+              <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-text-secondary">활성 영업사원</p>
+                    <p className="text-2xl font-bold text-text-primary">{counselors.length}</p>
+                  </div>
+                  <businessIcons.team className="w-8 h-8 text-text-tertiary" />
+                </div>
+              </div>
+
+              <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-text-secondary">선택된 고객</p>
+                    <p className="text-2xl font-bold text-accent">{selectedLeads.length}</p>
+                  </div>
+                  <businessIcons.success className="w-8 h-8 text-accent" />
+                </div>
+              </div>
+
+              <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content)}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-text-secondary">배정된 고객</p>
+                    <p className="text-2xl font-bold text-text-primary">{counselors.reduce((sum, c) => sum + c.active_count, 0)}</p>
+                  </div>
+                  <businessIcons.assignment className="w-8 h-8 text-text-tertiary" />
+                </div>
+              </div>
+            </div>
+
+            {/* 벌크 액션 바 */}
+            {selectedLeads.length > 0 && (
+              <div className="sticky top-0 bg-bg-primary border border-border-primary p-3 z-10 shadow-sm mb-6 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-text-primary">
+                    {selectedLeads.length}개 고객 선택됨
+                  </span>
+                  
+                  <div className="flex items-center space-x-2">
+                    <select
+                      value={selectedDepartment}
+                      onChange={(e) => setSelectedDepartment(e.target.value)}
+                      className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
+                    >
+                      <option value="">부서 선택</option>
+                      {departments.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                    
+                    <select
+                      value={selectedCounselor}
+                      onChange={(e) => setSelectedCounselor(e.target.value)}
+                      disabled={!selectedDepartment}
+                      className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50"
+                    >
+                      <option value="">영업사원 선택</option>
+                      {filteredCounselors.map(counselor => (
+                        <option key={counselor.id} value={counselor.id}>
+                          {counselor.full_name} ({counselor.active_count}개)
+                        </option>
+                      ))}
+                    </select>
+                    
+                    <button
+                      onClick={handleAssign}
+                      disabled={!selectedCounselor || actionLoading}
+                      className={designSystem.utils.cn(
+                        "px-3 py-1.5 text-xs rounded font-medium transition-colors",
+                        !selectedCounselor || actionLoading
+                          ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
+                          : "bg-accent text-white hover:bg-accent/90"
+                      )}
+                    >
+                      {actionLoading ? (
+                        <RefreshCw className="w-3 h-3 animate-spin mr-1 inline" />
+                      ) : (
+                        <businessIcons.success className="w-3 h-3 mr-1 inline" />
+                      )}
+                      {selectedLeads.length}개 배정
+                    </button>
+                    
+                    <button
+                      onClick={() => setSelectedLeads([])}
+                      className="px-2 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                    >
+                      선택 해제
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 제목과 검색 영역 */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <businessIcons.contact className="w-3 h-3 text-accent" />
+                <h3 className="text-xs font-medium text-text-primary">배정 가능한 고객</h3>
+                <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
+                  전체 {totalCount.toLocaleString()}명 (페이지당 {itemsPerPage}명)
                 </span>
-                
-                <div className="flex items-center space-x-3">
+                {loading && (
+                  <span className="text-xs text-accent animate-pulse">로딩 중...</span>
+                )}
+              </div>
+              
+              <div className="relative">
+                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="전화번호, 고객명, DB출처로 검색..."
+                  className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+            </div>
+
+            {/* 고객 목록 테이블 */}
+            <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
+              {availableLeads.length > 0 ? (
+                <>
+                  <div className="overflow-auto" style={{ maxHeight: '65vh' }}>
+                    <table className="w-full table-fixed">
+                      <thead className="bg-bg-secondary sticky top-0 z-10">
+                        <tr>
+                          <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-8">
+                            <button
+                              onClick={toggleSelectAllLeads}
+                              className="flex items-center justify-center w-3 h-3 mx-auto"
+                            >
+                              {selectedLeads.length === availableLeads.length && availableLeads.length > 0 ? (
+                                <CheckSquare className="w-3 h-3 text-accent" />
+                              ) : (
+                                <Square className="w-3 h-3 text-text-tertiary" />
+                              )}
+                            </button>
+                          </th>
+                          <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <Phone className="w-3 h-3" />
+                              연락처
+                            </div>
+                          </th>
+                          <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <User className="w-3 h-3" />
+                              고객명
+                            </div>
+                          </th>
+                          <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <MessageSquare className="w-3 h-3" />
+                              관심분야
+                            </div>
+                          </th>
+                          <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <Building className="w-3 h-3" />
+                              DB 출처
+                            </div>
+                          </th>
+                          <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <FileText className="w-3 h-3" />
+                              배치명
+                            </div>
+                          </th>
+                          <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <Calendar className="w-3 h-3" />
+                              등록일
+                            </div>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {availableLeads.map((lead) => (
+                          <tr key={lead.id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
+                            {/* 선택 체크박스 */}
+                            <td className="py-1 px-1 text-center">
+                              <button
+                                onClick={() => toggleLeadSelection(lead.id)}
+                                className="flex items-center justify-center w-3 h-3 mx-auto"
+                              >
+                                {selectedLeads.includes(lead.id) ? (
+                                  <CheckSquare className="w-3 h-3 text-accent" />
+                                ) : (
+                                  <Square className="w-3 h-3 text-text-tertiary" />
+                                )}
+                              </button>
+                            </td>
+
+                            {/* 연락처 */}
+                            <td className="py-1 px-1 text-center">
+                              <div className="font-mono text-text-primary font-medium text-xs truncate">
+                                {highlightText(maskPhoneNumber(lead.phone), debouncedSearchTerm)}
+                              </div>
+                            </td>
+
+                            {/* 고객명 */}
+                            <td className="py-1 px-1 text-center">
+                              <div className="text-xs whitespace-nowrap truncate">
+                                {lead.real_name || lead.contact_name ? (
+                                  <span className="text-text-primary">{highlightText(lead.real_name || lead.contact_name, debouncedSearchTerm)}</span>
+                                ) : (
+                                  <span className="text-text-tertiary">미확인</span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* 관심분야 */}
+                            <td className="py-1 px-1 text-center relative">
+                              <div className="w-24 group mx-auto">
+                                {lead.contact_script ? (
+                                  <>
+                                    <div className="text-text-primary text-xs truncate cursor-help">
+                                      {lead.contact_script}
+                                    </div>
+                                    <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-10 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+                                      {lead.contact_script}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <span className="text-text-tertiary text-xs">미확인</span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* DB 출처 */}
+                            <td className="py-1 px-1 text-center">
+                              <div className="text-xs whitespace-nowrap truncate">
+                                <span className="text-text-primary font-medium">
+                                  {highlightText(lead.data_source, debouncedSearchTerm)}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* 배치명 */}
+                            <td className="py-1 px-1 text-center">
+                              <div className="text-xs whitespace-nowrap truncate">
+                                <span className="text-text-tertiary">
+                                  {lead.batch_name}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* 등록일 */}
+                            <td className="py-1 px-1 text-center">
+                              <span className="text-text-secondary text-xs whitespace-nowrap">
+                                {new Date(lead.created_at).toLocaleDateString('ko-KR', { 
+                                  month: '2-digit', 
+                                  day: '2-digit' 
+                                })}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 페이지네이션 */}
+                  {totalPages > 1 && (
+                    <div className="p-3 border-t border-border-primary bg-bg-secondary">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-text-secondary">
+                          총 {totalCount.toLocaleString()}개 중 {((currentPage - 1) * itemsPerPage + 1).toLocaleString()}-{Math.min(currentPage * itemsPerPage, totalCount).toLocaleString()}개 표시
+                        </div>
+                        
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setCurrentPage(1)}
+                            disabled={currentPage === 1}
+                            className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
+                          >
+                            첫페이지
+                          </button>
+                          
+                          <button
+                            onClick={() => setCurrentPage(currentPage - 1)}
+                            disabled={currentPage === 1}
+                            className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
+                          >
+                            <ChevronLeft className="w-3 h-3" />
+                          </button>
+                          
+                          <span className="px-2 py-1 text-xs text-white bg-accent rounded">
+                            {currentPage} / {totalPages}
+                          </span>
+                          
+                          <button
+                            onClick={() => setCurrentPage(currentPage + 1)}
+                            disabled={currentPage === totalPages}
+                            className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
+                          >
+                            <ChevronRight className="w-3 h-3" />
+                          </button>
+                          
+                          <button
+                            onClick={() => setCurrentPage(totalPages)}
+                            disabled={currentPage === totalPages}
+                            className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
+                          >
+                            마지막
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-12">
+                  <businessIcons.contact className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-text-primary mb-2">배정 가능한 고객이 없습니다</h3>
+                  <p className="text-text-secondary">관리자가 고객을 등록하면 여기에 표시됩니다.</p>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* 재배정 관리 헤더 */}
+            <div className="mb-6">
+              <h3 className={designSystem.components.typography.h4}>재배정 관리</h3>
+              <p className={designSystem.components.typography.bodySm}>
+                영업사원을 선택하여 해당 영업사원의 고객을 다른 영업사원에게 재배정할 수 있습니다.
+              </p>
+            </div>
+
+            {/* 필터 및 영업사원 선택 */}
+            <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content, 'mb-6')}>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-text-primary mb-1">부서 선택</label>
                   <select
-                    value={selectedCounselor}
-                    onChange={(e) => setSelectedCounselor(e.target.value)}
-                    className="px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary"
+                    value={reassignFilters.selectedDepartmentForView}
+                    onChange={(e) => setReassignFilters(prev => ({ ...prev, selectedDepartmentForView: e.target.value }))}
+                    className="w-full px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
                   >
-                    <option value="">영업사원 선택</option>
-                    {counselors.map(counselor => (
+                    <option value="">전체 부서</option>
+                    {departments.map(dept => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-medium text-text-primary mb-1">영업사원 선택</label>
+                  <select
+                    value={selectedCounselorForView}
+                    onChange={(e) => {
+                      setSelectedCounselorForView(e.target.value);
+                      setReassignPage(1);
+                      setReassignSearchTerm('');
+                    }}
+                    className="w-full px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
+                    disabled={loadingCounselorData}
+                  >
+                    <option value="">영업사원을 선택하세요</option>
+                    {filteredCounselorsForView.map(counselor => (
                       <option key={counselor.id} value={counselor.id}>
-                        {counselor.full_name} (활성: {counselor.active_count}개)
+                        {counselor.full_name} ({counselor.active_count}개)
                       </option>
                     ))}
                   </select>
-                  
-                  <button
-                    onClick={handleAssign}
-                    disabled={!selectedCounselor || actionLoading}
-                    className={designSystem.components.button.primary}
-                  >
-                    {actionLoading ? (
-                      <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <businessIcons.success className="w-4 h-4 mr-2" />
-                    )}
-                    {selectedLeads.length}개 배정
-                  </button>
-                  
-                  <button
-                    onClick={() => setSelectedLeads([])}
-                    className={designSystem.components.button.secondary}
-                  >
-                    선택 해제
-                  </button>
-
-                  <button
-                    onClick={toggleAllLeads}
-                    className={designSystem.components.button.secondary}
-                  >
-                    {selectedLeads.length === availableLeads.length ? '전체 해제' : '전체 선택'}
-                  </button>
                 </div>
-              </div>
-            </div>
-          )}
 
-          {/* 고객 목록 테이블 */}
-          <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
-            <SmartTable
-              data={availableLeads}
-              columns={leadColumns}
-              selectedItems={selectedLeads}
-              onToggleSelection={toggleLeadSelection}
-              getItemId={(lead) => lead.id}
-              searchPlaceholder="전화번호, 고객명, DB출처로 검색..."
-              emptyMessage="배정 가능한 고객이 없습니다."
-              height="calc(100vh - 500px)"
-            />
-            
-            <PaginationComponent
-              currentPage={currentPage}
-              totalPages={totalPages}
-              totalCount={totalCount}
-              onPageChange={(page) => loadAvailableLeads(page)}
-              itemsPerPage={itemsPerPage}
-            />
-          </div>
-        </>
-      ) : (
-        <>
-          {/* 재배정 관리 헤더 */}
-          <div className="mb-6">
-            <h3 className={designSystem.components.typography.h4}>재배정 관리</h3>
-            <p className={designSystem.components.typography.bodySm}>
-              영업사원을 선택하여 해당 영업사원의 고객을 다른 영업사원에게 재배정할 수 있습니다.
-            </p>
-          </div>
-
-          {/* 영업사원 선택 */}
-          <div className={designSystem.utils.cn(designSystem.components.card.base, designSystem.components.card.content, 'mb-6')}>
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  영업사원 선택
-                </label>
-                <select
-                  value={selectedCounselorForView}
-                  onChange={(e) => {
-                    setSelectedCounselorForView(e.target.value);
-                    setReassignPage(1);
-                    loadCounselorAssignments(e.target.value, 1);
-                  }}
-                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary"
-                  disabled={loadingCounselorData}
-                >
-                  <option value="">영업사원을 선택하세요</option>
-                  {counselors.map(counselor => (
-                    <option key={counselor.id} value={counselor.id}>
-                      {counselor.full_name} ({counselor.active_count}개 배정)
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              {selectedCounselorForView && (
-                <div className="flex items-center gap-4 pt-6">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-accent">{reassignTotalCount}</div>
-                    <div className="text-xs text-text-secondary">총 배정</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-text-primary">{selectedAssignments.length}</div>
-                    <div className="text-xs text-text-secondary">선택됨</div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 재배정 액션 바 */}
-          {selectedAssignments.length > 0 && (
-            <div className="sticky top-0 bg-bg-primary border border-border-primary p-4 z-10 shadow-sm mb-6 rounded-lg">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-text-primary">
-                  {selectedAssignments.length}개 고객 선택됨
-                </span>
-                
-                <div className="flex items-center space-x-3">
+                <div>
+                  <label className="block text-xs font-medium text-text-primary mb-1">계약상태 필터</label>
                   <select
-                    value={newCounselorForReassign}
-                    onChange={(e) => setNewCounselorForReassign(e.target.value)}
-                    className="px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary"
+                    value={reassignFilters.contractStatus}
+                    onChange={(e) => setReassignFilters(prev => ({ ...prev, contractStatus: e.target.value }))}
+                    className="w-full px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
                   >
-                    <option value="">새 영업사원 선택</option>
-                    {counselors
-                      .filter(c => c.id !== selectedCounselorForView)
-                      .map(counselor => (
+                    <option value="all">전체</option>
+                    {gradeOptions.map(grade => (
+                      <option key={grade.value} value={grade.value}>
+                        {grade.label}
+                      </option>
+                    ))}
+                    <option value="미분류">미분류</option>
+                  </select>
+                </div>
+                
+                {selectedCounselorForView && (
+                  <div className="flex items-center gap-2 pt-4">
+                    <div className="text-center">
+                      <div className="text-lg font-bold text-accent">{reassignTotalCount}</div>
+                      <div className="text-xs text-text-secondary">총 배정</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-lg font-bold text-text-primary">{selectedAssignments.length}</div>
+                      <div className="text-xs text-text-secondary">선택됨</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 재배정 액션 바 */}
+            {selectedAssignments.length > 0 && (
+              <div className="sticky top-0 bg-bg-primary border border-border-primary p-3 z-10 shadow-sm mb-6 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-text-primary">
+                    {selectedAssignments.length}개 고객 선택됨
+                  </span>
+                  
+                  <div className="flex items-center space-x-2">
+                    <select
+                      value={newDepartmentForReassign}
+                      onChange={(e) => setNewDepartmentForReassign(e.target.value)}
+                      className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
+                    >
+                      <option value="">부서 선택</option>
+                      {departments.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                    
+                    <select
+                      value={newCounselorForReassign}
+                      onChange={(e) => setNewCounselorForReassign(e.target.value)}
+                      disabled={!newDepartmentForReassign}
+                      className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50"
+                    >
+                      <option value="">새 영업사원 선택</option>
+                      {filteredCounselorsForReassign.map(counselor => (
                         <option key={counselor.id} value={counselor.id}>
-                          {counselor.full_name} (현재: {counselor.active_count}개)
+                          {counselor.full_name} ({counselor.active_count}개)
                         </option>
                       ))}
-                  </select>
-                  
-                  <button
-                    onClick={handleReassign}
-                    disabled={!newCounselorForReassign || actionLoading}
-                    className={designSystem.components.button.primary}
-                  >
-                    {actionLoading ? (
-                      <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                    )}
-                    {selectedAssignments.length}개 재배정
-                  </button>
-                  
-                  <button
-                    onClick={() => setSelectedAssignments([])}
-                    className={designSystem.components.button.secondary}
-                  >
-                    선택 해제
-                  </button>
-
-                  <button
-                    onClick={toggleAllAssignments}
-                    className={designSystem.components.button.secondary}
-                  >
-                    {selectedAssignments.length === counselorAssignments.length ? '전체 해제' : '전체 선택'}
-                  </button>
+                    </select>
+                    
+                    <button
+                      onClick={handleReassign}
+                      disabled={!newCounselorForReassign || actionLoading}
+                      className={designSystem.utils.cn(
+                        "px-3 py-1.5 text-xs rounded font-medium transition-colors",
+                        !newCounselorForReassign || actionLoading
+                          ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
+                          : "bg-accent text-white hover:bg-accent/90"
+                      )}
+                    >
+                      {actionLoading ? (
+                        <RefreshCw className="w-3 h-3 animate-spin mr-1 inline" />
+                      ) : (
+                        <RefreshCw className="w-3 h-3 mr-1 inline" />
+                      )}
+                      {selectedAssignments.length}개 재배정
+                    </button>
+                    
+                    <button
+                      onClick={() => setSelectedAssignments([])}
+                      className="px-2 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                    >
+                      선택 해제
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* 영업사원별 고객 목록 */}
-          {selectedCounselorForView ? (
-            <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
-              {loadingCounselorData ? (
-                <div className="p-8 text-center">
+            {/* 영업사원별 고객 목록 */}
+            {selectedCounselorForView ? (
+              loadingCounselorData ? (
+                <div className="bg-bg-primary border border-border-primary rounded-lg p-8 text-center">
                   <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-4 text-accent" />
                   <p className="text-text-secondary">영업사원의 배정 목록을 불러오는 중...</p>
                 </div>
-              ) : counselorAssignments.length > 0 ? (
-                <>
-                  <SmartTable
-                    data={counselorAssignments}
-                    columns={reassignmentColumns}
-                    selectedItems={selectedAssignments}
-                    onToggleSelection={toggleAssignmentSelection}
-                    getItemId={(assignment) => assignment.id}
-                    searchPlaceholder="고객명, 전화번호로 검색..."
-                    emptyMessage="해당 영업사원에게 배정된 고객이 없습니다."
-                    height="calc(100vh - 500px)"
-                  />
-                  
-                  <PaginationComponent
-                    currentPage={reassignPage}
-                    totalPages={reassignTotalPages}
-                    totalCount={reassignTotalCount}
-                    onPageChange={(page) => loadCounselorAssignments(selectedCounselorForView, page)}
-                    itemsPerPage={reassignItemsPerPage}
-                  />
-                </>
               ) : (
-                <div className="p-8 text-center">
-                  <div className="text-6xl mb-4">📋</div>
-                  <p className="text-text-secondary mb-2">해당 영업사원에게 배정된 고객이 없습니다.</p>
-                  <p className="text-sm text-text-tertiary">다른 영업사원을 선택해보세요.</p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="bg-bg-primary border border-border-primary rounded-lg p-12 text-center">
-              <div className="text-6xl mb-4">👆</div>
-              <h4 className={designSystem.components.typography.h5}>영업사원을 선택하세요</h4>
-              <p className="text-text-secondary mt-2">
-                위에서 영업사원을 선택하면 해당 영업사원의 배정된 고객 목록을 확인할 수 있습니다.
-              </p>
-            </div>
-          )}
-        </>
-      )}
+                <>
+                  {/* 제목과 검색 영역 */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <businessIcons.team className="w-3 h-3 text-accent" />
+                      <h3 className="text-xs font-medium text-text-primary">
+                        {counselors.find(c => c.id === selectedCounselorForView)?.full_name || ''}의 배정 고객
+                      </h3>
+                      <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
+                        전체 {reassignTotalCount.toLocaleString()}명 (페이지당 {reassignItemsPerPage}명)
+                      </span>
+                      {loadingCounselorData && (
+                        <span className="text-xs text-accent animate-pulse">로딩 중...</span>
+                      )}
+                    </div>
+                    
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
+                      <input
+                        type="text"
+                        value={reassignSearchTerm}
+                        onChange={(e) => setReassignSearchTerm(e.target.value)}
+                        placeholder="고객명, 전화번호로 검색..."
+                        className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
+                    {counselorAssignments.length > 0 ? (
+                      <>
+                        <div className="overflow-auto" style={{ maxHeight: '65vh' }}>
+                          <table className="w-full table-fixed">
+                            <thead className="bg-bg-secondary sticky top-0 z-10">
+                              <tr>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-8">
+                                  <button
+                                    onClick={toggleSelectAllAssignments}
+                                    className="flex items-center justify-center w-3 h-3 mx-auto"
+                                  >
+                                    {selectedAssignments.length === counselorAssignments.length && counselorAssignments.length > 0 ? (
+                                      <CheckSquare className="w-3 h-3 text-accent" />
+                                    ) : (
+                                      <Square className="w-3 h-3 text-text-tertiary" />
+                                    )}
+                                  </button>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <Calendar className="w-3 h-3" />
+                                    배정일
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <businessIcons.assignment className="w-3 h-3" />
+                                    등급
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <User className="w-3 h-3" />
+                                    고객명
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <Phone className="w-3 h-3" />
+                                    전화번호
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <MessageSquare className="w-3 h-3" />
+                                    관심분야
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-28">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <businessIcons.message className="w-3 h-3" />
+                                    상담메모
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-10">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <businessIcons.phone className="w-3 h-3" />
+                                    횟수
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <businessIcons.date className="w-3 h-3" />
+                                    최근상담
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <businessIcons.script className="w-3 h-3" />
+                                    계약금액
+                                  </div>
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {counselorAssignments.map((assignment) => (
+                                <tr key={assignment.id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
+                                  {/* 선택 체크박스 */}
+                                  <td className="py-1 px-1 text-center">
+                                    <button
+                                      onClick={() => toggleAssignmentSelection(assignment.id)}
+                                      className="flex items-center justify-center w-3 h-3 mx-auto"
+                                    >
+                                      {selectedAssignments.includes(assignment.id) ? (
+                                        <CheckSquare className="w-3 h-3 text-accent" />
+                                      ) : (
+                                        <Square className="w-3 h-3 text-text-tertiary" />
+                                      )}
+                                    </button>
+                                  </td>
+
+                                  {/* 배정일 */}
+                                  <td className="py-1 px-1 text-center">
+                                    <span className="text-text-secondary text-xs whitespace-nowrap">
+                                      {assignment.assigned_at ? 
+                                        new Date(assignment.assigned_at).toLocaleDateString('ko-KR', {
+                                          month: '2-digit',
+                                          day: '2-digit'
+                                        }) : 
+                                        new Date(assignment.lead.created_at).toLocaleDateString('ko-KR', {
+                                          month: '2-digit',
+                                          day: '2-digit'
+                                        })
+                                      }
+                                    </span>
+                                  </td>
+
+                                  {/* 회원등급 */}
+                                  <td className="py-1 px-1 text-center">
+                                    {renderGradeBadge(assignment.lead.customer_grade)}
+                                  </td>
+
+                                  {/* 고객명 */}
+                                  <td className="py-1 px-1 text-center">
+                                    <div className="text-xs whitespace-nowrap truncate">
+                                      {assignment.lead.actual_customer_name ? (
+                                        <span className="text-text-primary font-medium">{assignment.lead.actual_customer_name}</span>
+                                      ) : assignment.lead.real_name ? (
+                                        <span className="text-text-primary">{assignment.lead.real_name}</span>
+                                      ) : assignment.lead.contact_name ? (
+                                        <span className="text-text-secondary">{assignment.lead.contact_name}</span>
+                                      ) : (
+                                        <span className="text-text-tertiary">미확인</span>
+                                      )}
+                                    </div>
+                                  </td>
+
+                                  {/* 전화번호 */}
+                                  <td className="py-1 px-1 text-center">
+                                    <div className="font-mono text-text-primary font-medium text-xs truncate">
+                                      {maskPhoneNumber(assignment.lead?.phone || '')}
+                                    </div>
+                                  </td>
+
+                                  {/* 관심분야 */}
+                                  <td className="py-1 px-1 text-center relative">
+                                    <div className="w-24 group mx-auto">
+                                      {assignment.lead?.contact_script ? (
+                                        <>
+                                          <div className="text-text-primary text-xs truncate cursor-help px-1">
+                                            {assignment.lead.contact_script}
+                                          </div>
+                                          <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-20 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+                                            {assignment.lead.contact_script}
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <span className="text-text-tertiary text-xs">미확인</span>
+                                      )}
+                                    </div>
+                                  </td>
+
+                                  {/* 상담메모 */}
+                                  <td className="py-1 px-1 text-center relative">
+                                    <div className="w-28 group mx-auto">
+                                      {assignment.lead.counseling_memo ? (
+                                        <>
+                                          <div className="text-text-primary text-xs truncate cursor-help px-1">
+                                            {assignment.lead.counseling_memo}
+                                          </div>
+                                          <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-20 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+                                            {assignment.lead.counseling_memo}
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <span className="text-text-tertiary text-xs">-</span>
+                                      )}
+                                    </div>
+                                  </td>
+
+                                  {/* 상담 횟수 */}
+                                  <td className="py-1 px-1 text-center">
+                                    <span className="font-medium text-text-primary text-xs">
+                                      {assignment.lead.call_attempts || 0}
+                                    </span>
+                                  </td>
+
+                                  {/* 최근 상담 */}
+                                  <td className="py-1 px-1 text-center">
+                                    <span className="text-text-secondary text-xs whitespace-nowrap">
+                                      {assignment.lead.last_contact_date 
+                                        ? new Date(assignment.lead.last_contact_date).toLocaleDateString('ko-KR', {
+                                            month: '2-digit',
+                                            day: '2-digit'
+                                          })
+                                        : '-'
+                                      }
+                                    </span>
+                                  </td>
+
+                                  {/* 계약금액 */}
+                                  <td className="py-1 px-1 text-center">
+                                    {assignment.lead.contract_amount ? (
+                                      <span className="font-medium text-success text-xs">
+                                        {(assignment.lead.contract_amount / 10000).toFixed(0)}만
+                                      </span>
+                                    ) : (
+                                      <span className="text-text-tertiary text-xs">-</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* 페이지네이션 */}
+                        {reassignTotalPages > 1 && (
+                          <div className="p-3 border-t border-border-primary bg-bg-secondary">
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs text-text-secondary">
+                                총 {reassignTotalCount.toLocaleString()}개 중 {((reassignPage - 1) * reassignItemsPerPage + 1).toLocaleString()}-{Math.min(reassignPage * reassignItemsPerPage, reassignTotalCount).toLocaleString()}개 표시
+                              </div>
+                              
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => setReassignPage(1)}
+                                  disabled={reassignPage === 1}
+                                  className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
+                                >
+                                  첫페이지
+                                </button>
+                                
+                                <button
+                                  onClick={() => setReassignPage(reassignPage - 1)}
+                                  disabled={reassignPage === 1}
+                                  className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
+                                >
+                                  <ChevronLeft className="w-3 h-3" />
+                                </button>
+                                
+                                <span className="px-2 py-1 text-xs text-white bg-accent rounded">
+                                  {reassignPage} / {reassignTotalPages}
+                                </span>
+                                
+                                <button
+                                  onClick={() => setReassignPage(reassignPage + 1)}
+                                  disabled={reassignPage === reassignTotalPages}
+                                  className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
+                                >
+                                  <ChevronRight className="w-3 h-3" />
+                                </button>
+                                
+                                <button
+                                  onClick={() => setReassignPage(reassignTotalPages)}
+                                  disabled={reassignPage === reassignTotalPages}
+                                  className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
+                                >
+                                  마지막
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center py-12">
+                        <businessIcons.team className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
+                        <h3 className="text-lg font-medium text-text-primary mb-2">배정된 고객이 없습니다</h3>
+                        <p className="text-text-secondary">해당 영업사원에게 배정된 고객이 없습니다.</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )
+            ) : (
+              <div className="bg-bg-primary border border-border-primary rounded-lg p-12 text-center">
+                <div className="text-6xl mb-4">👆</div>
+                <h4 className={designSystem.components.typography.h5}>영업사원을 선택하세요</h4>
+                <p className="text-text-secondary mt-2">
+                  위에서 영업사원을 선택하면 해당 영업사원의 배정된 고객 목록을 확인할 수 있습니다.
+                </p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </AdminLayout>
   );
 }
