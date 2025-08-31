@@ -19,7 +19,8 @@ import {
 import { supabase } from '@/lib/supabase';
 import { 
   Shield, Users, Settings, Eye, EyeOff, Save, 
-  RefreshCw, UserPlus, Edit2, Trash2, CheckCircle, XCircle 
+  RefreshCw, UserPlus, Edit2, Trash2, CheckCircle, XCircle,
+  AlertTriangle
 } from 'lucide-react';
 
 function AdminSettingsContent() {
@@ -71,6 +72,10 @@ function AdminSettingsContent() {
     password: ''
   });
 
+  // 삭제 확인 모달 상태
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserWithPermissions | null>(null);
+
   // 데이터 로드
   useEffect(() => {
     loadUsersWithPermissions();
@@ -81,9 +86,15 @@ function AdminSettingsContent() {
     setLoading(true);
     try {
       const adminsWithPermissions = await permissionService.getAllAdminsWithPermissions();
-      setUsers(adminsWithPermissions);
       
-      toast.success('권한 정보 로드 완료', `${adminsWithPermissions.length}명의 관리자 권한을 불러왔습니다.`);
+      // 개발용 계정 필터링 (클라이언트에서 숨김)
+      const filteredAdmins = adminsWithPermissions.filter(admin => 
+        admin.email !== 'admin@company.com'
+      );
+      
+      setUsers(filteredAdmins);
+      
+      toast.success('권한 정보 로드 완료', `${filteredAdmins.length}명의 관리자 권한을 불러왔습니다.`);
     } catch (error: any) {
       console.error('권한 데이터 로드 실패:', error);
       toast.error('데이터 로드 실패', error.message, {
@@ -184,6 +195,106 @@ function AdminSettingsContent() {
           label: '다시 시도',
           onClick: () => handleCreateAdmin(e)
         }
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // 관리자 삭제 확인 모달 열기
+  const openDeleteModal = (userToDelete: UserWithPermissions) => {
+    setUserToDelete(userToDelete);
+    setShowDeleteModal(true);
+  };
+
+  // 관리자 계정 삭제
+  const handleDeleteAdmin = async () => {
+    if (!userToDelete || !user || !userProfile?.is_super_admin) {
+      toast.error('권한 오류', '최고관리자만 관리자 계정을 삭제할 수 있습니다.');
+      return;
+    }
+
+    // 자기 자신은 삭제 불가
+    if (userToDelete.id === user.id) {
+      toast.error('삭제 불가', '자기 자신의 계정은 삭제할 수 없습니다.');
+      return;
+    }
+
+    // 운영용 최고관리자는 삭제 불가 (개발용은 삭제 가능)
+    if (userToDelete.is_super_admin && userToDelete.email !== 'admin@company.com') {
+      toast.error('삭제 불가', '운영용 최고관리자 계정은 삭제할 수 없습니다.');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      // 1. 관련 데이터 확인 (삭제 전 경고)
+      const { data: assignments } = await supabase
+        .from('lead_assignments')
+        .select('id')
+        .eq('counselor_id', userToDelete.id)
+        .eq('status', 'active');
+
+      if (assignments && assignments.length > 0) {
+        toast.warning(
+          '활성 배정 존재',
+          `${userToDelete.full_name}님에게 ${assignments.length}개의 활성 리드가 배정되어 있습니다. 정말 삭제하시겠습니까?`
+        );
+      }
+
+      // 2. 권한 먼저 삭제
+      const { error: permError } = await supabase
+        .from('user_permissions')
+        .delete()
+        .eq('user_id', userToDelete.id);
+
+      if (permError) throw permError;
+
+      // 3. public.users에서 삭제
+      const { error: userError } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', userToDelete.id);
+
+      if (userError) throw userError;
+
+      // 4. auth.users에서도 삭제 (관리자 API 필요)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        try {
+          const response = await fetch('/api/admin/delete-user', {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.access_token}`
+            },
+            body: JSON.stringify({
+              user_id: userToDelete.id,
+              deleted_by: user.id
+            })
+          });
+
+          if (!response.ok) {
+            console.warn('auth.users 삭제 실패 (일부만 삭제됨)');
+          }
+        } catch (authError) {
+          console.warn('auth.users 삭제 API 호출 실패:', authError);
+        }
+      }
+
+      toast.success(
+        '관리자 삭제 완료',
+        `${userToDelete.full_name}님의 계정이 삭제되었습니다.`
+      );
+
+      setShowDeleteModal(false);
+      setUserToDelete(null);
+      await loadUsersWithPermissions();
+
+    } catch (error: any) {
+      console.error('관리자 삭제 실패:', error);
+      toast.error('삭제 실패', error.message, {
+        action: { label: '다시 시도', onClick: () => handleDeleteAdmin() }
       });
     } finally {
       setActionLoading(false);
@@ -334,7 +445,7 @@ function AdminSettingsContent() {
                   value={newAdminForm.email}
                   onChange={(e) => setNewAdminForm(prev => ({ ...prev, email: e.target.value }))}
                   className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-                  placeholder="manager@company.com"
+                  placeholder="manager@crm.com"
                   required
                 />
               </div>
@@ -478,21 +589,39 @@ function AdminSettingsContent() {
                 </div>
               </div>
               
-              {!admin.is_super_admin && admin.id !== user?.id && (
-                <button
-                  onClick={() => openPermissionModal(admin)}
-                  className={designSystem.components.button.secondary}
-                >
-                  <Edit2 className="w-4 h-4 mr-2" />
-                  권한 수정
-                </button>
-              )}
-              
-              {admin.id === user?.id && (
-                <span className="text-sm text-text-tertiary px-4 py-2">
-                  본인 계정
-                </span>
-              )}
+              <div className="flex gap-2 ml-4">
+                {!admin.is_super_admin && admin.id !== user?.id && (
+                  <>
+                    <button
+                      onClick={() => openPermissionModal(admin)}
+                      className={designSystem.components.button.secondary}
+                    >
+                      <Edit2 className="w-4 h-4 mr-2" />
+                      권한 수정
+                    </button>
+                    
+                    <button
+                      onClick={() => openDeleteModal(admin)}
+                      className="px-3 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      삭제
+                    </button>
+                  </>
+                )}
+                
+                {admin.id === user?.id && (
+                  <span className="text-sm text-text-tertiary px-4 py-2">
+                    본인 계정
+                  </span>
+                )}
+                
+                {admin.is_super_admin && admin.id !== user?.id && (
+                  <span className="text-sm text-text-tertiary px-4 py-2">
+                    최고관리자 (삭제 불가)
+                  </span>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -509,6 +638,70 @@ function AdminSettingsContent() {
           </div>
         )}
       </div>
+
+      {/* 삭제 확인 모달 */}
+      {showDeleteModal && userToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-medium text-text-primary">관리자 삭제</h3>
+                <p className="text-sm text-text-secondary">이 작업은 되돌릴 수 없습니다.</p>
+              </div>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-text-primary mb-2">
+                <strong>{userToDelete.full_name}</strong>님의 계정을 삭제하시겠습니까?
+              </p>
+              <p className="text-sm text-text-secondary">
+                이메일: {userToDelete.email}
+              </p>
+              
+              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-yellow-800 font-medium">삭제 시 영향</p>
+                    <ul className="text-xs text-yellow-700 mt-1 space-y-1">
+                      <li>• 해당 관리자가 생성한 데이터는 유지됩니다</li>
+                      <li>• 배정된 리드는 미배정 상태로 변경됩니다</li>
+                      <li>• 로그인이 불가능해집니다</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={handleDeleteAdmin}
+                disabled={actionLoading}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {actionLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                삭제
+              </button>
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setUserToDelete(null);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 권한 수정 모달 */}
       {showPermissionModal && selectedUser && (

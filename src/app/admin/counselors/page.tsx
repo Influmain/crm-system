@@ -802,7 +802,7 @@ function CounselorsPageContent() {
               </div>
               <p className="text-sm text-text-secondary">
                 관리자가 직접 로그인 ID를 설정하고 비밀번호를 지정하여 계정을 생성합니다. 
-                @crm 도메인 사용을 권장하며, 생성된 계정 정보를 영업사원에게 전달해주세요.
+                @crm.com 도메인 사용을 권장하며, 생성된 계정 정보를 영업사원에게 전달해주세요.
               </p>
             </div>
             
@@ -831,11 +831,11 @@ function CounselorsPageContent() {
                     english_id: e.target.value
                   }))}
                   className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-                  placeholder="kim01@crm, sales01@crm 등"
+                  placeholder="lee1234@crm.com 등"
                   required
                 />
                 <p className="text-xs text-text-tertiary mt-1">
-                  @crm 도메인 사용을 권장합니다. (예: kim01@crm, sales01@crm)
+                  @crm.com 도메인 사용 및 성+휴대폰번호 뒷자리를 권장합니다. (예: lee1234@crm.com)
                 </p>
               </div>
               

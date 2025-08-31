@@ -1,3 +1,4 @@
+// /pages/admin/upload/page.tsx
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -50,8 +51,8 @@ const DB_FIELDS = [
   { key: 'extra_info', label: '기타정보', required: false, icon: FileText },
 ];
 
-function CustomerUploadContent() {  // ✅ 함수명 수정: UploadPageContent → CustomerUploadContent
-  const { user, userProfile } = useAuth();
+function CustomerUploadContent() {
+  const { user, userProfile, loading: authLoading, hasPermission } = useAuth();
   const router = useRouter();
   const toast = useToastHelpers();
   
@@ -64,14 +65,32 @@ function CustomerUploadContent() {  // ✅ 함수명 수정: UploadPageContent �
   const [selectedDuplicates, setSelectedDuplicates] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 권한 체크 - 다른 페이지와 동일 패턴
-  useEffect(() => {
-    if (user && userProfile?.role !== 'admin') {
-      toast.error('접근 권한 없음', '관리자만 접근할 수 있습니다.')
-      router.push('/login')
-      return
-    }
-  }, [user, userProfile])
+  // 권한 체크 - 리드 페이지와 동일한 패턴 적용
+  if (!hasPermission('DATA_UPLOAD')) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center min-h-96">
+          <div className="max-w-md w-full text-center">
+            <div className="w-24 h-24 bg-bg-tertiary rounded-full flex items-center justify-center mx-auto mb-6">
+              <Upload className="w-12 h-12 text-text-tertiary" />
+            </div>
+            <h3 className="text-xl font-semibold text-text-primary mb-4">접근 권한이 없습니다</h3>
+            <p className="text-text-secondary mb-6">
+              고객 데이터 업로드 권한이 필요합니다.
+            </p>
+            <div className="p-4 bg-bg-secondary rounded-lg">
+              <p className="text-sm text-text-tertiary">
+                현재 계정: {userProfile?.full_name || '알 수 없음'} ({userProfile?.role || '알 수 없음'})
+              </p>
+              <p className="text-xs text-text-tertiary mt-1">
+                관리자에게 DATA_UPLOAD 권한을 요청하세요.
+              </p>
+            </div>
+          </div>
+        </div>
+      </AdminLayout>
+    );
+  }
 
   // 중복 데이터 선택/해제
   const toggleDuplicateSelection = (index: string) => {
@@ -1182,11 +1201,11 @@ function CustomerUploadContent() {  // ✅ 함수명 수정: UploadPageContent �
   );
 }
 
-// ✅ ProtectedRoute 수정 - 권한 체크 일관성
-export default function CustomerUploadPage() {  // ✅ 함수명 수정: UploadPage → CustomerUploadPage
+// 권한 기반 ProtectedRoute 설정 - 리드 페이지와 동일한 패턴
+export default function CustomerUploadPage() {
   return (
-    <ProtectedRoute requiredRole="admin">  {/* ✅ requiredPermission → requiredRole 통일 */}
-      <CustomerUploadContent />  {/* ✅ 함수명 일치 */}
+    <ProtectedRoute requiredPermission="upload">
+      <CustomerUploadContent />
     </ProtectedRoute>
   );
 }

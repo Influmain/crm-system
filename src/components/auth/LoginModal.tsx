@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useAuth } from '@/lib/auth/AuthContext'
 import { useToastHelpers } from '@/components/ui/Toast'
 import { designSystem } from '@/lib/design-system'
-import { RefreshCw, X, Shield, Users, LogIn } from 'lucide-react'
+import { RefreshCw, X, LogIn, AtSign } from 'lucide-react'
 
 interface LoginModalProps {
   isOpen: boolean
@@ -13,33 +13,48 @@ interface LoginModalProps {
 }
 
 export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalProps) {
-  const { signIn } = useAuth() // 🔧 useAuth 사용으로 통일
+  const { signIn } = useAuth()
   const toast = useToastHelpers()
   
-  const [email, setEmail] = useState('')
+  const [userId, setUserId] = useState('')
+  const [useCustomEmail, setUseCustomEmail] = useState(false)
+  const [customEmail, setCustomEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // 🔧 단순화된 로그인 처리 (중복 제거)
+  // 최종 이메일 계산
+  const getFinalEmail = () => {
+    if (useCustomEmail) {
+      return customEmail.trim()
+    }
+    return userId.trim() ? `${userId.trim()}@crm.com` : ''
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!email || !password) {
+    const finalEmail = getFinalEmail()
+    
+    if (!finalEmail || !password) {
       toast.warning('입력 오류', '이메일과 비밀번호를 모두 입력해주세요.')
+      return
+    }
+
+    // 이메일 형식 검증
+    if (useCustomEmail && !finalEmail.includes('@')) {
+      toast.warning('이메일 형식 오류', '올바른 이메일 형식을 입력해주세요.')
       return
     }
 
     setLoading(true)
     
     try {
-      // 🔧 AuthContext의 signIn 사용 (중복 로직 제거)
-      const { error } = await signIn(email.trim(), password)
+      const { error } = await signIn(finalEmail, password)
 
       if (error) {
         throw error
       }
 
-      // 🔧 단순한 성공 처리
       toast.success('로그인 성공', '환영합니다!')
       
       onClose()
@@ -75,37 +90,12 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
     }
   }
 
-  // 🔧 단순화된 빠른 로그인
-  const quickLogin = async (testEmail: string, testPassword: string, accountType: string) => {
-    setEmail(testEmail)
-    setPassword(testPassword)
-    setLoading(true)
-
-    toast.info(`${accountType} 계정 로그인`, '테스트 계정으로 자동 로그인 중입니다...')
-
-    setTimeout(async () => {
-      try {
-        const { error } = await signIn(testEmail, testPassword)
-        
-        if (error) throw error
-
-        toast.success(`${accountType} 로그인 성공`, `${testEmail}님으로 로그인되었습니다.`)
-        
-        onClose()
-        onSuccess?.()
-
-      } catch (error) {
-        toast.error('자동 로그인 실패', error.message || '테스트 계정 로그인에 실패했습니다.')
-      } finally {
-        setLoading(false)
-      }
-    }, 500)
-  }
-
   const handleClose = () => {
     if (!loading) {
-      setEmail('')
+      setUserId('')
+      setCustomEmail('')
       setPassword('')
+      setUseCustomEmail(false)
       onClose()
     }
   }
@@ -122,7 +112,7 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
               <LogIn className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-text-primary">CRM 로그인</h2>
+              <h2 className="text-lg font-semibold text-text-primary">로그인</h2>
               <p className="text-sm text-text-secondary">계정에 로그인하여 시작하세요</p>
             </div>
           </div>
@@ -138,17 +128,53 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
         {/* 로그인 폼 */}
         <div className="p-6">
           <form onSubmit={handleLogin} className="space-y-4">
+            {/* 이메일 입력 영역 */}
             <div>
-              <label className="block text-sm font-medium mb-2 text-text-primary">이메일 주소</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-colors"
-                placeholder="이메일을 입력하세요"
-                disabled={loading}
-                required
-              />
+              <label className="block text-sm font-medium mb-2 text-text-primary">
+                이메일 주소
+              </label>
+              
+              {useCustomEmail ? (
+                // 직접 입력 모드
+                <input
+                  type="email"
+                  value={customEmail}
+                  onChange={(e) => setCustomEmail(e.target.value)}
+                  className="w-full px-4 py-3 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-colors"
+                  placeholder="이메일 주소 입력"
+                  disabled={loading}
+                  required
+                />
+              ) : (
+                // crm.com 고정 모드
+                <div className="flex items-center">
+                  <input
+                    type="text"
+                    value={userId}
+                    onChange={(e) => setUserId(e.target.value)}
+                    className="flex-1 px-4 py-3 border border-border-primary rounded-l-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-colors"
+                    placeholder="사용자 ID"
+                    disabled={loading}
+                    required
+                  />
+                  <div className="px-4 py-3 bg-bg-secondary border-t border-r border-b border-border-primary rounded-r-lg text-text-secondary flex items-center gap-1">
+                    <AtSign className="w-4 h-4" />
+                    <span>crm.com</span>
+                  </div>
+                </div>
+              )}
+
+              {/* 입력 방식 전환 */}
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setUseCustomEmail(!useCustomEmail)}
+                  disabled={loading}
+                  className="text-xs text-accent hover:underline transition-colors"
+                >
+                  {useCustomEmail ? 'crm.com 도메인 사용' : '다른 이메일 사용'}
+                </button>
+              </div>
             </div>
             
             <div>
@@ -166,10 +192,10 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !getFinalEmail()}
               className={designSystem.utils.cn(
                 "w-full py-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                loading 
+                loading || !getFinalEmail()
                   ? "bg-bg-hover text-text-secondary cursor-not-allowed" 
                   : "bg-accent text-white hover:bg-accent/90 active:scale-[0.98]"
               )}
@@ -188,64 +214,12 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
             </button>
           </form>
 
-          {/* 테스트 계정 빠른 로그인 */}
-          <div className="mt-6 pt-6 border-t border-border-primary">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-4 h-4 bg-accent/20 rounded-full flex items-center justify-center">
-                <div className="w-2 h-2 bg-accent rounded-full"></div>
-              </div>
-              <p className="text-sm font-medium text-text-primary">테스트 계정 빠른 로그인</p>
+          {/* 시스템 상태 */}
+          <div className="mt-6 p-3 bg-bg-secondary rounded-lg">
+            <div className="flex items-center justify-center gap-2 text-sm">
+              <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+              <span className="text-text-secondary">시스템 정상 운영 중</span>
             </div>
-            
-            <div className="space-y-3">
-              <button
-                onClick={() => quickLogin('admin@company.com', 'admin123', '관리자')}
-                disabled={loading}
-                className="w-full p-4 text-left border border-border-primary rounded-lg hover:bg-bg-hover transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center group-hover:bg-accent/20 transition-colors">
-                    <Shield className="w-5 h-5 text-accent" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-text-primary">관리자 계정</div>
-                    <div className="text-xs text-text-secondary">admin@company.com</div>
-                    <div className="text-xs text-text-tertiary">전체 시스템 관리, 데이터 업로드, 영업사원 관리</div>
-                  </div>
-                  <div className="text-accent opacity-0 group-hover:opacity-100 transition-opacity">
-                    →
-                  </div>
-                </div>
-              </button>
-              
-              <button
-                onClick={() => quickLogin('counselor1@company.com', 'counselor123', '영업사원')}
-                disabled={loading}
-                className="w-full p-4 text-left border border-border-primary rounded-lg hover:bg-bg-hover transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-success/10 rounded-lg flex items-center justify-center group-hover:bg-success/20 transition-colors">
-                    <Users className="w-5 h-5 text-success" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-text-primary">영업사원 계정</div>
-                    <div className="text-xs text-text-secondary">counselor1@company.com</div>
-                    <div className="text-xs text-text-tertiary">담당 고객 관리, 상담 일정, 진행 상황 업데이트</div>
-                  </div>
-                  <div className="text-success opacity-0 group-hover:opacity-100 transition-opacity">
-                    →
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          {/* 추가 안내 */}
-          <div className="mt-6 p-3 bg-accent/5 rounded-lg">
-            <p className="text-xs text-text-secondary text-center">
-              개발 환경에서는 테스트 계정을 사용하여<br/>
-              시스템의 모든 기능을 체험해보실 수 있습니다.
-            </p>
           </div>
         </div>
       </div>
