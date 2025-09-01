@@ -24,7 +24,11 @@ import {
   FileCheck,
   AlertTriangle,
   Edit,
-  Trash2
+  Trash2,
+  Save,
+  X,
+  Plus,
+  Tag
 } from 'lucide-react';
 
 // 뷰 기반 타입 정의
@@ -57,9 +61,18 @@ interface Lead {
 }
 
 interface FilterOptions {
-  status: string; // 'all' | grade values
-  dataSource: string;
-  dateRange: 'all' | 'today' | 'week' | 'month';
+  statuses: string[]; // 다중 선택으로 변경
+  startDate: string;
+  endDate: string;
+  department: string;
+  counselorId: string;
+}
+
+// 인라인 편집 상태
+interface InlineEdit {
+  leadId: string;
+  field: 'grade' | 'memo' | 'customer_name';
+  value: string;
 }
 
 function AdminLeadsPageContent() {
@@ -86,14 +99,17 @@ function AdminLeadsPageContent() {
   ];
 
   // 데이터 상태
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [allLeads, setAllLeads] = useState<Lead[]>([]); // 전체 데이터
+  const [filteredLeads, setFilteredLeads] = useState<Lead[]>([]); // 필터링된 데이터
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [filters, setFilters] = useState<FilterOptions>({
-    status: 'all',
-    dataSource: '',
-    dateRange: 'all'
+    statuses: [],
+    startDate: '',
+    endDate: '',
+    department: '',
+    counselorId: ''
   });
 
   // 통계 상태
@@ -108,11 +124,13 @@ function AdminLeadsPageContent() {
   // 등급별 통계 상태
   const [gradeStats, setGradeStats] = useState<Record<string, number>>({});
 
-  // 페이지네이션 상태
+  // 부서 및 영업사원 목록 상태
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [counselors, setCounselors] = useState<any[]>([]);
+
+  // 페이지네이션 상태 (클라이언트 사이드)
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(300);
-  const [totalCount, setTotalCount] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
+  const [pageSize] = useState(50); // 클라이언트 필터링이므로 페이지 크기 줄임
   
   // 정렬 상태
   const [sortColumn, setSortColumn] = useState<string>('created_at');
@@ -122,6 +140,9 @@ function AdminLeadsPageContent() {
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+
+  // 인라인 편집 상태
+  const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null);
 
   // Hydration 오류 방지
   useEffect(() => {
@@ -133,24 +154,142 @@ function AdminLeadsPageContent() {
     const timer = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
     }, 300);
-
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  // 엔터키로 검색
-  const handleSearchKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      setDebouncedSearchTerm(searchTerm);
-      setCurrentPage(1);
-    }
-  };
+  // 부서 목록 로드
+  const loadDepartments = useCallback(async () => {
+    try {
+      const { data: departmentData, error } = await supabase
+        .from('users')
+        .select('department')
+        .eq('role', 'counselor')
+        .eq('is_active', true)
+        .not('department', 'is', null);
 
-  // 통계 로드 - Supabase 1000개 제한 해결
+      if (error) throw error;
+
+      const uniqueDepartments = [...new Set(departmentData?.map(d => d.department).filter(Boolean))] as string[];
+      setDepartments(uniqueDepartments.sort());
+    } catch (error) {
+      console.error('부서 목록 로드 실패:', error);
+    }
+  }, []);
+
+  // 영업사원 목록 로드
+  const loadCounselors = useCallback(async () => {
+    try {
+      const { data: counselorsData, error } = await supabase
+        .from('users')
+        .select('id, full_name, email, department')
+        .eq('role', 'counselor')
+        .eq('is_active', true)
+        .order('department', { ascending: true })
+        .order('full_name', { ascending: true });
+
+      if (error) throw error;
+      setCounselors(counselorsData || []);
+    } catch (error) {
+      console.error('영업사원 목록 로드 실패:', error);
+    }
+  }, []);
+
+  // 전체 데이터 로드 (원본 방식 복원)
+  const loadAllLeads = useCallback(async () => {
+    try {
+      setLoading(true);
+      console.log('=== 전체 데이터 로드 시작 ===');
+
+      // 원본과 동일한 방식으로 로드
+      let allData: Lead[] = [];
+      let from = 0;
+      const batchSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data: batch, error } = await supabase
+          .from('admin_leads_view')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(from, from + batchSize - 1);
+
+        if (error) throw error;
+
+        if (batch && batch.length > 0) {
+          // 뷰 데이터를 기존 인터페이스에 맞게 변환
+          const enrichedBatch = batch.map(lead => ({
+            ...lead,
+            status: lead.lead_status,
+            assignment_info: lead.assignment_id ? {
+              counselor_name: lead.counselor_name || '알 수 없음',
+              assigned_at: lead.assigned_at,
+              latest_contact_result: lead.latest_contact_result,
+              contract_amount: lead.contract_amount,
+              actual_customer_name: lead.actual_customer_name
+            } : undefined,
+            customer_grade: (() => {
+              if (lead.additional_data) {
+                const additionalData = typeof lead.additional_data === 'string' 
+                  ? JSON.parse(lead.additional_data) 
+                  : lead.additional_data;
+                
+                if (additionalData && additionalData.grade) {
+                  return {
+                    grade: additionalData.grade,
+                    grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280',
+                    grade_memo: additionalData.grade_memo,
+                    updated_at: additionalData.updated_at,
+                    updated_by: additionalData.updated_by
+                  };
+                }
+              }
+              return undefined;
+            })()
+          }));
+
+          allData = allData.concat(enrichedBatch);
+          from += batchSize;
+          
+          if (batch.length < batchSize) {
+            hasMore = false;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      // 중복 제거 및 분석
+      const duplicateIds = allData
+        .map(lead => lead.id)
+        .filter((id, index, self) => self.indexOf(id) !== index);
+      
+      const uniqueData = allData.filter((lead, index, self) => 
+        index === self.findIndex(l => l.id === lead.id)
+      );
+
+      if (duplicateIds.length > 0) {
+        console.log('중복된 ID들:', [...new Set(duplicateIds)]);
+        console.log('중복 데이터 상세:', duplicateIds.map(id => 
+          allData.filter(lead => lead.id === id)
+        ));
+      }
+
+      console.log(`전체 데이터 로드 완료: ${allData.length}개 → 중복 제거 후: ${uniqueData.length}개`);
+      setAllLeads(uniqueData);
+
+    } catch (error) {
+      console.error('전체 데이터 로드 실패:', error);
+      toast.error('데이터 로드 실패', error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  // 통계 로드 (원본 방식)
   const loadOverallStats = useCallback(async () => {
     try {
       setStatsLoading(true);
       
-      // 배치 처리로 전체 데이터 가져오기
       let allLeads: any[] = [];
       let from = 0;
       const batchSize = 1000;
@@ -178,7 +317,6 @@ function AdminLeadsPageContent() {
       const totalAssigned = allLeads.filter(lead => lead.assignment_id).length;
       const totalUnassigned = totalLeads - totalAssigned;
       
-      // 계약 통계 - contract_status가 'contracted'인 것만
       const contractedLeads = allLeads.filter(lead => 
         lead.contract_status === 'contracted'
       );
@@ -205,212 +343,144 @@ function AdminLeadsPageContent() {
     }
   }, [toast]);
 
-  // 등급별 통계 로드 - Supabase 1000개 제한 해결
-  const loadGradeStats = useCallback(async () => {
-    try {
-      // 전체 데이터를 가져오기 위해 배치로 처리
-      let allLeads: any[] = [];
-      let from = 0;
-      const batchSize = 1000;
-      let hasMore = true;
+  // 클라이언트 사이드 필터링
+  const applyFilters = useCallback(() => {
+    let filtered = [...allLeads];
 
-      while (hasMore) {
-        let query = supabase
-          .from('admin_leads_view')
-          .select('additional_data')
-          .range(from, from + batchSize - 1);
+    console.log('=== 클라이언트 필터링 시작 ===');
+    console.log('전체 데이터:', allLeads.length);
 
-        // 현재 적용된 필터와 동일하게 적용
-        if (debouncedSearchTerm.trim()) {
-          query = query.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
-        }
+    // 검색어 필터
+    if (debouncedSearchTerm.trim()) {
+      const searchLower = debouncedSearchTerm.toLowerCase();
+      filtered = filtered.filter(lead => 
+        lead.phone?.toLowerCase().includes(searchLower) ||
+        lead.contact_name?.toLowerCase().includes(searchLower) ||
+        lead.real_name?.toLowerCase().includes(searchLower) ||
+        lead.actual_customer_name?.toLowerCase().includes(searchLower)
+      );
+      console.log('검색어 필터 후:', filtered.length);
+    }
 
-        if (filters.dataSource) {
-          query = query.eq('data_source', filters.dataSource);
-        }
+    // 날짜 필터
+    if (filters.startDate) {
+      const startDate = new Date(filters.startDate);
+      filtered = filtered.filter(lead => new Date(lead.created_at) >= startDate);
+      console.log('시작일 필터 후:', filtered.length);
+    }
+    if (filters.endDate) {
+      const endDate = new Date(filters.endDate);
+      endDate.setHours(23, 59, 59, 999);
+      filtered = filtered.filter(lead => new Date(lead.created_at) <= endDate);
+      console.log('종료일 필터 후:', filtered.length);
+    }
 
-        if (filters.dateRange !== 'all') {
-          const now = new Date();
-          let startDate = new Date();
+    // 팀별 필터
+    if (filters.department) {
+      const departmentCounselors = counselors.filter(c => c.department === filters.department).map(c => c.id);
+      filtered = filtered.filter(lead => 
+        lead.counselor_id && departmentCounselors.includes(lead.counselor_id)
+      );
+      console.log('팀 필터 후:', filtered.length);
+    }
 
-          switch (filters.dateRange) {
-            case 'today':
-              startDate.setHours(0, 0, 0, 0);
-              break;
-            case 'week':
-              startDate.setDate(now.getDate() - 7);
-              break;
-            case 'month':
-              startDate.setMonth(now.getMonth() - 1);
-              break;
-          }
+    // 영업사원별 필터
+    if (filters.counselorId) {
+      filtered = filtered.filter(lead => lead.counselor_id === filters.counselorId);
+      console.log('영업사원 필터 후:', filtered.length);
+    }
 
-          query = query.gte('created_at', startDate.toISOString());
-        }
-
-        const { data: batch } = await query;
-        
-        if (batch && batch.length > 0) {
-          allLeads = allLeads.concat(batch);
-          from += batchSize;
-          
-          // 배치 크기보다 적게 가져왔으면 마지막 배치
-          if (batch.length < batchSize) {
-            hasMore = false;
-          }
-        } else {
-          hasMore = false;
-        }
-      }
-        
-      const stats: Record<string, number> = {};
-      gradeOptions.forEach(option => {
-        stats[option.value] = 0;
-      });
-      
-      // 미분류 개수 계산
-      let unclassifiedCount = 0;
-      
-      allLeads.forEach(lead => {
-        if (lead.additional_data && lead.additional_data !== null) {
+    // 등급 필터
+    if (filters.statuses.length > 0) {
+      filtered = filtered.filter(lead => {
+        if (lead.additional_data) {
           const additionalData = typeof lead.additional_data === 'string' 
             ? JSON.parse(lead.additional_data) 
             : lead.additional_data;
           
-          if (additionalData?.grade && stats.hasOwnProperty(additionalData.grade)) {
-            stats[additionalData.grade]++;
+          if (additionalData?.grade) {
+            return filters.statuses.includes(additionalData.grade);
           } else {
-            unclassifiedCount++;
+            return filters.statuses.includes('미분류');
           }
+        } else {
+          return filters.statuses.includes('미분류');
+        }
+      });
+      console.log('등급 필터 후:', filtered.length);
+    }
+
+    // 정렬 적용
+    filtered.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortColumn) {
+        case 'created_at':
+          aValue = new Date(a.created_at);
+          bValue = new Date(b.created_at);
+          break;
+        case 'real_name':
+          aValue = a.actual_customer_name || a.real_name || a.contact_name || '';
+          bValue = b.actual_customer_name || b.real_name || b.contact_name || '';
+          break;
+        case 'phone':
+          aValue = a.phone || '';
+          bValue = b.phone || '';
+          break;
+        default:
+          aValue = a[sortColumn as keyof Lead] || '';
+          bValue = b[sortColumn as keyof Lead] || '';
+      }
+
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    console.log('최종 필터링 결과:', filtered.length);
+    setFilteredLeads(filtered);
+    setCurrentPage(1); // 필터 변경시 첫 페이지로
+
+  }, [allLeads, debouncedSearchTerm, filters, counselors, sortColumn, sortDirection]);
+
+  // 등급별 통계 계산 (전체 데이터 기준)
+  const calculateGradeStats = useCallback(() => {
+    const stats: Record<string, number> = {};
+    gradeOptions.forEach(option => {
+      stats[option.value] = 0;
+    });
+    
+    let unclassifiedCount = 0;
+    
+    allLeads.forEach(lead => {
+      if (lead.additional_data && lead.additional_data !== null) {
+        const additionalData = typeof lead.additional_data === 'string' 
+          ? JSON.parse(lead.additional_data) 
+          : lead.additional_data;
+        
+        if (additionalData?.grade && stats.hasOwnProperty(additionalData.grade)) {
+          stats[additionalData.grade]++;
         } else {
           unclassifiedCount++;
         }
-      });
-      
-      // 미분류도 통계에 추가
-      stats['미분류'] = unclassifiedCount;
-      
-      setGradeStats(stats);
-      console.log(`등급별 통계 (총 ${allLeads.length}개):`, stats);
-    } catch (error) {
-      console.error('등급별 통계 로드 실패:', error);
-    }
-  }, [debouncedSearchTerm, filters]);
-
-  // 메인 데이터 로드 - 단일 뷰 쿼리로 대폭 간소화
-  const loadLeads = useCallback(async (page: number = 1) => {
-    if (authLoading || !mounted) return;
-
-    try {
-      setLoading(true);
-      
-      const startRange = (page - 1) * pageSize;
-      const endRange = startRange + pageSize - 1;
-
-      // 단일 뷰 쿼리 - 모든 조인이 이미 완료됨
-      let query = supabase
-        .from('admin_leads_view')
-        .select('*', { count: 'exact' });
-
-      // 검색어 적용
-      if (debouncedSearchTerm.trim()) {
-        query = query.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
+      } else {
+        unclassifiedCount++;
       }
+    });
+    
+    stats['미분류'] = unclassifiedCount;
+    setGradeStats(stats);
+  }, [allLeads]); // filteredLeads → allLeads로 변경
 
-      // 데이터 출처 필터
-      if (filters.dataSource) {
-        query = query.eq('data_source', filters.dataSource);
-      }
+  // 페이지네이션을 위한 현재 페이지 데이터
+  const getCurrentPageLeads = () => {
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return filteredLeads.slice(startIndex, endIndex);
+  };
 
-      // 날짜 필터
-      if (filters.dateRange !== 'all') {
-        const now = new Date();
-        let startDate = new Date();
-
-        switch (filters.dateRange) {
-          case 'today':
-            startDate.setHours(0, 0, 0, 0);
-            break;
-          case 'week':
-            startDate.setDate(now.getDate() - 7);
-            break;
-          case 'month':
-            startDate.setMonth(now.getMonth() - 1);
-            break;
-        }
-
-        query = query.gte('created_at', startDate.toISOString());
-      }
-
-      // 등급 필터 적용 (서버사이드로 이동 가능)
-      if (filters.status !== 'all') {
-        if (filters.status === '미분류') {
-          // 미분류: additional_data가 null이거나 grade가 없는 경우
-          query = query.or('additional_data.is.null,additional_data.not.cs.{"grade"}');
-        } else {
-          // 특정 등급: additional_data에 해당 grade가 있는 경우
-          query = query.contains('additional_data', { grade: filters.status });
-        }
-      }
-
-      // 정렬 적용
-      query = query.order(sortColumn, { ascending: sortDirection === 'asc' });
-      
-      // 페이지네이션 적용
-      query = query.range(startRange, endRange);
-
-      const { data: viewData, error: viewError, count } = await query;
-
-      if (viewError) throw viewError;
-
-      // 뷰 데이터를 기존 인터페이스에 맞게 변환
-      const enrichedLeads = viewData?.map(lead => ({
-        ...lead,
-        status: lead.lead_status, // 뷰의 lead_status를 기존 status로 매핑
-        assignment_info: lead.assignment_id ? {
-          counselor_name: lead.counselor_name || '알 수 없음',
-          assigned_at: lead.assigned_at,
-          latest_contact_result: lead.latest_contact_result,
-          contract_amount: lead.contract_amount,
-          actual_customer_name: lead.actual_customer_name
-        } : undefined,
-        customer_grade: (() => {
-          if (lead.additional_data) {
-            const additionalData = typeof lead.additional_data === 'string' 
-              ? JSON.parse(lead.additional_data) 
-              : lead.additional_data;
-            
-            if (additionalData && additionalData.grade) {
-              return {
-                grade: additionalData.grade,
-                grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280',
-                grade_memo: additionalData.grade_memo,
-                updated_at: additionalData.updated_at,
-                updated_by: additionalData.updated_by
-              };
-            }
-          }
-          return undefined;
-        })()
-      })) || [];
-
-      setLeads(enrichedLeads);
-      setTotalCount(count || 0);
-      setTotalPages(Math.ceil((count || 0) / pageSize));
-      setCurrentPage(page);
-
-      console.log(`뷰 기반 최적화 완료: 페이지 ${page}, ${enrichedLeads.length}개 로드 (전체: ${count}개)`);
-      console.log(`단일 뷰 쿼리로 모든 조인 작업 완료 - 성능 대폭 향상`);
-
-    } catch (error) {
-      console.error('고객 데이터 로드 실패:', error);
-      toast.error('데이터 로드 실패', error.message, {
-        action: { label: '다시 시도', onClick: () => loadLeads(page) }
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [authLoading, mounted, debouncedSearchTerm, filters, sortColumn, sortDirection, pageSize, toast]);
+  const totalPages = Math.ceil(filteredLeads.length / pageSize);
 
   // 정렬 변경 핸들러
   const handleSort = (column: string) => {
@@ -420,7 +490,6 @@ function AdminLeadsPageContent() {
       setSortColumn(column);
       setSortDirection('desc');
     }
-    setCurrentPage(1);
   };
 
   // 정렬 아이콘 렌더링
@@ -433,10 +502,14 @@ function AdminLeadsPageContent() {
       <span className="text-accent text-xs ml-0.5">↓</span>;
   };
 
-  // 필터 변경
-  const handleFilterChange = (newFilters: Partial<FilterOptions>) => {
-    setFilters(prev => ({ ...prev, ...newFilters }));
-    setCurrentPage(1);
+  // 다중 등급 필터 토글
+  const toggleGradeFilter = (grade: string) => {
+    setFilters(prev => ({
+      ...prev,
+      statuses: prev.statuses.includes(grade)
+        ? prev.statuses.filter(s => s !== grade)
+        : [...prev.statuses, grade]
+    }));
   };
 
   // 선택 관련 함수들
@@ -453,154 +526,11 @@ function AdminLeadsPageContent() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedLeads.size === leads.length) {
+    const currentPageLeads = getCurrentPageLeads();
+    if (selectedLeads.size === currentPageLeads.length) {
       setSelectedLeads(new Set());
     } else {
-      setSelectedLeads(new Set(leads.map(lead => lead.id)));
-    }
-  };
-
-  // 개별 삭제
-  const handleDeleteSingle = async (leadId: string) => {
-    const lead = leads.find(l => l.id === leadId);
-    if (!lead) return;
-
-    if (!confirm(`정말로 "${lead.contact_name}" 고객을 삭제하시겠습니까?\n\n⚠️ 관련된 모든 배정 및 상담 기록이 함께 삭제됩니다.`)) {
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      const { data: assignments } = await supabase
-        .from('lead_assignments')
-        .select('id')
-        .eq('lead_id', leadId);
-
-      if (assignments && assignments.length > 0) {
-        const assignmentIds = assignments.map(a => a.id);
-        const { error: activitiesError } = await supabase
-          .from('counseling_activities')
-          .delete()
-          .in('assignment_id', assignmentIds);
-
-        if (activitiesError) throw activitiesError;
-      }
-
-      const { error: assignmentsError } = await supabase
-        .from('lead_assignments')
-        .delete()
-        .eq('lead_id', leadId);
-
-      if (assignmentsError) throw assignmentsError;
-
-      const { error: leadError } = await supabase
-        .from('lead_pool')
-        .delete()
-        .eq('id', leadId);
-
-      if (leadError) throw leadError;
-
-      toast.success('삭제 완료', `"${lead.contact_name}" 고객이 삭제되었습니다.`);
-
-      loadLeads(currentPage);
-      loadOverallStats();
-      loadGradeStats();
-
-    } catch (error) {
-      console.error('고객 삭제 실패:', error);
-      toast.error('삭제 실패', error.message, {
-        action: { label: '다시 시도', onClick: () => handleDeleteSingle(leadId) }
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 일괄 삭제 - 배치 삭제로 최적화
-  const handleBulkDelete = async () => {
-    if (selectedLeads.size === 0) {
-      toast.warning('선택된 고객 없음', '삭제할 고객을 먼저 선택해주세요.');
-      return;
-    }
-
-    if (!confirm(`선택된 ${selectedLeads.size}개 고객을 삭제하시겠습니까?\n\n⚠️ 관련된 모든 배정 및 상담 기록이 함께 삭제됩니다.`)) {
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const selectedIds = Array.from(selectedLeads);
-      
-      // 배치 삭제로 최적화
-      const { data: assignments } = await supabase
-        .from('lead_assignments')
-        .select('id')
-        .in('lead_id', selectedIds);
-
-      if (assignments && assignments.length > 0) {
-        const assignmentIds = assignments.map(a => a.id);
-        await supabase
-          .from('counseling_activities')
-          .delete()
-          .in('assignment_id', assignmentIds);
-      }
-
-      await supabase
-        .from('lead_assignments')
-        .delete()
-        .in('lead_id', selectedIds);
-
-      const { error: leadError } = await supabase
-        .from('lead_pool')
-        .delete()
-        .in('id', selectedIds);
-
-      if (leadError) throw leadError;
-
-      toast.success('일괄 삭제 완료', `${selectedIds.length}개 고객이 삭제되었습니다.`);
-      setSelectedLeads(new Set());
-      loadLeads(currentPage);
-      loadOverallStats();
-      loadGradeStats();
-
-    } catch (error) {
-      console.error('일괄 삭제 실패:', error);
-      toast.error('일괄 삭제 실패', error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 고객 정보 수정
-  const handleEditLead = async (updatedLead: Partial<Lead>) => {
-    if (!editingLead) return;
-
-    try {
-      setLoading(true);
-
-      const { error } = await supabase
-        .from('lead_pool')
-        .update({
-          phone: updatedLead.phone,
-          contact_name: updatedLead.contact_name,
-          data_source: updatedLead.data_source,
-          contact_script: updatedLead.contact_script,
-          extra_info: updatedLead.extra_info
-        })
-        .eq('id', editingLead.id);
-
-      if (error) throw error;
-
-      toast.success('수정 완료', `"${updatedLead.contact_name}" 고객 정보가 수정되었습니다.`);
-      setEditingLead(null);
-      loadLeads(currentPage);
-
-    } catch (error) {
-      console.error('고객 정보 수정 실패:', error);
-      toast.error('수정 실패', error.message);
-    } finally {
-      setLoading(false);
+      setSelectedLeads(new Set(currentPageLeads.map(lead => lead.id)));
     }
   };
 
@@ -642,31 +572,41 @@ function AdminLeadsPageContent() {
     return phone.slice(0, 2) + '*'.repeat(phone.length - 2);
   };
 
+  // 필터 적용 (의존성 배열에 따라)
+  useEffect(() => {
+    if (allLeads.length > 0) {
+      applyFilters();
+    }
+  }, [applyFilters]);
+
+  // 등급별 통계 계산
+  useEffect(() => {
+    calculateGradeStats();
+  }, [calculateGradeStats]);
+
   // 초기 데이터 로드
   useEffect(() => {
     if (!authLoading && user && mounted) {
-      loadOverallStats();
-      loadGradeStats();
-      loadLeads(1);
+      Promise.all([
+        loadDepartments(),
+        loadCounselors(),
+        loadOverallStats(),
+        loadAllLeads()
+      ]);
     }
   }, [authLoading, user, mounted]);
 
-  // 필터나 정렬, 검색어 변경시 데이터 다시 로드
-  useEffect(() => {
-    if (!authLoading && user && mounted) {
-      loadGradeStats(); // 등급별 통계도 함께 업데이트
-      loadLeads(1); // 필터 변경시 첫 페이지로
-    }
-  }, [filters, sortColumn, sortDirection, debouncedSearchTerm]);
-
   if (!mounted) return null;
+
+  // 현재 페이지 데이터
+  const currentPageLeads = getCurrentPageLeads();
 
   return (
     <AdminLayout>
       <div className="p-6 max-w-7xl mx-auto">
         {/* 헤더 */}
         <div className="mb-8">
-          <h1 className={designSystem.components.typography.h2}>고객 리드 관리 (뷰 최적화)</h1>
+          <h1 className={designSystem.components.typography.h2}>고객 리드 관리 (클라이언트 필터링)</h1>
         </div>
 
         {/* 통계 카드 */}
@@ -727,47 +667,136 @@ function AdminLeadsPageContent() {
           </div>
         </div>
 
-        {/* 필터 및 새로고침 */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
+        {/* 필터 섹션 */}
+        <div className="mb-6">
+          {/* 팀별/영업사원별 필터 */}
+          <div className="flex items-center gap-4 mb-4">
             <div className="flex items-center gap-2">
-              <span className="text-text-secondary text-sm">계약상태:</span>
+              <span className="text-text-secondary text-sm">팀별 조회:</span>
               <select
-                value={filters.status}
-                onChange={(e) => handleFilterChange({ status: e.target.value })}
+                value={filters.department}
+                onChange={(e) => setFilters(prev => ({...prev, department: e.target.value, counselorId: ''}))}
                 className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
               >
-                <option value="all">전체</option>
-                {gradeOptions.map(grade => {
-                  const count = gradeStats[grade.value] || 0;
-                  return (
-                    <option key={grade.value} value={grade.value}>
-                      {grade.label} ({count})
-                    </option>
-                  );
-                })}
-                <option value="미분류">
-                  미분류 ({gradeStats['미분류'] || 0})
-                </option>
+                <option value="">전체 팀</option>
+                {departments.map(dept => (
+                  <option key={dept} value={dept}>{dept}</option>
+                ))}
               </select>
             </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-text-secondary text-sm">영업사원별:</span>
+              <select
+                value={filters.counselorId}
+                onChange={(e) => setFilters(prev => ({...prev, counselorId: e.target.value}))}
+                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+              >
+                <option value="">전체 영업사원</option>
+                {counselors
+                  .filter(c => !filters.department || c.department === filters.department)
+                  .map(counselor => (
+                    <option key={counselor.id} value={counselor.id}>
+                      {counselor.full_name} ({counselor.department})
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+
+            {/* 날짜 필터 */}
+            <div className="flex items-center gap-2">
+              <span className="text-text-secondary text-sm">기간:</span>
+              <input
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => setFilters(prev => ({...prev, startDate: e.target.value}))}
+                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+              <span className="text-text-secondary">~</span>
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => setFilters(prev => ({...prev, endDate: e.target.value}))}
+                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+              {(filters.startDate || filters.endDate) && (
+                <button
+                  onClick={() => setFilters(prev => ({...prev, startDate: '', endDate: ''}))}
+                  className="text-xs text-accent hover:text-accent/80 underline"
+                >
+                  초기화
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                loadOverallStats();
+                loadAllLeads();
+              }}
+              disabled={loading || statsLoading}
+              className={designSystem.utils.cn(
+                designSystem.components.button.secondary,
+                "px-4 py-2"
+              )}
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${(loading || statsLoading) ? 'animate-spin' : ''}`} />
+              새로고침
+            </button>
+          </div>
+        </div>
+
+        {/* 등급 필터 버튼 그룹 */}
+        <div className="mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Tag className="w-4 h-4 text-text-secondary" />
+            <span className="text-sm font-medium text-text-primary">등급 필터</span>
+            <span className="text-xs text-text-secondary">
+              ({filters.statuses.length > 0 ? `${filters.statuses.length}개 선택됨` : '전체'})
+            </span>
+            {filters.statuses.length > 0 && (
+              <button
+                onClick={() => setFilters(prev => ({...prev, statuses: []}))}
+                className="text-xs text-accent hover:text-accent/80 underline"
+              >
+                전체 선택 해제
+              </button>
+            )}
           </div>
           
-          <button
-            onClick={() => {
-              loadOverallStats();
-              loadGradeStats();
-              loadLeads(currentPage);
-            }}
-            disabled={loading || statsLoading}
-            className={designSystem.utils.cn(
-              designSystem.components.button.secondary,
-              "px-4 py-2"
-            )}
-          >
-            <RefreshCw className={`w-4 h-4 mr-2 ${(loading || statsLoading) ? 'animate-spin' : ''}`} />
-            새로고침
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {/* 미분류 버튼 */}
+            <button
+              onClick={() => toggleGradeFilter('미분류')}
+              className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                filters.statuses.includes('미분류')
+                  ? 'bg-bg-secondary border-accent text-accent font-medium'
+                  : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+              }`}
+            >
+              미분류
+            </button>
+
+            {/* 등급 버튼들 */}
+            {gradeOptions.map(grade => (
+              <button
+                key={grade.value}
+                onClick={() => toggleGradeFilter(grade.value)}
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                  filters.statuses.includes(grade.value)
+                    ? 'text-white font-medium border-transparent'
+                    : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+                }`}
+                style={filters.statuses.includes(grade.value) ? {
+                  backgroundColor: grade.color,
+                  borderColor: grade.color
+                } : {}}
+              >
+                {grade.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* 제목과 검색 영역 */}
@@ -776,7 +805,7 @@ function AdminLeadsPageContent() {
             <businessIcons.team className="w-3 h-3 text-accent" />
             <h3 className="text-xs font-medium text-text-primary">고객 리드 목록</h3>
             <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
-              전체 {totalCount.toLocaleString()}명 (페이지당 {pageSize}명)
+              필터링: {filteredLeads.length.toLocaleString()}명 / 전체: {allLeads.length.toLocaleString()}명
             </span>
             {loading && (
               <span className="text-xs text-accent animate-pulse">로딩 중...</span>
@@ -789,46 +818,15 @@ function AdminLeadsPageContent() {
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyPress={handleSearchKeyPress}
               placeholder="고객명, 전화번호로 검색..."
               className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </div>
         </div>
 
-        {/* 일괄 작업 버튼 */}
-        {selectedLeads.size > 0 && (
-          <div className="bg-accent/10 border border-accent/20 rounded-lg p-3 mb-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-accent" />
-                <span className="text-xs font-medium text-accent">
-                  {selectedLeads.size}개 고객이 선택되었습니다
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setSelectedLeads(new Set())}
-                  className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
-                >
-                  선택 해제
-                </button>
-                <button
-                  onClick={handleBulkDelete}
-                  disabled={loading}
-                  className="px-2 py-1 text-xs bg-error text-white rounded hover:bg-error/90 transition-colors disabled:opacity-50 flex items-center gap-1"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  선택 삭제
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* 고객 리드 테이블 */}
         <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
-          {leads.length > 0 ? (
+          {currentPageLeads.length > 0 ? (
             <>
               <div className="overflow-auto" style={{ maxHeight: '65vh' }}>
                 <table className="w-full table-fixed">
@@ -839,7 +837,7 @@ function AdminLeadsPageContent() {
                           onClick={toggleSelectAll}
                           className="flex items-center justify-center w-3 h-3 mx-auto"
                         >
-                          {selectedLeads.size === leads.length && leads.length > 0 ? (
+                          {selectedLeads.size === currentPageLeads.length && currentPageLeads.length > 0 ? (
                             <CheckSquare className="w-3 h-3 text-accent" />
                           ) : (
                             <Square className="w-3 h-3 text-text-tertiary" />
@@ -859,13 +857,13 @@ function AdminLeadsPageContent() {
                           영업사원
                         </div>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
                         <div className="flex items-center justify-center gap-0.5">
                           <businessIcons.assignment className="w-3 h-3" />
                           등급
                         </div>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
                           onClick={() => handleSort('real_name')}>
                         <div className="flex items-center justify-center gap-0.5">
                           <User className="w-3 h-3" />
@@ -918,7 +916,7 @@ function AdminLeadsPageContent() {
                     </tr>
                   </thead>
                   <tbody>
-                    {leads.map((lead) => (
+                    {currentPageLeads.map((lead) => (
                       <tr key={lead.id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
                         {/* 선택 체크박스 */}
                         <td className="py-1 px-1 text-center">
@@ -971,21 +969,25 @@ function AdminLeadsPageContent() {
 
                         {/* 회원등급 */}
                         <td className="py-1 px-1 text-center">
-                          {renderGradeBadge(lead.customer_grade)}
+                          <div className="w-24 mx-auto">
+                            {renderGradeBadge(lead.customer_grade)}
+                          </div>
                         </td>
 
                         {/* 고객명 */}
                         <td className="py-1 px-1 text-center">
-                          <div className="text-xs whitespace-nowrap truncate">
-                            {lead.actual_customer_name ? (
-                              <span className="text-text-primary font-medium">{lead.actual_customer_name}</span>
-                            ) : lead.real_name ? (
-                              <span className="text-text-primary">{lead.real_name}</span>
-                            ) : lead.contact_name ? (
-                              <span className="text-text-secondary">{lead.contact_name}</span>
-                            ) : (
-                              <span className="text-text-tertiary">미확인</span>
-                            )}
+                          <div className="w-20 mx-auto">
+                            <div className="text-xs whitespace-nowrap truncate">
+                              {lead.actual_customer_name ? (
+                                <span className="text-text-primary font-medium">{lead.actual_customer_name}</span>
+                              ) : lead.real_name ? (
+                                <span className="text-text-primary">{lead.real_name}</span>
+                              ) : lead.contact_name ? (
+                                <span className="text-text-secondary">{lead.contact_name}</span>
+                              ) : (
+                                <span className="text-text-tertiary">미확인</span>
+                              )}
+                            </div>
                           </div>
                         </td>
 
@@ -1016,16 +1018,16 @@ function AdminLeadsPageContent() {
 
                         {/* 상담메모 */}
                         <td className="py-1 px-1 text-center relative">
-                          <div className="w-28 group mx-auto">
+                          <div className="w-28 mx-auto">
                             {lead.counseling_memo ? (
-                              <>
+                              <div className="group">
                                 <div className="text-text-primary text-xs truncate cursor-help px-1">
                                   {lead.counseling_memo}
                                 </div>
                                 <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-20 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
                                   {lead.counseling_memo}
                                 </div>
-                              </>
+                              </div>
                             ) : (
                               <span className="text-text-tertiary text-xs">-</span>
                             )}
@@ -1069,16 +1071,9 @@ function AdminLeadsPageContent() {
                             <button
                               onClick={() => setEditingLead(lead)}
                               className="p-0.5 text-text-tertiary hover:text-accent transition-colors"
-                              title="수정"
+                              title="전체 정보 수정"
                             >
                               <Edit className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteSingle(lead.id)}
-                              className="p-0.5 text-text-tertiary hover:text-error transition-colors"
-                              title="삭제"
-                            >
-                              <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
                         </td>
@@ -1093,21 +1088,21 @@ function AdminLeadsPageContent() {
                 <div className="p-3 border-t border-border-primary bg-bg-secondary">
                   <div className="flex items-center justify-between">
                     <div className="text-xs text-text-secondary">
-                      총 {totalCount.toLocaleString()}개 중 {((currentPage - 1) * pageSize + 1).toLocaleString()}-{Math.min(currentPage * pageSize, totalCount).toLocaleString()}개 표시
+                      총 {filteredLeads.length.toLocaleString()}개 중 {((currentPage - 1) * pageSize + 1).toLocaleString()}-{Math.min(currentPage * pageSize, filteredLeads.length).toLocaleString()}개 표시
                     </div>
                     
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => loadLeads(1)}
-                        disabled={currentPage === 1 || loading}
+                        onClick={() => setCurrentPage(1)}
+                        disabled={currentPage === 1}
                         className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
                       >
                         첫페이지
                       </button>
                       
                       <button
-                        onClick={() => loadLeads(currentPage - 1)}
-                        disabled={currentPage === 1 || loading}
+                        onClick={() => setCurrentPage(currentPage - 1)}
+                        disabled={currentPage === 1}
                         className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
                       >
                         <ChevronLeft className="w-3 h-3" />
@@ -1118,16 +1113,16 @@ function AdminLeadsPageContent() {
                       </span>
                       
                       <button
-                        onClick={() => loadLeads(currentPage + 1)}
-                        disabled={currentPage === totalPages || loading}
+                        onClick={() => setCurrentPage(currentPage + 1)}
+                        disabled={currentPage === totalPages}
                         className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
                       >
                         <ChevronRight className="w-3 h-3" />
                       </button>
                       
                       <button
-                        onClick={() => loadLeads(totalPages)}
-                        disabled={currentPage === totalPages || loading}
+                        onClick={() => setCurrentPage(totalPages)}
+                        disabled={currentPage === totalPages}
                         className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50 disabled:cursor-not-allowed hover:bg-bg-hover transition-colors"
                       >
                         마지막
@@ -1141,16 +1136,16 @@ function AdminLeadsPageContent() {
             <div className="text-center py-12">
               <User className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
               <h3 className="text-lg font-medium text-text-primary mb-2">
-                {loading ? '데이터 로드 중...' : '검색 결과가 없습니다'}
+                {loading ? '데이터 로드 중...' : filteredLeads.length === 0 && allLeads.length > 0 ? '필터 조건에 맞는 결과가 없습니다' : '데이터가 없습니다'}
               </h3>
               <p className="text-text-secondary">
-                {loading ? '잠시만 기다려주세요.' : '검색 조건을 변경하거나 새로운 고객 데이터를 업로드해주세요.'}
+                {loading ? '잠시만 기다려주세요.' : filteredLeads.length === 0 && allLeads.length > 0 ? '필터 조건을 변경해보세요.' : '새로운 고객 데이터를 업로드해주세요.'}
               </p>
             </div>
           )}
         </div>
 
-        {/* 수정 모달 */}
+        {/* 전체 정보 수정 모달 */}
         {editingLead && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-2xl mx-auto">
@@ -1162,13 +1157,28 @@ function AdminLeadsPageContent() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   const formData = new FormData(e.currentTarget);
-                  handleEditLead({
+                  
+                  const updatedLead = {
                     phone: formData.get('phone') as string,
                     contact_name: formData.get('contact_name') as string,
                     data_source: formData.get('data_source') as string,
                     contact_script: formData.get('contact_script') as string,
                     extra_info: formData.get('extra_info') as string,
-                  });
+                  };
+                  
+                  supabase
+                    .from('lead_pool')
+                    .update(updatedLead)
+                    .eq('id', editingLead.id)
+                    .then(({ error }) => {
+                      if (error) {
+                        toast.error('수정 실패', error.message);
+                      } else {
+                        toast.success('수정 완료', '고객 정보가 수정되었습니다.');
+                        setEditingLead(null);
+                        loadAllLeads(); // 전체 데이터 다시 로드
+                      }
+                    });
                 }}
                 className="p-6 space-y-4"
               >
@@ -1185,12 +1195,11 @@ function AdminLeadsPageContent() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium mb-2 text-text-primary">고객명 *</label>
+                    <label className="block text-sm font-medium mb-2 text-text-primary">고객명</label>
                     <input
                       name="contact_name"
                       type="text"
                       defaultValue={editingLead.contact_name}
-                      required
                       className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                     />
                   </div>

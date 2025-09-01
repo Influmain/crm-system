@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
 import { designSystem } from '@/lib/design-system';
@@ -13,7 +13,7 @@ import {
   UserPlus, Users, CheckCircle, XCircle, RefreshCw, 
   Edit2, Trash2, Building2, Mail, Phone, AlertTriangle,
   Search, ChevronLeft, ChevronRight, CheckSquare, Square,
-  User, Calendar
+  User, Calendar, Filter, X, Plus, Tag
 } from 'lucide-react';
 
 interface Counselor {
@@ -35,7 +35,13 @@ interface NewCounselorForm {
   auto_generated?: boolean;
 }
 
-// 권한 확인 컴포넌트 분리
+interface FilterOptions {
+  departments: string[];
+  statuses: string[];
+  searchTerm: string;
+}
+
+// 권한 확인 컴포넌트
 function PermissionChecker({ children }: { children: React.ReactNode }) {
   const { user, userProfile, isAdmin, isSuperAdmin } = useAuth();
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -115,20 +121,33 @@ function PermissionChecker({ children }: { children: React.ReactNode }) {
 function CounselorsPageContent() {
   const { user, userProfile } = useAuth();
   const toast = useToastHelpers();
+  const [mounted, setMounted] = useState(false);
   
   // 상태 선언
-  const [counselors, setCounselors] = useState<Counselor[]>([]);
+  const [allCounselors, setAllCounselors] = useState<Counselor[]>([]); // 전체 데이터
+  const [filteredCounselors, setFilteredCounselors] = useState<Counselor[]>([]); // 필터링된 데이터
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [selectedCounselors, setSelectedCounselors] = useState<string[]>([]);
+  const [selectedCounselors, setSelectedCounselors] = useState<Set<string>>(new Set());
   const [showBulkEditModal, setShowBulkEditModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  
+  // 필터 상태
+  const [filters, setFilters] = useState<FilterOptions>({
+    departments: [],
+    statuses: [],
+    searchTerm: ''
+  });
+  
+  const [departments, setDepartments] = useState<string[]>([]); // 부서 목록
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalCount, setTotalCount] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const itemsPerPage = 200;
+  const pageSize = 20; // 더 콤팩트한 페이징
+  
+  // 정렬 상태
+  const [sortColumn, setSortColumn] = useState<string>('created_at');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   
   const [bulkEditForm, setBulkEditForm] = useState({
     full_name: '',
@@ -144,6 +163,11 @@ function CounselorsPageContent() {
     auto_generated: false
   });
 
+  // Hydration 오류 방지
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // 검색어 디바운싱
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -153,6 +177,240 @@ function CounselorsPageContent() {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
+  // 부서 목록 로드
+  const loadDepartments = useCallback(async () => {
+    try {
+      const { data: departmentData, error } = await supabase
+        .from('users')
+        .select('department')
+        .eq('role', 'counselor')
+        .not('department', 'is', null);
+
+      if (error) throw error;
+
+      const uniqueDepartments = [...new Set(departmentData?.map(d => d.department).filter(Boolean))] as string[];
+      setDepartments(uniqueDepartments.sort());
+    } catch (error) {
+      console.error('부서 목록 로드 실패:', error);
+    }
+  }, []);
+
+  // 전체 영업사원 데이터 로드
+  const loadAllCounselors = useCallback(async () => {
+    setLoading(true);
+    try {
+      console.log('전체 영업사원 조회 시작...');
+
+      const { data: counselorsData, error: counselorsError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('role', 'counselor')
+        .order('full_name', { ascending: true });
+
+      if (counselorsError) {
+        console.error('영업사원 조회 에러:', counselorsError);
+        throw new Error('영업사원 조회 실패: ' + counselorsError.message);
+      }
+
+      console.log('조회된 영업사원 수:', counselorsData?.length || 0);
+      setAllCounselors(counselorsData || []);
+      
+    } catch (error: any) {
+      console.error('영업사원 로드 실패:', error);
+      const errorMessage = error?.message || '알 수 없는 오류';
+      
+      toast.error(
+        '데이터 로드 실패', 
+        '영업사원 목록을 불러오는 중 오류가 발생했습니다: ' + errorMessage,
+        {
+          action: {
+            label: '다시 시도',
+            onClick: () => loadAllCounselors()
+          }
+        }
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  // 클라이언트 사이드 필터링
+  const applyFilters = useCallback(() => {
+    let filtered = [...allCounselors];
+
+    // 검색어 필터
+    if (debouncedSearchTerm.trim()) {
+      const searchLower = debouncedSearchTerm.toLowerCase();
+      filtered = filtered.filter(counselor => 
+        counselor.full_name?.toLowerCase().includes(searchLower) ||
+        counselor.email?.toLowerCase().includes(searchLower) ||
+        counselor.department?.toLowerCase().includes(searchLower) ||
+        counselor.phone?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // 부서 필터 (다중 선택)
+    if (filters.departments.length > 0) {
+      filtered = filtered.filter(counselor => {
+        const dept = counselor.department && counselor.department.trim() ? counselor.department : '미지정';
+        return filters.departments.includes(dept);
+      });
+    }
+
+    // 상태 필터
+    if (filters.statuses.length > 0) {
+      filtered = filtered.filter(counselor => {
+        const status = counselor.is_active ? '활성' : '비활성';
+        return filters.statuses.includes(status);
+      });
+    }
+
+    // 정렬 적용
+    filtered.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortColumn) {
+        case 'created_at':
+          aValue = new Date(a.created_at);
+          bValue = new Date(b.created_at);
+          break;
+        case 'full_name':
+          aValue = a.full_name || '';
+          bValue = b.full_name || '';
+          break;
+        case 'department':
+          aValue = a.department || '';
+          bValue = b.department || '';
+          break;
+        default:
+          aValue = a[sortColumn as keyof Counselor] || '';
+          bValue = b[sortColumn as keyof Counselor] || '';
+      }
+
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    setFilteredCounselors(filtered);
+    setCurrentPage(1);
+  }, [allCounselors, debouncedSearchTerm, filters, sortColumn, sortDirection]);
+
+  // 부서별 통계
+  const getDepartmentStats = () => {
+    const stats: Record<string, number> = {};
+    allCounselors.forEach(counselor => {
+      const dept = counselor.department && counselor.department.trim() ? counselor.department : '미지정';
+      stats[dept] = (stats[dept] || 0) + 1;
+    });
+    return stats;
+  };
+
+  // 상태별 통계
+  const getStatusStats = () => {
+    return {
+      '활성': allCounselors.filter(c => c.is_active).length,
+      '비활성': allCounselors.filter(c => !c.is_active).length
+    };
+  };
+
+  const departmentStats = getDepartmentStats();
+  const statusStats = getStatusStats();
+
+  // 페이지네이션을 위한 현재 페이지 데이터
+  const getCurrentPageCounselors = () => {
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return filteredCounselors.slice(startIndex, endIndex);
+  };
+
+  const totalPages = Math.ceil(filteredCounselors.length / pageSize);
+  const currentPageCounselors = getCurrentPageCounselors();
+
+  // 정렬 변경 핸들러
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc');
+    }
+  };
+
+  // 정렬 아이콘 렌더링
+  const renderSortIcon = (column: string) => {
+    if (sortColumn !== column) {
+      return <span className="text-text-tertiary text-xs ml-0.5">↕</span>;
+    }
+    return sortDirection === 'asc' ? 
+      <span className="text-accent text-xs ml-0.5">↑</span> : 
+      <span className="text-accent text-xs ml-0.5">↓</span>;
+  };
+
+  // 다중 부서 필터 토글
+  const toggleDepartmentFilter = (department: string) => {
+    setFilters(prev => ({
+      ...prev,
+      departments: prev.departments.includes(department)
+        ? prev.departments.filter(d => d !== department)
+        : [...prev.departments, department]
+    }));
+  };
+
+  // 다중 상태 필터 토글
+  const toggleStatusFilter = (status: string) => {
+    setFilters(prev => ({
+      ...prev,
+      statuses: prev.statuses.includes(status)
+        ? prev.statuses.filter(s => s !== status)
+        : [...prev.statuses, status]
+    }));
+  };
+
+  // 영업사원 선택/해제
+  const toggleCounselorSelection = (counselorId: string) => {
+    setSelectedCounselors(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(counselorId)) {
+        newSet.delete(counselorId);
+      } else {
+        newSet.add(counselorId);
+      }
+      return newSet;
+    });
+  };
+
+  // 전체 선택/해제 (현재 페이지 기준)
+  const toggleSelectAll = () => {
+    if (selectedCounselors.size === currentPageCounselors.length && currentPageCounselors.length > 0) {
+      setSelectedCounselors(new Set());
+    } else {
+      setSelectedCounselors(new Set(currentPageCounselors.map(counselor => counselor.id)));
+    }
+  };
+
+  // 텍스트 하이라이트 함수
+  const highlightText = (text: string, query: string): React.ReactNode => {
+    if (!query.trim()) return text;
+    
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    const index = lowerText.indexOf(lowerQuery);
+    
+    if (index === -1) return text;
+    
+    return (
+      <>
+        {text.substring(0, index)}
+        <span className="bg-accent-light text-accent font-medium rounded px-0.5">
+          {text.substring(index, index + query.length)}
+        </span>
+        {text.substring(index + query.length)}
+      </>
+    );
+  };
+
   // 임시 비밀번호 생성 함수
   const generateTempPassword = (): string => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
@@ -161,6 +419,25 @@ function CounselorsPageContent() {
       password += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return password;
+  };
+
+  // 전화번호 자동 포맷팅 함수
+  const formatPhoneNumber = (value: string): string => {
+    const numbers = value.replace(/\D/g, '');
+    
+    if (numbers.length === 11 && numbers.startsWith('010')) {
+      return numbers.replace(/(\d{3})(\d{4})(\d{4})/, '$1-$2-$3');
+    }
+    
+    if (numbers.length === 10) {
+      return numbers.replace(/(\d{2})(\d{4})(\d{4})/, '$1-$2-$3');
+    }
+    
+    if (numbers.length === 9) {
+      return numbers.replace(/(\d{3})(\d{3})(\d{3})/, '$1-$2-$3');
+    }
+    
+    return value;
   };
 
   // 비밀번호 리셋 함수
@@ -187,10 +464,8 @@ function CounselorsPageContent() {
   const performPasswordReset = async (counselorId: string, counselorName: string, counselorEmail: string) => {
     setActionLoading(true);
     try {
-      // 새 임시 비밀번호 생성
       const tempPassword = generateTempPassword();
       
-      // Supabase Auth에서 비밀번호 업데이트
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('세션이 만료되었습니다. 다시 로그인해주세요.');
 
@@ -212,7 +487,6 @@ function CounselorsPageContent() {
         throw new Error(result.error || '비밀번호 리셋에 실패했습니다.');
       }
 
-      // 새 비밀번호를 토스트로 표시 (복사 가능)
       const successMessage = counselorName + '님의 새 로그인 정보:\n\n아이디: ' + counselorEmail + '\n비밀번호: ' + tempPassword + '\n\n⚠️ 이 비밀번호를 영업사원에게 안전하게 전달해주세요.\n영업사원은 로그인 후 비밀번호를 변경하는 것을 권장합니다.';
 
       toast.success(
@@ -226,7 +500,7 @@ function CounselorsPageContent() {
               toast.info('복사 완료', '새 비밀번호가 클립보드에 복사되었습니다.');
             }
           },
-          duration: 30000 // 30초 동안 표시
+          duration: 30000
         }
       );
 
@@ -253,124 +527,6 @@ function CounselorsPageContent() {
       );
     } finally {
       setActionLoading(false);
-    }
-  };
-
-  // 전화번호 자동 포맷팅 함수
-  const formatPhoneNumber = (value: string): string => {
-    const numbers = value.replace(/\D/g, '');
-    
-    if (numbers.length === 11 && numbers.startsWith('010')) {
-      return numbers.replace(/(\d{3})(\d{4})(\d{4})/, '$1-$2-$3');
-    }
-    
-    if (numbers.length === 10) {
-      return numbers.replace(/(\d{2})(\d{4})(\d{4})/, '$1-$2-$3');
-    }
-    
-    if (numbers.length === 9) {
-      return numbers.replace(/(\d{3})(\d{3})(\d{3})/, '$1-$2-$3');
-    }
-    
-    return value;
-  };
-
-  // 텍스트 하이라이트 함수 (단순화)
-  const highlightText = (text: string, query: string): React.ReactNode => {
-    if (!query.trim()) return text;
-    
-    const lowerText = text.toLowerCase();
-    const lowerQuery = query.toLowerCase();
-    const index = lowerText.indexOf(lowerQuery);
-    
-    if (index === -1) return text;
-    
-    return (
-      <>
-        {text.substring(0, index)}
-        <span className="bg-accent-light text-accent font-medium rounded px-0.5">
-          {text.substring(index, index + query.length)}
-        </span>
-        {text.substring(index + query.length)}
-      </>
-    );
-  };
-
-  // 데이터 로드 (페이징 적용)
-  const loadCounselors = async (page: number = 1, searchQuery: string = '') => {
-    setLoading(true);
-    try {
-      console.log('영업사원 조회 시작...');
-      
-      const startRange = (page - 1) * itemsPerPage;
-      const endRange = startRange + itemsPerPage - 1;
-
-      let query = supabase
-        .from('users')
-        .select('*', { count: 'exact' })
-        .eq('role', 'counselor')
-        .order('full_name', { ascending: true });
-
-      // 검색어 적용
-      if (searchQuery.trim()) {
-        query = query.or('full_name.ilike.%' + searchQuery + '%,email.ilike.%' + searchQuery + '%,department.ilike.%' + searchQuery + '%,phone.ilike.%' + searchQuery + '%');
-      }
-
-      // 페이지네이션 적용
-      query = query.range(startRange, endRange);
-
-      const { data: counselorsData, error: counselorsError, count } = await query;
-
-      if (counselorsError) {
-        console.error('영업사원 조회 에러:', counselorsError);
-        throw new Error('영업사원 조회 실패: ' + counselorsError.message);
-      }
-
-      console.log('조회된 영업사원 수:', counselorsData?.length || 0, ' (전체: ' + count + ')');
-      
-      setCounselors(counselorsData || []);
-      setTotalCount(count || 0);
-      setTotalPages(Math.ceil((count || 0) / itemsPerPage));
-      setCurrentPage(page);
-      
-    } catch (error: any) {
-      console.error('영업사원 로드 실패:', error);
-      const errorMessage = error?.message || '알 수 없는 오류';
-      
-      toast.error(
-        '데이터 로드 실패', 
-        '영업사원 목록을 불러오는 중 오류가 발생했습니다: ' + errorMessage,
-        {
-          action: {
-            label: '다시 시도',
-            onClick: () => loadCounselors(page, searchQuery)
-          }
-        }
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadCounselors(currentPage, debouncedSearchTerm);
-  }, [currentPage, debouncedSearchTerm]);
-
-  // 영업사원 선택/해제
-  const toggleCounselorSelection = (counselorId: string) => {
-    setSelectedCounselors(prev => 
-      prev.includes(counselorId) 
-        ? prev.filter(id => id !== counselorId)
-        : [...prev, counselorId]
-    );
-  };
-
-  // 전체 선택/해제
-  const toggleSelectAll = () => {
-    if (selectedCounselors.length === counselors.length) {
-      setSelectedCounselors([]);
-    } else {
-      setSelectedCounselors(counselors.map(counselor => counselor.id));
     }
   };
 
@@ -437,7 +593,8 @@ function CounselorsPageContent() {
       
       setNewCounselor({ korean_name: '', english_id: '', phone: '', department: '', password: '', auto_generated: false });
       setShowAddForm(false);
-      await loadCounselors(currentPage, debouncedSearchTerm);
+      await loadAllCounselors();
+      await loadDepartments();
 
     } catch (error: any) {
       console.error('영업사원 계정 생성 실패:', error);
@@ -470,8 +627,9 @@ function CounselorsPageContent() {
   // 벌크 활성화/비활성화
   const handleBulkToggleActive = async (isActive: boolean) => {
     const action = isActive ? '활성화' : '비활성화';
-    const selectedNames = counselors
-      .filter(c => selectedCounselors.includes(c.id))
+    const selectedIds = Array.from(selectedCounselors);
+    const selectedNames = allCounselors
+      .filter(c => selectedIds.includes(c.id))
       .map(c => c.full_name);
 
     setActionLoading(true);
@@ -479,11 +637,11 @@ function CounselorsPageContent() {
       const { error } = await supabase
         .from('users')
         .update({ is_active: isActive })
-        .in('id', selectedCounselors);
+        .in('id', selectedIds);
 
       if (error) throw error;
 
-      const successMessage = selectedCounselors.length + '명의 영업사원이 ' + action + '되었습니다.\n\n' + selectedNames.join(', ');
+      const successMessage = selectedIds.length + '명의 영업사원이 ' + action + '되었습니다.\n\n' + selectedNames.join(', ');
 
       toast.success(
         action + ' 완료',
@@ -491,13 +649,13 @@ function CounselorsPageContent() {
         {
           action: {
             label: '목록 새로고침',
-            onClick: () => loadCounselors(currentPage, debouncedSearchTerm)
+            onClick: () => loadAllCounselors()
           }
         }
       );
       
-      setSelectedCounselors([]);
-      await loadCounselors(currentPage, debouncedSearchTerm);
+      setSelectedCounselors(new Set());
+      await loadAllCounselors();
 
     } catch (error: any) {
       console.error('벌크 ' + action + ' 실패:', error);
@@ -519,8 +677,9 @@ function CounselorsPageContent() {
 
   // 벌크 수정
   const handleBulkEdit = () => {
-    if (selectedCounselors.length === 1) {
-      const selectedCounselor = counselors.find(c => c.id === selectedCounselors[0]);
+    const selectedIds = Array.from(selectedCounselors);
+    if (selectedIds.length === 1) {
+      const selectedCounselor = allCounselors.find(c => c.id === selectedIds[0]);
       if (selectedCounselor) {
         setBulkEditForm({
           full_name: selectedCounselor.full_name || '',
@@ -552,21 +711,22 @@ function CounselorsPageContent() {
       return;
     }
 
+    const selectedIds = Array.from(selectedCounselors);
     setActionLoading(true);
     try {
       const { error } = await supabase
         .from('users')
         .update(updateData)
-        .in('id', selectedCounselors);
+        .in('id', selectedIds);
 
       if (error) throw error;
 
       const updatedFields = Object.keys(updateData).join(', ');
-      const selectedNames = counselors
-        .filter(c => selectedCounselors.includes(c.id))
+      const selectedNames = allCounselors
+        .filter(c => selectedIds.includes(c.id))
         .map(c => c.full_name);
 
-      const successMessage = selectedCounselors.length + '명의 영업사원 정보가 업데이트되었습니다.\n\n수정된 항목: ' + updatedFields + '\n대상: ' + selectedNames.join(', ');
+      const successMessage = selectedIds.length + '명의 영업사원 정보가 업데이트되었습니다.\n\n수정된 항목: ' + updatedFields + '\n대상: ' + selectedNames.join(', ');
 
       toast.success(
         '정보 수정 완료',
@@ -581,8 +741,9 @@ function CounselorsPageContent() {
       
       setShowBulkEditModal(false);
       setBulkEditForm({ full_name: '', phone: '', department: '' });
-      setSelectedCounselors([]);
-      await loadCounselors(currentPage, debouncedSearchTerm);
+      setSelectedCounselors(new Set());
+      await loadAllCounselors();
+      await loadDepartments();
 
     } catch (error: any) {
       console.error('벌크 수정 실패:', error);
@@ -604,22 +765,22 @@ function CounselorsPageContent() {
 
   // 벌크 삭제  
   const handleBulkDelete = async () => {
-    const selectedCounselorNames = counselors
-      .filter(c => selectedCounselors.includes(c.id))
+    const selectedIds = Array.from(selectedCounselors);
+    const selectedCounselorNames = allCounselors
+      .filter(c => selectedIds.includes(c.id))
       .map(c => c.full_name);
 
     setActionLoading(true);
     try {
-      // 배정된 고객이 있는지 확인
       const { data: assignments } = await supabase
         .from('lead_assignments')
         .select('counselor_id, lead_id')
-        .in('counselor_id', selectedCounselors)
+        .in('counselor_id', selectedIds)
         .in('status', ['active', 'working']);
 
       if (assignments && assignments.length > 0) {
         const assignedCounselors = new Set(assignments.map(a => a.counselor_id));
-        const assignedNames = counselors
+        const assignedNames = allCounselors
           .filter(c => assignedCounselors.has(c.id))
           .map(c => c.full_name);
         
@@ -641,11 +802,11 @@ function CounselorsPageContent() {
       const { error } = await supabase
         .from('users')
         .delete()
-        .in('id', selectedCounselors);
+        .in('id', selectedIds);
 
       if (error) throw error;
 
-      const successMessage = selectedCounselors.length + '명의 영업사원이 삭제되었습니다.\n\n삭제된 영업사원: ' + selectedCounselorNames.join(', ') + '\n\n참고: Supabase Auth 계정 삭제는 관리자가 별도 처리해야 할 수 있습니다.';
+      const successMessage = selectedIds.length + '명의 영업사원이 삭제되었습니다.\n\n삭제된 영업사원: ' + selectedCounselorNames.join(', ') + '\n\n참고: Supabase Auth 계정 삭제는 관리자가 별도 처리해야 할 수 있습니다.';
 
       toast.success(
         '삭제 완료',
@@ -653,13 +814,14 @@ function CounselorsPageContent() {
         {
           action: {
             label: '목록 새로고침',
-            onClick: () => loadCounselors(currentPage, debouncedSearchTerm)
+            onClick: () => loadAllCounselors()
           }
         }
       );
       
-      setSelectedCounselors([]);
-      await loadCounselors(currentPage, debouncedSearchTerm);
+      setSelectedCounselors(new Set());
+      await loadAllCounselors();
+      await loadDepartments();
 
     } catch (error: any) {
       console.error('벌크 삭제 실패:', error);
@@ -679,7 +841,26 @@ function CounselorsPageContent() {
     }
   };
 
-  if (loading && currentPage === 1) {
+  // 필터 적용
+  useEffect(() => {
+    if (allCounselors.length > 0) {
+      applyFilters();
+    }
+  }, [applyFilters]);
+
+  // 초기 데이터 로드
+  useEffect(() => {
+    if (mounted && user) {
+      Promise.all([
+        loadDepartments(),
+        loadAllCounselors()
+      ]);
+    }
+  }, [mounted, user]);
+
+  if (!mounted) return null;
+
+  if (loading) {
     return (
       <AdminLayout>
         <div className="flex items-center justify-center min-h-96">
@@ -696,19 +877,158 @@ function CounselorsPageContent() {
     <AdminLayout>
       <div className="p-6 max-w-7xl mx-auto">
         {/* 헤더 */}
-        <div className="mb-8">
+        <div className="mb-6">
           <h1 className={designSystem.components.typography.h2}>영업사원 관리</h1>
           <p className={designSystem.components.typography.bodySm}>
-            영업사원 계정을 생성하고 관리합니다. (Supabase Auth 연동)
+            영업사원 계정을 생성하고 관리합니다.
           </p>
         </div>
 
+        {/* 통계 카드 - 콤팩트 버전 */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-text-secondary text-sm">전체</p>
+                <p className="text-2xl font-bold text-text-primary">{allCounselors.length}</p>
+              </div>
+              <Users className="w-8 h-8 text-accent" />
+            </div>
+          </div>
+
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-text-secondary text-sm">활성</p>
+                <p className="text-2xl font-bold text-success">{statusStats['활성']}</p>
+              </div>
+              <CheckCircle className="w-8 h-8 text-success" />
+            </div>
+          </div>
+
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-text-secondary text-sm">비활성</p>
+                <p className="text-2xl font-bold text-warning">{statusStats['비활성']}</p>
+              </div>
+              <XCircle className="w-8 h-8 text-warning" />
+            </div>
+          </div>
+
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-text-secondary text-sm">부서</p>
+                <p className="text-2xl font-bold text-accent">{departments.length}</p>
+              </div>
+              <Building2 className="w-8 h-8 text-accent" />
+            </div>
+          </div>
+        </div>
+
+        {/* 필터 섹션 */}
+        <div className="mb-6">
+          {/* 부서별 필터 */}
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Building2 className="w-4 h-4 text-text-secondary" />
+              <span className="text-sm font-medium text-text-primary">부서 필터</span>
+              <span className="text-xs text-text-secondary">
+                ({filters.departments.length > 0 ? `${filters.departments.length}개 선택됨` : '전체'})
+              </span>
+              {filters.departments.length > 0 && (
+                <button
+                  onClick={() => setFilters(prev => ({...prev, departments: []}))}
+                  className="text-xs text-accent hover:text-accent/80 underline"
+                >
+                  전체 선택 해제
+                </button>
+              )}
+            </div>
+            
+            <div className="flex flex-wrap gap-2">
+              {/* 부서 필터 버튼들 */}
+              {departments.map(dept => (
+                <button
+                  key={dept}
+                  onClick={() => toggleDepartmentFilter(dept)}
+                  className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                    filters.departments.includes(dept)
+                      ? 'bg-accent text-white border-accent font-medium'
+                      : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+                  }`}
+                >
+                  {dept} ({departmentStats[dept] || 0})
+                </button>
+              ))}
+
+              {/* 미지정 부서 */}
+              {departmentStats['미지정'] > 0 && (
+                <button
+                  onClick={() => toggleDepartmentFilter('미지정')}
+                  className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                    filters.departments.includes('미지정')
+                      ? 'bg-warning text-white border-warning font-medium'
+                      : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+                  }`}
+                >
+                  미지정 ({departmentStats['미지정']})
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 상태별 필터 */}
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <CheckCircle className="w-4 h-4 text-text-secondary" />
+              <span className="text-sm font-medium text-text-primary">상태 필터</span>
+              <span className="text-xs text-text-secondary">
+                ({filters.statuses.length > 0 ? `${filters.statuses.length}개 선택됨` : '전체'})
+              </span>
+              {filters.statuses.length > 0 && (
+                <button
+                  onClick={() => setFilters(prev => ({...prev, statuses: []}))}
+                  className="text-xs text-accent hover:text-accent/80 underline"
+                >
+                  전체 선택 해제
+                </button>
+              )}
+            </div>
+            
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => toggleStatusFilter('활성')}
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                  filters.statuses.includes('활성')
+                    ? 'bg-success text-white border-success font-medium'
+                    : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+                }`}
+              >
+                활성 ({statusStats['활성']})
+              </button>
+
+              <button
+                onClick={() => toggleStatusFilter('비활성')}
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                  filters.statuses.includes('비활성')
+                    ? 'bg-warning text-white border-warning font-medium'
+                    : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+                }`}
+              >
+                비활성 ({statusStats['비활성']})
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* 벌크 액션 바 */}
-        {selectedCounselors.length > 0 && (
-          <div className="sticky top-0 bg-bg-primary border border-border-primary p-3 z-10 shadow-sm mb-6 rounded-lg">
+        {selectedCounselors.size > 0 && (
+          <div className="sticky top-0 bg-bg-primary border border-border-primary p-3 z-10 shadow-sm mb-4 rounded-lg">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-text-primary">
-                {selectedCounselors.length}명 선택됨
+                {selectedCounselors.size}명 선택됨
               </span>
               
               <div className="flex items-center space-x-2">
@@ -749,7 +1069,7 @@ function CounselorsPageContent() {
                 </button>
 
                 <button
-                  onClick={() => setSelectedCounselors([])}
+                  onClick={() => setSelectedCounselors(new Set())}
                   className="px-2 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
                 >
                   선택 해제
@@ -759,19 +1079,37 @@ function CounselorsPageContent() {
           </div>
         )}
 
-        {/* 상단 액션 바 */}
-        <div className="flex justify-between items-center mb-6">
+        {/* 제목과 검색 영역 - 콤팩트 버전 */}
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-accent" />
             <h3 className="text-sm font-medium text-text-primary">영업사원 목록</h3>
             <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
-              전체 {totalCount.toLocaleString()}명
+              필터링: {filteredCounselors.length}명 / 전체: {allCounselors.length}명
             </span>
+            {loading && (
+              <span className="text-xs text-accent animate-pulse">로딩 중...</span>
+            )}
           </div>
-          <div className="flex gap-3">
+          
+          <div className="flex items-center gap-3">
+            {/* 검색 */}
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="이름, 이메일, 부서로 검색..."
+                className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            {/* 액션 버튼들 */}
             <button
               onClick={() => {
-                loadCounselors(currentPage, debouncedSearchTerm);
+                loadDepartments();
+                loadAllCounselors();
                 toast.info('새로고침', '영업사원 목록이 업데이트되었습니다.');
               }}
               disabled={loading}
@@ -790,39 +1128,34 @@ function CounselorsPageContent() {
           </div>
         </div>
 
-        {/* 영업사원 추가 폼 */}
+        {/* 영업사원 추가 폼 - 콤팩트 버전 */}
         {showAddForm && (
-          <div className="bg-accent-light border border-border-primary rounded-lg p-6 mb-6">
-            <h4 className="text-lg font-medium mb-4 text-text-primary">새 영업사원 계정 생성</h4>
-            
-            <div className="mb-4 p-3 bg-bg-secondary border border-border-primary rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle className="w-4 h-4 text-warning" />
-                <span className="font-medium text-text-primary">Supabase Auth 연동 안내</span>
-              </div>
-              <p className="text-sm text-text-secondary">
-                관리자가 직접 로그인 ID를 설정하고 비밀번호를 지정하여 계정을 생성합니다. 
-                @crm.com 도메인 사용을 권장하며, 생성된 계정 정보를 영업사원에게 전달해주세요.
-              </p>
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4 mb-4">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-medium text-text-primary">새 영업사원 계정 생성</h4>
+              <button
+                onClick={() => setShowAddForm(false)}
+                className="text-text-tertiary hover:text-text-primary"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
             
-            <form onSubmit={handleAddCounselor} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <form onSubmit={handleAddCounselor} className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
               <div>
-                <label className="block text-sm font-medium mb-2 text-text-primary">한글 이름 *</label>
+                <label className="block text-xs font-medium mb-1 text-text-primary">한글 이름 *</label>
                 <input
                   type="text"
                   value={newCounselor.korean_name}
                   onChange={(e) => setNewCounselor(prev => ({ ...prev, korean_name: e.target.value }))}
-                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                  className="w-full px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="홍길동"
                   required
                 />
               </div>
               
               <div>
-                <label className="block text-sm font-medium mb-2 text-text-primary">
-                  로그인 ID *
-                </label>
+                <label className="block text-xs font-medium mb-1 text-text-primary">로그인 ID *</label>
                 <input
                   type="email"
                   value={newCounselor.english_id}
@@ -830,22 +1163,19 @@ function CounselorsPageContent() {
                     ...prev, 
                     english_id: e.target.value
                   }))}
-                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-                  placeholder="lee1234@crm.com 등"
+                  className="w-full px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                  placeholder="lee1234@crm.com"
                   required
                 />
-                <p className="text-xs text-text-tertiary mt-1">
-                  @crm.com 도메인 사용 및 성+휴대폰번호 뒷자리를 권장합니다. (예: lee1234@crm.com)
-                </p>
               </div>
               
               <div>
-                <label className="block text-sm font-medium mb-2 text-text-primary">비밀번호 *</label>
+                <label className="block text-xs font-medium mb-1 text-text-primary">비밀번호 *</label>
                 <input
                   type="password"
                   value={newCounselor.password}
                   onChange={(e) => setNewCounselor(prev => ({ ...prev, password: e.target.value }))}
-                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                  className="w-full px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="최소 6자리"
                   required
                   minLength={6}
@@ -853,7 +1183,7 @@ function CounselorsPageContent() {
               </div>
               
               <div>
-                <label className="block text-sm font-medium mb-2 text-text-primary">전화번호</label>
+                <label className="block text-xs font-medium mb-1 text-text-primary">전화번호</label>
                 <input
                   type="tel"
                   value={newCounselor.phone}
@@ -861,71 +1191,48 @@ function CounselorsPageContent() {
                     const formatted = formatPhoneNumber(e.target.value);
                     setNewCounselor(prev => ({ ...prev, phone: formatted }));
                   }}
-                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-                  placeholder="01012345678 또는 010-1234-5678"
+                  className="w-full px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                  placeholder="010-1234-5678"
                 />
-                <p className="text-xs text-text-tertiary mt-1">
-                  숫자만 입력해도 자동으로 하이픈이 추가됩니다.
-                </p>
               </div>
               
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium mb-2 text-text-primary">부서</label>
+              <div>
+                <label className="block text-xs font-medium mb-1 text-text-primary">부서</label>
                 <input
                   type="text"
                   value={newCounselor.department}
                   onChange={(e) => setNewCounselor(prev => ({ ...prev, department: e.target.value }))}
-                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                  className="w-full px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="영업팀"
+                  list="department-suggestions"
                 />
+                <datalist id="department-suggestions">
+                  {departments.map(dept => (
+                    <option key={dept} value={dept} />
+                  ))}
+                </datalist>
               </div>
               
-              <div className="md:col-span-2 flex gap-3 pt-4">
+              <div className="flex gap-1">
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="px-4 py-2 text-sm rounded font-medium transition-colors bg-accent text-white hover:bg-accent/90 disabled:bg-bg-secondary disabled:text-text-tertiary disabled:cursor-not-allowed"
+                  className="flex-1 px-2 py-1.5 text-xs rounded font-medium transition-colors bg-accent text-white hover:bg-accent/90 disabled:bg-bg-secondary disabled:text-text-tertiary disabled:cursor-not-allowed"
                 >
                   {actionLoading ? (
-                    <RefreshCw className="w-4 h-4 animate-spin mr-2 inline" />
+                    <RefreshCw className="w-3 h-3 animate-spin mx-auto" />
                   ) : (
-                    <UserPlus className="w-4 h-4 mr-2 inline" />
+                    <Plus className="w-3 h-3 mx-auto" />
                   )}
-                  계정 생성
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAddForm(false);
-                    setNewCounselor({ korean_name: '', english_id: '', phone: '', department: '', password: '', auto_generated: false });
-                  }}
-                  className="px-4 py-2 text-sm bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors font-medium"
-                >
-                  취소
                 </button>
               </div>
             </form>
           </div>
         )}
 
-        {/* 검색 영역 */}
-        <div className="flex items-center justify-between mb-3">
-          <div></div>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="이름, 이메일, 부서로 검색..."
-              className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
-            />
-          </div>
-        </div>
-
-        {/* 영업사원 목록 테이블 */}
+        {/* 영업사원 목록 테이블 - 콤팩트 버전 */}
         <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
-          {counselors.length > 0 ? (
+          {currentPageCounselors.length > 0 ? (
             <>
               <div className="overflow-auto" style={{ maxHeight: '65vh' }}>
                 <table className="w-full table-fixed">
@@ -936,17 +1243,18 @@ function CounselorsPageContent() {
                           onClick={toggleSelectAll}
                           className="flex items-center justify-center w-3 h-3 mx-auto"
                         >
-                          {selectedCounselors.length === counselors.length && counselors.length > 0 ? (
+                          {selectedCounselors.size === currentPageCounselors.length && currentPageCounselors.length > 0 ? (
                             <CheckSquare className="w-3 h-3 text-accent" />
                           ) : (
                             <Square className="w-3 h-3 text-text-tertiary" />
                           )}
                         </button>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
+                          onClick={() => handleSort('full_name')}>
                         <div className="flex items-center justify-center gap-0.5">
                           <User className="w-3 h-3" />
-                          이름
+                          이름{renderSortIcon('full_name')}
                         </div>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-32">
@@ -961,10 +1269,11 @@ function CounselorsPageContent() {
                           전화번호
                         </div>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
+                          onClick={() => handleSort('department')}>
                         <div className="flex items-center justify-center gap-0.5">
                           <Building2 className="w-3 h-3" />
-                          부서
+                          부서{renderSortIcon('department')}
                         </div>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
@@ -973,13 +1282,14 @@ function CounselorsPageContent() {
                           상태
                         </div>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
+                          onClick={() => handleSort('created_at')}>
                         <div className="flex items-center justify-center gap-0.5">
                           <Calendar className="w-3 h-3" />
-                          생성일
+                          생성일{renderSortIcon('created_at')}
                         </div>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-12">
                         <div className="flex items-center justify-center gap-0.5">
                           <RefreshCw className="w-3 h-3" />
                           액션
@@ -988,7 +1298,7 @@ function CounselorsPageContent() {
                     </tr>
                   </thead>
                   <tbody>
-                    {counselors.map((counselor) => (
+                    {currentPageCounselors.map((counselor) => (
                       <tr key={counselor.id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
                         {/* 선택 체크박스 */}
                         <td className="py-1 px-1 text-center">
@@ -996,7 +1306,7 @@ function CounselorsPageContent() {
                             onClick={() => toggleCounselorSelection(counselor.id)}
                             className="flex items-center justify-center w-3 h-3 mx-auto"
                           >
-                            {selectedCounselors.includes(counselor.id) ? (
+                            {selectedCounselors.has(counselor.id) ? (
                               <CheckSquare className="w-3 h-3 text-accent" />
                             ) : (
                               <Square className="w-3 h-3 text-text-tertiary" />
@@ -1032,10 +1342,12 @@ function CounselorsPageContent() {
                         {/* 부서 */}
                         <td className="py-1 px-1 text-center">
                           <div className="text-xs text-text-primary truncate">
-                            {counselor.department ? (
-                              highlightText(counselor.department, debouncedSearchTerm)
+                            {counselor.department && counselor.department.trim() ? (
+                              <span className="px-1.5 py-0.5 rounded bg-accent-light text-accent">
+                                {highlightText(counselor.department, debouncedSearchTerm)}
+                              </span>
                             ) : (
-                              <span className="text-text-tertiary">미지정</span>
+                              <span className="text-text-tertiary italic">미지정</span>
                             )}
                           </div>
                         </td>
@@ -1044,8 +1356,8 @@ function CounselorsPageContent() {
                         <td className="py-1 px-1 text-center">
                           <span className={
                             counselor.is_active 
-                              ? "px-1.5 py-0.5 text-xs rounded bg-success-light text-success"
-                              : "px-1.5 py-0.5 text-xs rounded bg-error-light text-error"
+                              ? "px-1.5 py-0.5 text-xs rounded bg-success-light text-success font-medium"
+                              : "px-1.5 py-0.5 text-xs rounded bg-error-light text-error font-medium"
                           }>
                             {counselor.is_active ? '활성' : '비활성'}
                           </span>
@@ -1055,7 +1367,6 @@ function CounselorsPageContent() {
                         <td className="py-1 px-1 text-center">
                           <span className="text-text-secondary text-xs whitespace-nowrap">
                             {new Date(counselor.created_at).toLocaleDateString('ko-KR', {
-                              year: '2-digit',
                               month: '2-digit',
                               day: '2-digit'
                             })}
@@ -1079,12 +1390,12 @@ function CounselorsPageContent() {
                 </table>
               </div>
 
-              {/* 페이지네이션 */}
+              {/* 페이지네이션 - 콤팩트 버전 */}
               {totalPages > 1 && (
                 <div className="p-3 border-t border-border-primary bg-bg-secondary">
                   <div className="flex items-center justify-between">
                     <div className="text-xs text-text-secondary">
-                      총 {totalCount.toLocaleString()}개 중 {((currentPage - 1) * itemsPerPage + 1).toLocaleString()}-{Math.min(currentPage * itemsPerPage, totalCount).toLocaleString()}개 표시
+                      총 {filteredCounselors.length.toLocaleString()}개 중 {((currentPage - 1) * pageSize + 1).toLocaleString()}-{Math.min(currentPage * pageSize, filteredCounselors.length).toLocaleString()}개 표시
                     </div>
                     
                     <div className="flex items-center gap-1">
@@ -1131,19 +1442,63 @@ function CounselorsPageContent() {
           ) : (
             <div className="text-center py-12">
               <Users className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-text-primary mb-2">등록된 영업사원이 없습니다</h3>
-              <p className="text-text-secondary">새 영업사원을 추가해보세요.</p>
+              <h3 className="text-lg font-medium text-text-primary mb-2">
+                {loading ? '데이터 로드 중...' : filteredCounselors.length === 0 && allCounselors.length > 0 ? '필터 조건에 맞는 영업사원이 없습니다' : '등록된 영업사원이 없습니다'}
+              </h3>
+              <p className="text-text-secondary mb-4">
+                {loading ? '잠시만 기다려주세요.' : filteredCounselors.length === 0 && allCounselors.length > 0 ? '필터 조건을 변경해보세요.' : '새 영업사원을 추가해보세요.'}
+              </p>
+              
+              {(filters.departments.length > 0 || filters.statuses.length > 0 || searchTerm) && (
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => setFilters(prev => ({...prev, departments: []}))}
+                    className="px-3 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                  >
+                    부서 필터 해제
+                  </button>
+                  <button
+                    onClick={() => setFilters(prev => ({...prev, statuses: []}))}
+                    className="px-3 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                  >
+                    상태 필터 해제
+                  </button>
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="px-3 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                  >
+                    검색어 지우기
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      setFilters({departments: [], statuses: [], searchTerm: ''});
+                    }}
+                    className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/90 transition-colors"
+                  >
+                    전체 초기화
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* 벌크 수정 모달 */}
+        {/* 벌크 수정 모달 - 콤팩트 버전 */}
         {showBulkEditModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-bg-primary border border-border-primary rounded-lg p-6 w-full max-w-md mx-4">
-              <h3 className="text-lg font-medium mb-4 text-text-primary">
-                {selectedCounselors.length === 1 ? '영업사원 정보 수정' : selectedCounselors.length + '명 일괄 수정'}
-              </h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-text-primary">
+                  {selectedCounselors.size === 1 ? '영업사원 정보 수정' : selectedCounselors.size + '명 일괄 수정'}
+                </h3>
+                <button
+                  onClick={() => setShowBulkEditModal(false)}
+                  className="text-text-tertiary hover:text-text-primary"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
               
               <form onSubmit={handleBulkEditSubmit} className="space-y-4">
                 <div>
@@ -1153,11 +1508,8 @@ function CounselorsPageContent() {
                     value={bulkEditForm.full_name}
                     onChange={(e) => setBulkEditForm(prev => ({ ...prev, full_name: e.target.value }))}
                     className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-                    placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "이름을 입력하세요"}
+                    placeholder={selectedCounselors.size > 1 ? "변경할 경우에만 입력" : "이름을 입력하세요"}
                   />
-                  <p className="text-xs text-text-tertiary mt-1">
-                    이메일 수정은 보안상 지원되지 않습니다.
-                  </p>
                 </div>
                 
                 <div>
@@ -1170,7 +1522,7 @@ function CounselorsPageContent() {
                       setBulkEditForm(prev => ({ ...prev, phone: formatted }));
                     }}
                     className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-                    placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "전화번호를 입력하세요"}
+                    placeholder={selectedCounselors.size > 1 ? "변경할 경우에만 입력" : "전화번호를 입력하세요"}
                   />
                 </div>
                 
@@ -1181,11 +1533,17 @@ function CounselorsPageContent() {
                     value={bulkEditForm.department}
                     onChange={(e) => setBulkEditForm(prev => ({ ...prev, department: e.target.value }))}
                     className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-                    placeholder={selectedCounselors.length > 1 ? "변경할 경우에만 입력" : "부서를 입력하세요"}
+                    placeholder={selectedCounselors.size > 1 ? "변경할 경우에만 입력" : "부서를 입력하세요"}
+                    list="bulk-edit-department-suggestions"
                   />
+                  <datalist id="bulk-edit-department-suggestions">
+                    {departments.map(dept => (
+                      <option key={dept} value={dept} />
+                    ))}
+                  </datalist>
                 </div>
 
-                {selectedCounselors.length > 1 && (
+                {selectedCounselors.size > 1 && (
                   <div className="p-3 bg-accent-light rounded-lg">
                     <p className="text-sm text-text-secondary">
                       다중 선택 시 빈 칸은 변경되지 않습니다. 변경할 정보만 입력하세요.
@@ -1230,7 +1588,9 @@ function CounselorsPageContent() {
 export default function CounselorsPage() {
   return (
     <ProtectedRoute requiredPermission="counselors">
-      <CounselorsPageContent />
+      <PermissionChecker>
+        <CounselorsPageContent />
+      </PermissionChecker>
     </ProtectedRoute>
   );
 }

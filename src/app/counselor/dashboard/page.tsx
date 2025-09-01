@@ -9,6 +9,7 @@ import { businessIcons } from '@/lib/design-system/icons';
 import { useToastHelpers } from '@/components/ui/Toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { Search, RefreshCw, Tag, X } from 'lucide-react';
 
 // 타입 정의 - 상담 진행 페이지와 동일
 interface CustomerGrade {
@@ -86,8 +87,17 @@ function CounselorDashboardContent() {
     payment_complete: 0
   });
   const [loading, setLoading] = useState(true);
-  const [gradeFilter, setGradeFilter] = useState<string>('all');
+  const [gradeFilters, setGradeFilters] = useState<string[]>([]); // 다중 선택으로 변경
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+
+  // 검색어 디바운싱
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   // 권한 체크 - 상담 진행 페이지와 동일
   useEffect(() => {
@@ -222,7 +232,7 @@ function CounselorDashboardContent() {
 
   // 등급별 통계 계산
   const getGradeStats = () => {
-    const stats = {};
+    const stats: Record<string, number> = {};
     gradeOptions.forEach(option => {
       stats[option.value] = leads.filter(lead => lead.customer_grade?.grade === option.value).length;
     });
@@ -230,27 +240,39 @@ function CounselorDashboardContent() {
     return stats;
   };
 
+  // 다중 등급 필터 토글
+  const toggleGradeFilter = (grade: string) => {
+    setGradeFilters(prev => 
+      prev.includes(grade)
+        ? prev.filter(g => g !== grade)
+        : [...prev, grade]
+    );
+  };
+
   // 필터링된 리드 계산 (검색 기능 추가)
   const getFilteredLeads = () => {
     let filtered = leads;
     
-    // 등급 필터
-    if (gradeFilter !== 'all') {
-      if (gradeFilter === '미분류') {
-        filtered = filtered.filter(lead => !lead.customer_grade?.grade);
-      } else {
-        filtered = filtered.filter(lead => lead.customer_grade?.grade === gradeFilter);
-      }
+    // 등급 필터 (다중 선택)
+    if (gradeFilters.length > 0) {
+      filtered = filtered.filter(lead => {
+        if (gradeFilters.includes('미분류')) {
+          return !lead.customer_grade?.grade || gradeFilters.includes(lead.customer_grade?.grade || '');
+        } else {
+          return lead.customer_grade?.grade && gradeFilters.includes(lead.customer_grade.grade);
+        }
+      });
     }
     
     // 검색 필터
-    if (searchTerm.trim()) {
+    if (debouncedSearchTerm.trim()) {
+      const searchLower = debouncedSearchTerm.toLowerCase();
       filtered = filtered.filter(lead => 
-        lead.phone.includes(searchTerm) ||
-        (lead.contact_name && lead.contact_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (lead.real_name && lead.real_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (lead.actual_customer_name && lead.actual_customer_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (lead.contact_script && lead.contact_script.toLowerCase().includes(searchTerm.toLowerCase()))
+        lead.phone.includes(debouncedSearchTerm) ||
+        (lead.contact_name && lead.contact_name.toLowerCase().includes(searchLower)) ||
+        (lead.real_name && lead.real_name.toLowerCase().includes(searchLower)) ||
+        (lead.actual_customer_name && lead.actual_customer_name.toLowerCase().includes(searchLower)) ||
+        (lead.contact_script && lead.contact_script.toLowerCase().includes(searchLower))
       );
     }
     
@@ -277,6 +299,27 @@ function CounselorDashboardContent() {
     )
   }
 
+  // 텍스트 하이라이트 함수
+  const highlightText = (text: string, query: string): React.ReactNode => {
+    if (!query.trim()) return text;
+    
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    const index = lowerText.indexOf(lowerQuery);
+    
+    if (index === -1) return text;
+    
+    return (
+      <>
+        {text.substring(0, index)}
+        <span className="bg-accent-light text-accent font-medium rounded px-0.5">
+          {text.substring(index, index + query.length)}
+        </span>
+        {text.substring(index + query.length)}
+      </>
+    );
+  };
+
   if (loading) {
     return (
       <CounselorLayout>
@@ -297,7 +340,7 @@ function CounselorDashboardContent() {
     <CounselorLayout>
       <div className="p-6 max-w-7xl mx-auto">
         {/* 헤더 */}
-        <div className="mb-8">
+        <div className="mb-6">
           <h1 className={designSystem.components.typography.h2}>상담원 대시보드</h1>
           <p className="text-text-secondary mt-2">
             배정받은 고객 현황과 상담 진행 상태를 확인하세요
@@ -367,66 +410,151 @@ function CounselorDashboardContent() {
           </div>
         </div>
 
-        {/* 등급 필터 및 새로고침 */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-text-secondary text-sm">등급:</span>
-              <select
-                value={gradeFilter}
-                onChange={(e) => setGradeFilter(e.target.value)}
-                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+        {/* 등급 필터 버튼 그룹 - 리드 페이지와 동일한 스타일 */}
+        <div className="mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Tag className="w-4 h-4 text-text-secondary" />
+            <span className="text-sm font-medium text-text-primary">등급 필터</span>
+            <span className="text-xs text-text-secondary">
+              ({gradeFilters.length > 0 ? `${gradeFilters.length}개 선택됨` : '전체'})
+            </span>
+            {gradeFilters.length > 0 && (
+              <button
+                onClick={() => setGradeFilters([])}
+                className="text-xs text-accent hover:text-accent/80 underline"
               >
-                <option value="all">전체</option>
-                {gradeOptions.map(grade => {
-                  const count = gradeStats[grade.value] || 0;
-                  return (
-                    <option key={grade.value} value={grade.value}>
-                      {grade.label} ({count})
-                    </option>
-                  );
-                })}
-                <option value="미분류">
-                  미분류 ({gradeStats['미분류'] || 0})
-                </option>
-              </select>
-            </div>
+                전체 선택 해제
+              </button>
+            )}
           </div>
           
-          <button
-            onClick={loadDashboardData}
-            disabled={loading}
-            className={designSystem.utils.cn(
-              designSystem.components.button.secondary,
-              "px-4 py-2"
-            )}
-          >
-            <businessIcons.team className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-            새로고침
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {/* 미분류 버튼 */}
+            <button
+              onClick={() => toggleGradeFilter('미분류')}
+              className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                gradeFilters.includes('미분류')
+                  ? 'bg-bg-secondary border-accent text-accent font-medium'
+                  : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+              }`}
+            >
+              미분류 ({gradeStats['미분류'] || 0})
+            </button>
+
+            {/* 등급 버튼들 */}
+            {gradeOptions.map(grade => (
+              <button
+                key={grade.value}
+                onClick={() => toggleGradeFilter(grade.value)}
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                  gradeFilters.includes(grade.value)
+                    ? 'text-white font-medium border-transparent'
+                    : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+                }`}
+                style={gradeFilters.includes(grade.value) ? {
+                  backgroundColor: grade.color,
+                  borderColor: grade.color
+                } : {}}
+              >
+                {grade.label} ({gradeStats[grade.value] || 0})
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* 제목과 검색 영역 */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <businessIcons.team className="w-3 h-3 text-accent" />
-            <h3 className="text-xs font-medium text-text-primary">최근 배정 고객</h3>
+            <businessIcons.team className="w-4 h-4 text-accent" />
+            <h3 className="text-sm font-medium text-text-primary">최근 배정 고객</h3>
             <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
-              {filteredLeads.length}명
+              필터링: {filteredLeads.length}명 / 전체: {leads.length}명
             </span>
+            {loading && (
+              <span className="text-xs text-accent animate-pulse">로딩 중...</span>
+            )}
           </div>
           
-          <div className="relative">
-            <businessIcons.script className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="고객명, 전화번호로 검색..."
-              className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
-            />
+          <div className="flex items-center gap-3">
+            {/* 검색 */}
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="고객명, 전화번호로 검색..."
+                className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2 text-text-tertiary hover:text-text-primary"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            {/* 새로고침 버튼 */}
+            <button
+              onClick={loadDashboardData}
+              disabled={loading}
+              className="px-3 py-2 text-xs rounded font-medium transition-colors bg-bg-secondary text-text-primary hover:bg-bg-hover disabled:opacity-50"
+            >
+              <RefreshCw className={loading ? "w-3 h-3 mr-1 inline animate-spin" : "w-3 h-3 mr-1 inline"} />
+              새로고침
+            </button>
           </div>
         </div>
+
+        {/* 활성 필터 표시 */}
+        {(gradeFilters.length > 0 || searchTerm) && (
+          <div className="flex items-center gap-2 flex-wrap mb-4">
+            <span className="text-xs font-medium text-text-secondary">활성 필터:</span>
+            
+            {gradeFilters.map(grade => {
+              const gradeOption = gradeOptions.find(g => g.value === grade);
+              return (
+                <div key={grade} className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-white font-medium"
+                     style={{ backgroundColor: gradeOption?.color || (grade === '미분류' ? '#6b7280' : '#3b82f6') }}>
+                  <Tag className="w-3 h-3" />
+                  <span>{gradeOption?.label || grade}</span>
+                  <button
+                    onClick={() => toggleGradeFilter(grade)}
+                    className="ml-1 hover:opacity-70"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })}
+            
+            {searchTerm && (
+              <div className="flex items-center gap-1 px-2 py-1 bg-success-light text-success rounded-md text-xs">
+                <Search className="w-3 h-3" />
+                <span>검색: {searchTerm}</span>
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="ml-1 hover:text-success/70"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+
+            {/* 전체 필터 초기화 */}
+            <button
+              onClick={() => {
+                setSearchTerm('');
+                setGradeFilters([]);
+              }}
+              className="text-xs text-text-tertiary hover:text-text-primary underline"
+            >
+              전체 초기화
+            </button>
+          </div>
+        )}
 
         {/* 최근 배정 고객 목록 */}
         <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
@@ -512,7 +640,7 @@ function CounselorDashboardContent() {
                       {/* 연락처 */}
                       <td className="py-1 px-1 text-center">
                         <div className="font-mono text-text-primary font-medium text-xs truncate">
-                          {lead.phone}
+                          {highlightText(lead.phone, debouncedSearchTerm)}
                         </div>
                       </td>
 
@@ -520,7 +648,9 @@ function CounselorDashboardContent() {
                       <td className="py-1 px-1 text-center">
                         <div className="text-xs whitespace-nowrap truncate">
                           {lead.actual_customer_name || lead.real_name ? (
-                            <span className="text-text-primary">{lead.actual_customer_name || lead.real_name}</span>
+                            <span className="text-text-primary">
+                              {highlightText(lead.actual_customer_name || lead.real_name || '', debouncedSearchTerm)}
+                            </span>
                           ) : (
                             <span className="text-text-tertiary">미확인</span>
                           )}
@@ -531,7 +661,9 @@ function CounselorDashboardContent() {
                       <td className="py-1 px-1 text-center">
                         <div className="text-xs whitespace-nowrap truncate">
                           {lead.contact_name ? (
-                            <span className="text-text-primary">{lead.contact_name}</span>
+                            <span className="text-text-primary">
+                              {highlightText(lead.contact_name, debouncedSearchTerm)}
+                            </span>
                           ) : (
                             <span className="text-text-tertiary">미확인</span>
                           )}
@@ -544,9 +676,9 @@ function CounselorDashboardContent() {
                           {lead.contact_script ? (
                             <>
                               <div className="text-text-primary text-xs truncate cursor-help">
-                                {lead.contact_script}
+                                {highlightText(lead.contact_script, debouncedSearchTerm)}
                               </div>
-                              <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-10 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+                              <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-20 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
                                 {lead.contact_script}
                               </div>
                             </>
@@ -569,12 +701,12 @@ function CounselorDashboardContent() {
                               <div className="text-text-primary text-xs truncate cursor-help">
                                 {lead.counseling_memo}
                               </div>
-                              <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-10 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+                              <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-20 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
                                 {lead.counseling_memo}
                               </div>
                             </>
                           ) : (
-                            <span className="text-text-tertiary text-xs">미확인</span>
+                            <span className="text-text-tertiary text-xs">-</span>
                           )}
                         </div>
                       </td>
@@ -594,7 +726,7 @@ function CounselorDashboardContent() {
                                 month: '2-digit',
                                 day: '2-digit'
                               })
-                            : '미확인'
+                            : '-'
                           }
                         </span>
                       </td>
@@ -616,7 +748,7 @@ function CounselorDashboardContent() {
                             {(lead.contract_amount / 10000).toFixed(0)}만
                           </span>
                         ) : (
-                          <span className="text-text-tertiary text-xs">미확인</span>
+                          <span className="text-text-tertiary text-xs">-</span>
                         )}
                       </td>
 
@@ -624,7 +756,7 @@ function CounselorDashboardContent() {
                       <td className="py-1 px-1 text-center">
                         <button
                           onClick={() => router.push('/counselor/consulting')}
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-accent text-bg-primary rounded text-xs font-medium whitespace-nowrap"
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-accent text-bg-primary rounded text-xs font-medium whitespace-nowrap hover:bg-accent/90 transition-colors"
                         >
                           <businessIcons.phone className="w-3 h-3" />
                           상담
@@ -639,13 +771,37 @@ function CounselorDashboardContent() {
             <div className="text-center py-12">
               <businessIcons.contact className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
               <h3 className="text-lg font-medium text-text-primary mb-2">
-                {gradeFilter === 'all' && !searchTerm ? '배정받은 고객이 없습니다' : 
-                 searchTerm ? `"${searchTerm}"에 대한 검색 결과가 없습니다` :
-                 `${gradeFilter === '미분류' ? '미분류' : gradeFilter} 등급 고객이 없습니다`}
+                {gradeFilters.length > 0 || searchTerm ? '조건에 맞는 고객이 없습니다' : '배정받은 고객이 없습니다'}
               </h3>
-              <p className="text-text-secondary">
-                {searchTerm ? '다른 검색어를 시도해보세요.' : '관리자가 고객을 배정하면 여기에 표시됩니다.'}
+              <p className="text-text-secondary mb-4">
+                {gradeFilters.length > 0 || searchTerm ? '필터 조건을 변경해보세요.' : '관리자가 고객을 배정하면 여기에 표시됩니다.'}
               </p>
+              
+              {(gradeFilters.length > 0 || searchTerm) && (
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => setGradeFilters([])}
+                    className="px-3 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                  >
+                    등급 필터 해제
+                  </button>
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="px-3 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                  >
+                    검색어 지우기
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      setGradeFilters([]);
+                    }}
+                    className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/90 transition-colors"
+                  >
+                    전체 초기화
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
