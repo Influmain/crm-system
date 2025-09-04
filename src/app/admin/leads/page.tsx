@@ -28,7 +28,8 @@ import {
   Save,
   X,
   Plus,
-  Tag
+  Tag,
+  Building
 } from 'lucide-react';
 
 // 뷰 기반 타입 정의
@@ -128,9 +129,9 @@ function AdminLeadsPageContent() {
   const [departments, setDepartments] = useState<string[]>([]);
   const [counselors, setCounselors] = useState<any[]>([]);
 
-  // 페이지네이션 상태 (클라이언트 사이드)
+  // 페이지네이션 상태 (클라이언트 사이드) - 300개로 변경
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(50); // 클라이언트 필터링이므로 페이지 크기 줄임
+  const [pageSize] = useState(300); // 50 → 300으로 변경
   
   // 정렬 상태
   const [sortColumn, setSortColumn] = useState<string>('created_at');
@@ -140,6 +141,10 @@ function AdminLeadsPageContent() {
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  
+  // 리드 추가 모달 상태
+  const [showAddLeadModal, setShowAddLeadModal] = useState(false);
+  const [addingLead, setAddingLead] = useState(false);
 
   // 인라인 편집 상태
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null);
@@ -194,13 +199,12 @@ function AdminLeadsPageContent() {
     }
   }, []);
 
-  // 전체 데이터 로드 (원본 방식 복원)
+  // 전체 데이터 로드
   const loadAllLeads = useCallback(async () => {
     try {
       setLoading(true);
       console.log('=== 전체 데이터 로드 시작 ===');
 
-      // 원본과 동일한 방식으로 로드
       let allData: Lead[] = [];
       let from = 0;
       const batchSize = 1000;
@@ -258,24 +262,8 @@ function AdminLeadsPageContent() {
         }
       }
 
-      // 중복 제거 및 분석
-      const duplicateIds = allData
-        .map(lead => lead.id)
-        .filter((id, index, self) => self.indexOf(id) !== index);
-      
-      const uniqueData = allData.filter((lead, index, self) => 
-        index === self.findIndex(l => l.id === lead.id)
-      );
-
-      if (duplicateIds.length > 0) {
-        console.log('중복된 ID들:', [...new Set(duplicateIds)]);
-        console.log('중복 데이터 상세:', duplicateIds.map(id => 
-          allData.filter(lead => lead.id === id)
-        ));
-      }
-
-      console.log(`전체 데이터 로드 완료: ${allData.length}개 → 중복 제거 후: ${uniqueData.length}개`);
-      setAllLeads(uniqueData);
+      console.log(`전체 데이터 로드 완료: ${allData.length}개`);
+      setAllLeads(allData);
 
     } catch (error) {
       console.error('전체 데이터 로드 실패:', error);
@@ -357,7 +345,8 @@ function AdminLeadsPageContent() {
         lead.phone?.toLowerCase().includes(searchLower) ||
         lead.contact_name?.toLowerCase().includes(searchLower) ||
         lead.real_name?.toLowerCase().includes(searchLower) ||
-        lead.actual_customer_name?.toLowerCase().includes(searchLower)
+        lead.actual_customer_name?.toLowerCase().includes(searchLower) ||
+        lead.data_source?.toLowerCase().includes(searchLower)
       );
       console.log('검색어 필터 후:', filtered.length);
     }
@@ -427,6 +416,10 @@ function AdminLeadsPageContent() {
         case 'phone':
           aValue = a.phone || '';
           bValue = b.phone || '';
+          break;
+        case 'data_source':
+          aValue = a.data_source || '';
+          bValue = b.data_source || '';
           break;
         default:
           aValue = a[sortColumn as keyof Lead] || '';
@@ -571,6 +564,120 @@ function AdminLeadsPageContent() {
     
     return phone.slice(0, 2) + '*'.repeat(phone.length - 2);
   };
+
+  // 리드 추가 함수
+const handleAddLead = async (e: React.FormEvent<HTMLFormElement>) => {
+  e.preventDefault();
+  
+  if (!user) {
+    toast.error('인증 오류', '로그인이 필요합니다.');
+    return;
+  }
+  
+  setAddingLead(true);
+  
+  try {
+    const formData = new FormData(e.currentTarget);
+    
+    // DB출처를 사용자 정보 기반으로 자동 설정
+    const dataSource = userProfile?.full_name 
+      ? `수동입력-${userProfile.full_name}`
+      : `수동입력-${user.email?.split('@')[0]}`;
+    
+    const newLead = {
+      phone: formData.get('phone') as string,
+      contact_name: formData.get('contact_name') as string,
+      contact_script: formData.get('contact_script') as string,
+      data_source: dataSource,
+      status: 'available',
+      uploaded_by: user.id,
+      // upload_batch_id 제거 - nullable이므로 null로 처리
+      created_at: new Date().toISOString()
+    };
+    
+    const { error } = await supabase
+      .from('lead_pool')
+      .insert(newLead);
+    
+    if (error) throw error;
+    
+    toast.success('리드 추가 완료', '새로운 고객이 추가되었습니다.');
+    setShowAddLeadModal(false);
+    
+    // 폼 리셋
+    (e.target as HTMLFormElement).reset();
+    
+    // 데이터 새로고침
+    await Promise.all([
+      loadAllLeads(),
+      loadOverallStats()
+    ]);
+    
+  } catch (error) {
+    console.error('리드 추가 실패:', error);
+    toast.error('리드 추가 실패', error.message || '알 수 없는 오류가 발생했습니다.');
+  } finally {
+    setAddingLead(false);
+  }
+};
+
+// 벌크 삭제 함수
+const handleBulkDelete = async () => {
+  if (selectedLeads.size === 0) {
+    toast.warning('선택 확인', '삭제할 리드를 선택해주세요.');
+    return;
+  }
+
+  // 확인 대화상자
+  const confirmMessage = `선택한 ${selectedLeads.size}개의 리드를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`;
+  if (!window.confirm(confirmMessage)) {
+    return;
+  }
+
+  setLoading(true);
+  
+  try {
+    const leadIds = Array.from(selectedLeads);
+    
+    // lead_assignments 먼저 삭제 (외래키 제약)
+    const { error: assignmentError } = await supabase
+      .from('lead_assignments')
+      .delete()
+      .in('lead_id', leadIds);
+    
+    if (assignmentError) {
+      console.warn('배정 정보 삭제 중 오류:', assignmentError);
+    }
+    
+    // lead_pool에서 삭제
+    const { error: leadError } = await supabase
+      .from('lead_pool')
+      .delete()
+      .in('id', leadIds);
+    
+    if (leadError) throw leadError;
+    
+    toast.success(
+      '삭제 완료', 
+      `${selectedLeads.size}개의 리드가 삭제되었습니다.`
+    );
+    
+    // 선택 초기화
+    setSelectedLeads(new Set());
+    
+    // 데이터 새로고침
+    await Promise.all([
+      loadAllLeads(),
+      loadOverallStats()
+    ]);
+    
+  } catch (error) {
+    console.error('벌크 삭제 실패:', error);
+    toast.error('삭제 실패', error.message || '알 수 없는 오류가 발생했습니다.');
+  } finally {
+    setLoading(false);
+  }
+};
 
   // 필터 적용 (의존성 배열에 따라)
   useEffect(() => {
@@ -801,28 +908,50 @@ function AdminLeadsPageContent() {
 
         {/* 제목과 검색 영역 */}
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <businessIcons.team className="w-3 h-3 text-accent" />
-            <h3 className="text-xs font-medium text-text-primary">고객 리드 목록</h3>
-            <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
-              필터링: {filteredLeads.length.toLocaleString()}명 / 전체: {allLeads.length.toLocaleString()}명
-            </span>
-            {loading && (
-              <span className="text-xs text-accent animate-pulse">로딩 중...</span>
-            )}
-          </div>
-          
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="고객명, 전화번호로 검색..."
-              className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
-            />
-          </div>
-        </div>
+  <div className="flex items-center gap-2">
+    <businessIcons.team className="w-3 h-3 text-accent" />
+    <h3 className="text-xs font-medium text-text-primary">고객 리드 목록</h3>
+    <span className="text-xs text-text-secondary px-1.5 py-0.5 bg-bg-secondary rounded">
+      필터링: {filteredLeads.length.toLocaleString()}명 / 전체: {allLeads.length.toLocaleString()}명
+    </span>
+    {loading && (
+      <span className="text-xs text-accent animate-pulse">로딩 중...</span>
+    )}
+  </div>
+  
+  <div className="flex items-center gap-2">
+     {/* 벌크 삭제 버튼 - 선택된 항목이 있을 때만 표시 */}
+    {selectedLeads.size > 0 && (
+      <button
+        onClick={handleBulkDelete}
+        className="px-3 py-1 text-xs bg-error text-white rounded hover:bg-error/90 flex items-center gap-1 font-medium"
+      >
+        <Trash2 className="w-3 h-3" />
+        {selectedLeads.size}개 삭제
+      </button>
+    )}
+    {/* 리드 추가 버튼 - 이 부분 추가 */}
+    <button
+      onClick={() => setShowAddLeadModal(true)}
+      className="px-3 py-1 text-xs bg-accent text-white rounded hover:bg-accent/90 flex items-center gap-1 font-medium"
+    >
+      <Plus className="w-3 h-3" />
+      리드 추가
+    </button>
+    
+    {/* 기존 검색 입력 */}
+    <div className="relative">
+      <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
+      <input
+        type="text"
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        placeholder="고객명, 전화번호, DB출처로 검색..."
+        className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+      />
+    </div>
+  </div>
+</div>
 
         {/* 고객 리드 테이블 */}
         <div className="bg-bg-primary border border-border-primary rounded-lg overflow-hidden">
@@ -855,6 +984,13 @@ function AdminLeadsPageContent() {
                         <div className="flex items-center justify-center gap-0.5">
                           <UserCheck className="w-3 h-3" />
                           영업사원
+                        </div>
+                      </th>
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
+                          onClick={() => handleSort('data_source')}>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <Building className="w-3 h-3" />
+                          DB출처{renderSortIcon('data_source')}
                         </div>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
@@ -964,6 +1100,15 @@ function AdminLeadsPageContent() {
                                 <span className="text-text-tertiary text-xs">미배정</span>
                               </div>
                             )}
+                          </div>
+                        </td>
+
+                        {/* DB출처 */}
+                        <td className="py-1 px-1 text-center">
+                          <div className="w-20 mx-auto">
+                            <span className="text-text-primary text-xs truncate font-medium">
+                              {lead.data_source || '-'}
+                            </span>
                           </div>
                         </td>
 
@@ -1088,7 +1233,7 @@ function AdminLeadsPageContent() {
                 <div className="p-3 border-t border-border-primary bg-bg-secondary">
                   <div className="flex items-center justify-between">
                     <div className="text-xs text-text-secondary">
-                      총 {filteredLeads.length.toLocaleString()}개 중 {((currentPage - 1) * pageSize + 1).toLocaleString()}-{Math.min(currentPage * pageSize, filteredLeads.length).toLocaleString()}개 표시
+                      총 {filteredLeads.length.toLocaleString()}개 중 {((currentPage - 1) * pageSize + 1).toLocaleString()}-{Math.min(currentPage * pageSize, filteredLeads.length).toLocaleString()}개 표시 (페이지당 {pageSize}개)
                     </div>
                     
                     <div className="flex items-center gap-1">
@@ -1144,6 +1289,98 @@ function AdminLeadsPageContent() {
             </div>
           )}
         </div>
+
+        {/* 리드 추가 모달 */}
+        {showAddLeadModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-md mx-auto">
+              <div className="p-6 border-b border-border-primary">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-text-primary">리드 수동 추가</h3>
+                  <button
+                    onClick={() => setShowAddLeadModal(false)}
+                    className="p-1 hover:bg-bg-hover rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5 text-text-secondary" />
+                  </button>
+                </div>
+                <p className="text-sm text-text-secondary mt-1">
+                  DB출처는 자동으로 설정됩니다: {userProfile?.full_name ? `수동입력-${userProfile.full_name}` : `수동입력-${user?.email?.split('@')[0]}`}
+                </p>
+              </div>
+
+              <form onSubmit={handleAddLead} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-text-primary">
+                    전화번호 <span className="text-error">*</span>
+                  </label>
+                  <input
+                    name="phone"
+                    type="tel"
+                    required
+                    pattern="[0-9]{3}-[0-9]{3,4}-[0-9]{4}"
+                    placeholder="010-0000-0000"
+                    className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <p className="text-xs text-text-secondary mt-1">형식: 010-0000-0000</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-text-primary">
+                    고객명 <span className="text-error">*</span>
+                  </label>
+                  <input
+                    name="contact_name"
+                    type="text"
+                    required
+                    placeholder="고객명을 입력하세요"
+                    className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-text-primary">
+                    관심분야
+                  </label>
+                  <textarea
+                    name="contact_script"
+                    rows={3}
+                    placeholder="고객의 관심분야나 문의내용을 입력하세요"
+                    className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent resize-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-border-primary">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddLeadModal(false)}
+                    disabled={addingLead}
+                    className="px-4 py-2 bg-bg-secondary text-text-primary rounded-lg hover:bg-bg-hover transition-colors disabled:opacity-50"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={addingLead}
+                    className="px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {addingLead ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        추가 중...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        추가
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* 전체 정보 수정 모달 */}
         {editingLead && (
