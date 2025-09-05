@@ -129,9 +129,9 @@ function AdminLeadsPageContent() {
   const [departments, setDepartments] = useState<string[]>([]);
   const [counselors, setCounselors] = useState<any[]>([]);
 
-  // 페이지네이션 상태 (클라이언트 사이드) - 300개로 변경
+  // 페이지네이션 상태 (클라이언트 사이드) - 50으로 변경
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize] = useState(300); // 50 → 300으로 변경
+  const [pageSize] = useState(50); // 50으로 변경
   
   // 정렬 상태
   const [sortColumn, setSortColumn] = useState<string>('created_at');
@@ -145,6 +145,11 @@ function AdminLeadsPageContent() {
   // 리드 추가 모달 상태
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [addingLead, setAddingLead] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+
+  // 벌크 숫자 삭제
+  const [bulkDeleteCount, setBulkDeleteCount] = useState('');
+  const [bulkDeleteMode, setBulkDeleteMode] = useState<'selected' | 'count'>('selected');
 
   // 인라인 편집 상태
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null);
@@ -621,49 +626,76 @@ const handleAddLead = async (e: React.FormEvent<HTMLFormElement>) => {
   }
 };
 
-// 벌크 삭제 함수
+// 개선된 벌크 삭제 함수
 const handleBulkDelete = async () => {
-  if (selectedLeads.size === 0) {
-    toast.warning('선택 확인', '삭제할 리드를 선택해주세요.');
-    return;
+  if (selectedLeads.size > 0) {
+    setShowBulkDeleteModal(true);
+    setBulkDeleteMode('selected');
+  } else {
+    setShowBulkDeleteModal(true);
+    setBulkDeleteMode('count');
   }
+};
 
-  // 확인 대화상자
-  const confirmMessage = `선택한 ${selectedLeads.size}개의 리드를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`;
-  if (!window.confirm(confirmMessage)) {
-    return;
-  }
-
+// 실제 삭제 실행 함수
+const executeBulkDelete = async () => {
   setLoading(true);
   
-  try {
-    const leadIds = Array.from(selectedLeads);
+  // 로딩 표시를 위한 약간의 지연
+  await new Promise(resolve => setTimeout(resolve, 100));
+  
+    try {
+    let leadIdsToDelete: string[] = [];
     
-    // lead_assignments 먼저 삭제 (외래키 제약)
-    const { error: assignmentError } = await supabase
-      .from('lead_assignments')
-      .delete()
-      .in('lead_id', leadIds);
-    
-    if (assignmentError) {
-      console.warn('배정 정보 삭제 중 오류:', assignmentError);
+    if (bulkDeleteMode === 'selected') {
+      leadIdsToDelete = Array.from(selectedLeads);
+    } else {
+      const deleteCount = parseInt(bulkDeleteCount);
+      if (isNaN(deleteCount) || deleteCount <= 0) {
+        toast.warning('입력 오류', '올바른 숫자를 입력해주세요.');
+        return;
+      }
+      
+      // 필터링된 전체 데이터에서 삭제 (현재 페이지에 제한받지 않음)
+      leadIdsToDelete = filteredLeads
+        .slice(0, Math.min(deleteCount, filteredLeads.length))
+        .map(lead => lead.id);
     }
     
-    // lead_pool에서 삭제
-    const { error: leadError } = await supabase
-      .from('lead_pool')
-      .delete()
-      .in('id', leadIds);
+    if (leadIdsToDelete.length === 0) {
+      toast.warning('선택 확인', '삭제할 데이터가 없습니다.');
+      return;
+    }
     
-    if (leadError) throw leadError;
+    // 삭제 진행률 표시
+    toast.info('삭제 중...', `${leadIdsToDelete.length}개 데이터 삭제 중입니다.`, {
+      duration: 0
+    });
+    
+    // 배치 처리로 삭제 (50개씩)
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < leadIdsToDelete.length; i += BATCH_SIZE) {
+      const batch = leadIdsToDelete.slice(i, i + BATCH_SIZE);
+      
+      await supabase
+        .from('lead_assignments')
+        .delete()
+        .in('lead_id', batch);
+      
+      await supabase
+        .from('lead_pool')
+        .delete()
+        .in('id', batch);
+    }
     
     toast.success(
       '삭제 완료', 
-      `${selectedLeads.size}개의 리드가 삭제되었습니다.`
+      `${leadIdsToDelete.length}개의 리드가 삭제되었습니다.`
     );
     
-    // 선택 초기화
     setSelectedLeads(new Set());
+    setShowBulkDeleteModal(false);
+    setBulkDeleteCount('');
     
     // 데이터 새로고침
     await Promise.all([
@@ -920,16 +952,22 @@ const handleBulkDelete = async () => {
   </div>
   
   <div className="flex items-center gap-2">
-     {/* 벌크 삭제 버튼 - 선택된 항목이 있을 때만 표시 */}
-    {selectedLeads.size > 0 && (
+{/* 벌크 삭제 버튼 - 항상 표시 */}
       <button
-        onClick={handleBulkDelete}
-        className="px-3 py-1 text-xs bg-error text-white rounded hover:bg-error/90 flex items-center gap-1 font-medium"
-      >
-        <Trash2 className="w-3 h-3" />
-        {selectedLeads.size}개 삭제
-      </button>
-    )}
+  onClick={handleBulkDelete}
+  className={`px-3 py-1 text-xs ${
+    selectedLeads.size > 0 
+      ? 'bg-error text-white' 
+      : 'bg-warning text-white'
+  } rounded hover:opacity-90 flex items-center gap-1 font-medium`}
+>
+  <Trash2 className="w-3 h-3" />
+  {selectedLeads.size > 0 
+    ? `${selectedLeads.size}개 삭제` 
+    : '벌크 삭제'
+  }
+</button>
+
     {/* 리드 추가 버튼 - 이 부분 추가 */}
     <button
       onClick={() => setShowAddLeadModal(true)}
@@ -1493,6 +1531,132 @@ const handleBulkDelete = async () => {
             </div>
           </div>
         )}
+
+        {/* 벌크 삭제 모달 */}
+{showBulkDeleteModal && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-md mx-auto">
+      <div className="p-6 border-b border-border-primary">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-warning" />
+            벌크 삭제 확인
+          </h3>
+          <button
+            onClick={() => {
+              setShowBulkDeleteModal(false);
+              setBulkDeleteCount('');
+            }}
+            className="p-1 hover:bg-bg-hover rounded-lg transition-colors"
+          >
+            <X className="w-5 h-5 text-text-secondary" />
+          </button>
+        </div>
+      </div>
+
+      <div className="p-6">
+        {bulkDeleteMode === 'selected' ? (
+          <div className="space-y-4">
+            <div className="p-4 bg-error/10 border border-error/20 rounded-lg">
+              <p className="text-sm text-text-primary mb-2">
+                선택한 <span className="font-bold text-error">{selectedLeads.size}개</span>의 리드를 삭제하시겠습니까?
+              </p>
+              <p className="text-xs text-text-secondary">
+                이 작업은 되돌릴 수 없습니다.
+              </p>
+            </div>
+            
+            <div className="text-center">
+              <button
+                onClick={() => {
+                  setBulkDeleteMode('count');
+                  setSelectedLeads(new Set());
+                }}
+                className="text-xs text-accent hover:underline"
+              >
+                숫자로 입력하여 삭제하기
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2 text-text-primary">
+                삭제할 리드 개수 입력
+              </label>
+              <input
+  type="number"
+  value={bulkDeleteCount}
+  onChange={(e) => setBulkDeleteCount(e.target.value)}
+  placeholder="삭제할 개수를 입력하세요"
+  min="1"
+  max={filteredLeads.length} // 전체 필터링 데이터 개수로 변경
+  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+/>
+<p className="text-xs text-text-secondary mt-1">
+  필터링된 전체 {filteredLeads.length.toLocaleString()}개 중에서 상위 {bulkDeleteCount || 'N'}개가 삭제됩니다.
+</p>
+            </div>
+            
+{bulkDeleteCount && parseInt(bulkDeleteCount) > 0 && (
+  <div className="p-4 bg-warning/10 border border-warning/20 rounded-lg">
+    <p className="text-sm text-text-primary">
+      필터링된 전체 데이터에서 상위 <span className="font-bold text-warning">
+        {Math.min(parseInt(bulkDeleteCount), filteredLeads.length)}개
+      </span>의 리드가 삭제됩니다.
+    </p>
+  </div>
+)}
+            
+            {selectedLeads.size > 0 && (
+              <div className="text-center">
+                <button
+                  onClick={() => setBulkDeleteMode('selected')}
+                  className="text-xs text-accent hover:underline"
+                >
+                  선택한 항목 삭제로 전환 ({selectedLeads.size}개)
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        
+        <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-border-primary">
+          <button
+            onClick={() => {
+              setShowBulkDeleteModal(false);
+              setBulkDeleteCount('');
+            }}
+            disabled={loading}
+            className="px-4 py-2 bg-bg-secondary text-text-primary rounded-lg hover:bg-bg-hover transition-colors disabled:opacity-50"
+          >
+            취소
+          </button>
+          <button
+            onClick={executeBulkDelete}
+            disabled={
+              loading || 
+              (bulkDeleteMode === 'count' && (!bulkDeleteCount || parseInt(bulkDeleteCount) <= 0))
+            }
+            className="px-4 py-2 bg-error text-white rounded-lg hover:bg-error/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+          >
+            {loading ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                삭제 중...
+              </>
+            ) : (
+              <>
+                <Trash2 className="w-4 h-4" />
+                삭제 확인
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
       </div>
     </AdminLayout>
   );
