@@ -23,11 +23,17 @@ import {
   AlertTriangle
 } from 'lucide-react';
 
+interface DepartmentPermissions {
+  [userId: string]: string[];
+}
+
 function AdminSettingsContent() {
   const { user, userProfile } = useAuth();
   const toast = useToastHelpers();
   const { settings, updateSetting, loadSettings } = useSystemSettings();
-  
+  const [departmentPermissions, setDepartmentPermissions] = useState<DepartmentPermissions>({});
+const [availableDepartments, setAvailableDepartments] = useState<string[]>([]);
+const [loadingDepartments, setLoadingDepartments] = useState(false);
   // 최고관리자 권한 검사
   if (!userProfile?.is_super_admin) {
     return (
@@ -77,9 +83,10 @@ function AdminSettingsContent() {
   const [userToDelete, setUserToDelete] = useState<UserWithPermissions | null>(null);
 
   // 데이터 로드
-  useEffect(() => {
-    loadUsersWithPermissions();
-  }, []);
+useEffect(() => {
+  loadUsersWithPermissions();
+  loadDepartmentsData(); // 추가
+}, []);
 
   // 사용자 및 권한 데이터 로드
   const loadUsersWithPermissions = async () => {
@@ -104,6 +111,48 @@ function AdminSettingsContent() {
       setLoading(false);
     }
   };
+
+  // loadUsersWithPermissions 함수 아래에 추가
+const loadDepartmentsData = async () => {
+  setLoadingDepartments(true);
+  try {
+    // 1. 영업사원들의 부서 목록 가져오기
+    const { data: deptData, error: deptError } = await supabase
+      .from('users')
+      .select('department')
+      .eq('role', 'counselor')
+      .eq('is_active', true)
+      .not('department', 'is', null);
+    
+    if (deptError) throw deptError;
+    
+    const uniqueDepts = [...new Set(deptData?.map(d => d.department).filter(Boolean))] as string[];
+    setAvailableDepartments(uniqueDepts.sort());
+    
+    // 2. localStorage에서 기존 권한 설정 로드
+    const savedPermissions = localStorage.getItem('crm_department_permissions');
+    if (savedPermissions) {
+      try {
+        const parsed = JSON.parse(savedPermissions);
+        setDepartmentPermissions(parsed);
+      } catch (e) {
+        console.error('부서 권한 파싱 오류:', e);
+        localStorage.removeItem('crm_department_permissions');
+      }
+    }
+    
+    console.log('부서 데이터 로드 완료:', {
+      departments: uniqueDepts,
+      savedPermissions: savedPermissions ? Object.keys(JSON.parse(savedPermissions)).length : 0
+    });
+    
+  } catch (error) {
+    console.error('부서 데이터 로드 실패:', error);
+    toast.error('부서 정보 로드 실패', '부서 목록을 불러올 수 없습니다.');
+  } finally {
+    setLoadingDepartments(false);
+  }
+};
 
   // 관리자 계정 생성
   const handleCreateAdmin = async (e: React.FormEvent) => {
@@ -350,6 +399,29 @@ function AdminSettingsContent() {
       setActionLoading(false);
     }
   };
+
+// savePermissions 함수 아래에 추가
+const saveDepartmentPermissions = (userId: string, departments: string[]) => {
+  const newPermissions = {
+    ...departmentPermissions,
+    [userId]: departments
+  };
+  
+  setDepartmentPermissions(newPermissions);
+  localStorage.setItem('crm_department_permissions', JSON.stringify(newPermissions));
+  
+  // 해당 사용자 찾기
+  const user = users.find(u => u.id === userId);
+  const userName = user?.full_name || '사용자';
+  
+  if (departments.length === 0) {
+    toast.warning('부서 권한 제거', `${userName}님의 모든 부서 접근 권한이 제거되었습니다.`);
+  } else if (departments.length === availableDepartments.length) {
+    toast.success('전체 부서 권한', `${userName}님에게 모든 부서 접근 권한이 부여되었습니다.`);
+  } else {
+    toast.success('부서 권한 설정', `${userName}님에게 ${departments.length}개 부서 접근 권한이 설정되었습니다.`);
+  }
+};
 
   // 권한 배지 렌더링
   const renderPermissionBadge = (permission: PermissionType) => (
@@ -703,7 +775,7 @@ function AdminSettingsContent() {
         </div>
       )}
 
-      {/* 권한 수정 모달 */}
+{/* 권한 수정 모달 */}
       {showPermissionModal && selectedUser && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-bg-primary border border-border-primary rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">
@@ -719,7 +791,11 @@ function AdminSettingsContent() {
               </button>
             </div>
             
-            <div className="space-y-4">
+            {/* 기본 권한 섹션 */}
+            <div className="space-y-4 mb-6">
+              <h4 className="font-medium text-text-primary border-b border-border-primary pb-2">
+                기본 권한
+              </h4>
               {(Object.keys(PERMISSION_LABELS) as PermissionType[]).map((permission) => (
                 <div
                   key={permission}
@@ -735,7 +811,6 @@ function AdminSettingsContent() {
                       {PERMISSION_DESCRIPTIONS[permission]}
                     </p>
                   </div>
-                  
                   <button
                     onClick={() => togglePermission(permission)}
                     className={designSystem.utils.cn(
@@ -754,7 +829,116 @@ function AdminSettingsContent() {
                 </div>
               ))}
             </div>
+
+            {/* 부서 권한 섹션 */}
+            <div className="border-t border-border-primary pt-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Shield className="w-4 h-4 text-accent" />
+                <h4 className="font-medium text-text-primary">부서별 데이터 접근 권한</h4>
+                {loadingDepartments && (
+                  <RefreshCw className="w-3 h-3 animate-spin text-text-secondary" />
+                )}
+              </div>
+              
+              {selectedUser.is_super_admin ? (
+                // 최고관리자인 경우 - 안내 메시지만 표시
+                <div className="p-4 bg-accent/10 border border-accent/20 rounded-lg">
+                  <p className="text-sm text-accent">
+                    최고관리자는 모든 부서의 데이터에 자동으로 접근 권한을 가집니다.
+                  </p>
+                </div>
+              ) : (
+                // 일반 관리자인 경우 - 부서 선택 UI
+                <div className="space-y-3">
+                  <div className="p-4 bg-bg-secondary rounded-lg">
+                    {/* 전체 선택 체크박스 */}
+                    <div className="mb-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="rounded text-accent focus:ring-accent"
+                          checked={
+                            availableDepartments.length > 0 &&
+                            (departmentPermissions[selectedUser.id] || []).length === availableDepartments.length
+                          }
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              saveDepartmentPermissions(selectedUser.id, [...availableDepartments]);
+                            } else {
+                              saveDepartmentPermissions(selectedUser.id, []);
+                            }
+                          }}
+                        />
+                        <span className="text-sm font-medium text-text-primary">
+                          전체 부서 선택 ({availableDepartments.length}개)
+                        </span>
+                      </label>
+                    </div>
+                    
+                    {/* 개별 부서 체크박스들 */}
+                    <div className="grid grid-cols-2 gap-2 pl-6">
+                      {availableDepartments.length > 0 ? (
+                        availableDepartments.map(dept => {
+                          const isChecked = (departmentPermissions[selectedUser.id] || []).includes(dept);
+                          return (
+                            <label key={dept} className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="rounded text-accent focus:ring-accent"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  const current = departmentPermissions[selectedUser.id] || [];
+                                  if (e.target.checked) {
+                                    // 부서 추가
+                                    saveDepartmentPermissions(selectedUser.id, [...current, dept]);
+                                  } else {
+                                    // 부서 제거
+                                    saveDepartmentPermissions(selectedUser.id, current.filter(d => d !== dept));
+                                  }
+                                }}
+                              />
+                              <span className={`text-sm ${isChecked ? 'text-text-primary font-medium' : 'text-text-secondary'}`}>
+                                {dept}
+                              </span>
+                            </label>
+                          );
+                        })
+                      ) : (
+                        <p className="text-text-tertiary text-sm col-span-2">
+                          등록된 부서가 없습니다.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* 현재 선택된 부서 표시 */}
+                  <div className="p-3 bg-bg-tertiary rounded-lg">
+                    <p className="text-xs text-text-secondary mb-1">현재 접근 가능 부서:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {(departmentPermissions[selectedUser.id] || []).length > 0 ? (
+                        (departmentPermissions[selectedUser.id] || []).map(dept => (
+                          <span key={dept} className="px-2 py-1 bg-accent/20 text-accent text-xs rounded">
+                            {dept}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-text-tertiary">선택된 부서 없음</span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* 안내 메시지 */}
+                  <div className="p-3 bg-info-light/10 rounded-lg">
+                    <p className="text-xs text-text-secondary">
+                      ℹ️ 선택한 부서의 영업사원이 담당하는 리드만 조회할 수 있습니다.
+                      미배정 리드는 모든 관리자가 볼 수 있습니다.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
             
+            {/* 저장/취소 버튼 */}
             <div className="flex gap-3 pt-6 mt-6 border-t border-border-primary">
               <button
                 onClick={savePermissions}
@@ -778,6 +962,7 @@ function AdminSettingsContent() {
           </div>
         </div>
       )}
+
     </AdminLayout>
   );
 }
