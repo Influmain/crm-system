@@ -23,7 +23,8 @@ import {
   FileText,
   UserCheck,
   UserX,
-  AlertTriangle
+  AlertTriangle,
+  X
 } from 'lucide-react';
 
 interface Lead {
@@ -57,7 +58,6 @@ interface Assignment {
   assigned_at: string;
   status: string;
   lead: Lead & {
-    // 재배정 관리용 추가 필드들
     assignment_id?: string;
     counselor_name?: string;
     latest_contact_result?: string;
@@ -95,6 +95,11 @@ function AssignmentsPageContent() {
   const [selectedDepartment, setSelectedDepartment] = useState<string>('');
   const [selectedCounselor, setSelectedCounselor] = useState<string>('');
   
+  // 숫자 배정 관련 상태
+  const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
+  const [bulkAssignCount, setBulkAssignCount] = useState('');
+  const [bulkAssignMode, setBulkAssignMode] = useState<'selected' | 'count'>('selected');
+  
   // 재배정 관련 상태
   const [selectedCounselorForView, setSelectedCounselorForView] = useState<string>('');
   const [counselorAssignments, setCounselorAssignments] = useState<Assignment[]>([]);
@@ -102,6 +107,11 @@ function AssignmentsPageContent() {
   const [newDepartmentForReassign, setNewDepartmentForReassign] = useState<string>('');
   const [newCounselorForReassign, setNewCounselorForReassign] = useState<string>('');
   const [loadingCounselorData, setLoadingCounselorData] = useState(false);
+  
+  // 숫자 재배정 관련 상태
+  const [showBulkReassignModal, setShowBulkReassignModal] = useState(false);
+  const [bulkReassignCount, setBulkReassignCount] = useState('');
+  const [bulkReassignMode, setBulkReassignMode] = useState<'selected' | 'count'>('selected');
 
   // 재배정 필터 상태
   const [reassignFilters, setReassignFilters] = useState({
@@ -221,7 +231,6 @@ function AssignmentsPageContent() {
   // 전체 DB 고객 수 로드 함수
   const loadTotalLeadsCount = async () => {
     try {
-      // 배치 처리로 전체 데이터 가져오기
       let allLeads: any[] = [];
       let from = 0;
       const batchSize = 1000;
@@ -307,7 +316,7 @@ function AssignmentsPageContent() {
     }
   };
 
-  // 사용 가능한 고객 로드 - 배치 처리로 수정
+  // 사용 가능한 고객 로드
   const loadAvailableLeads = async (page: number = 1, searchQuery: string = '') => {
     try {
       console.log('=== 배정 가능 고객 로드 (배치 처리) ===');
@@ -328,14 +337,12 @@ function AssignmentsPageContent() {
         query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,data_source.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%`);
       }
 
-      // 페이지네이션 적용
       query = query.range(startRange, endRange);
 
       const { data: leadsData, error: leadsError, count } = await query;
 
       if (leadsError) throw leadsError;
 
-      // 배치 ID들을 한 번에 조회
       const uniqueBatchIds = [...new Set(leadsData?.map(lead => lead.upload_batch_id).filter(Boolean))] as string[];
       
       let batchMap: Record<string, string> = {};
@@ -353,7 +360,6 @@ function AssignmentsPageContent() {
         }
       }
 
-      // 배치 정보를 매핑
       const leadsWithBatch = (leadsData || []).map(lead => ({
         ...lead,
         batch_name: lead.upload_batch_id ? (batchMap[lead.upload_batch_id] || 'Unknown Batch') : 'No Batch'
@@ -372,10 +378,26 @@ function AssignmentsPageContent() {
     }
   };
 
-  // 배정 실행 - 배치 처리로 최적화
+  // 개선된 배정 함수 - 모달 표시
   const handleAssign = async () => {
-    if (!selectedCounselor || selectedLeads.length === 0) {
-      toast.warning('선택 확인', '영업사원과 고객을 선택해주세요.');
+    if (!selectedCounselor) {
+      toast.warning('선택 확인', '영업사원을 선택해주세요.');
+      return;
+    }
+
+    if (selectedLeads.length > 0) {
+      setShowBulkAssignModal(true);
+      setBulkAssignMode('selected');
+    } else {
+      setShowBulkAssignModal(true);
+      setBulkAssignMode('count');
+    }
+  };
+
+  // 실제 배정 실행 함수
+  const executeBulkAssign = async () => {
+    if (!selectedCounselor) {
+      toast.warning('선택 확인', '영업사원을 선택해주세요.');
       return;
     }
 
@@ -386,13 +408,32 @@ function AssignmentsPageContent() {
 
     setActionLoading(true);
     try {
+      let leadsToAssign: string[] = [];
+      
+      if (bulkAssignMode === 'selected') {
+        leadsToAssign = selectedLeads;
+      } else {
+        const assignCount = parseInt(bulkAssignCount);
+        if (isNaN(assignCount) || assignCount <= 0) {
+          toast.warning('입력 오류', '올바른 숫자를 입력해주세요.');
+          return;
+        }
+        
+        leadsToAssign = availableLeads
+          .slice(0, Math.min(assignCount, availableLeads.length))
+          .map(lead => lead.id);
+      }
+
+      if (leadsToAssign.length === 0) {
+        toast.warning('선택 확인', '배정할 고객이 없습니다.');
+        return;
+      }
+
       const counselorName = counselors.find(c => c.id === selectedCounselor)?.full_name;
       
-      console.log(`=== 배치 배정 시작: ${selectedLeads.length}개 ===`);
-      const startTime = Date.now();
+      console.log(`=== 배치 배정 시작: ${leadsToAssign.length}개 ===`);
 
-      // 배치 처리: 한번에 모든 배정 레코드 생성
-      const assignmentRecords = selectedLeads.map(leadId => ({
+      const assignmentRecords = leadsToAssign.map(leadId => ({
         lead_id: leadId,
         counselor_id: selectedCounselor,
         assigned_by: user.id,
@@ -400,27 +441,22 @@ function AssignmentsPageContent() {
         status: 'active'
       }));
 
-      // 1. 배정 레코드 일괄 생성
       const { error: assignError } = await supabase
         .from('lead_assignments')
         .insert(assignmentRecords);
 
       if (assignError) throw assignError;
 
-      // 2. 고객 상태 일괄 업데이트
       const { error: updateError } = await supabase
         .from('lead_pool')
         .update({ status: 'assigned' })
-        .in('id', selectedLeads);
+        .in('id', leadsToAssign);
 
       if (updateError) throw updateError;
 
-      const endTime = Date.now();
-      console.log(`배치 배정 완료: ${endTime - startTime}ms`);
-
       toast.success(
         '고객 배정 완료', 
-        `${selectedLeads.length}개의 고객이 ${counselorName} 영업사원에게 성공적으로 배정되었습니다.`,
+        `${leadsToAssign.length}개의 고객이 ${counselorName} 영업사원에게 성공적으로 배정되었습니다.`,
         {
           action: {
             label: '배정 현황 보기',
@@ -432,6 +468,8 @@ function AssignmentsPageContent() {
       setSelectedLeads([]);
       setSelectedDepartment('');
       setSelectedCounselor('');
+      setShowBulkAssignModal(false);
+      setBulkAssignCount('');
       
       await loadAvailableLeads(currentPage, debouncedSearchTerm);
       await loadCounselors();
@@ -441,20 +479,14 @@ function AssignmentsPageContent() {
       console.error('배정 실패:', error);
       toast.error(
         '고객 배정 실패', 
-        error.message || '알 수 없는 오류가 발생했습니다.',
-        {
-          action: {
-            label: '다시 시도',
-            onClick: () => handleAssign()
-          }
-        }
+        error.message || '알 수 없는 오류가 발생했습니다.'
       );
     } finally {
       setActionLoading(false);
     }
   };
 
-  // 특정 영업사원의 배정 목록 로드 - admin_leads_view 사용
+  // 특정 영업사원의 배정 목록 로드
   const loadCounselorAssignments = async (counselorId: string, page: number = 1, searchQuery: string = '') => {
     if (!counselorId) {
       setCounselorAssignments([]);
@@ -476,7 +508,6 @@ function AssignmentsPageContent() {
         .not('assignment_id', 'is', null)
         .order('assigned_at', { ascending: false });
 
-      // 계약 상태 필터
       if (reassignFilters.contractStatus !== 'all') {
         if (reassignFilters.contractStatus === '미분류') {
           query = query.or('additional_data.is.null,additional_data.not.cs.{"grade"}');
@@ -485,12 +516,10 @@ function AssignmentsPageContent() {
         }
       }
 
-      // 검색어 적용
       if (searchQuery.trim()) {
         query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%,actual_customer_name.ilike.%${searchQuery}%`);
       }
 
-      // 페이지네이션 적용
       query = query.range(startRange, endRange);
 
       const { data: viewData, error, count } = await query;
@@ -499,7 +528,6 @@ function AssignmentsPageContent() {
 
       console.log(`영업사원 배정 뷰: ${viewData?.length || 0}개 (페이지 ${page})`);
 
-      // 뷰 데이터를 Assignment 형태로 변환
       const enrichedAssignments = (viewData || []).map(lead => ({
         id: lead.assignment_id || lead.id,
         lead_id: lead.id,
@@ -508,7 +536,6 @@ function AssignmentsPageContent() {
         status: 'active',
         lead: {
           ...lead,
-          // 추가 필드들 매핑
           customer_grade: (() => {
             if (lead.additional_data) {
               const additionalData = typeof lead.additional_data === 'string' 
@@ -529,7 +556,10 @@ function AssignmentsPageContent() {
           id: lead.counselor_id,
           full_name: lead.counselor_name || '알 수 없음',
           email: '',
-          department: ''
+          department: '',
+          assigned_count: 0,
+          active_count: 0,
+          completed_count: 0
         }
       }));
 
@@ -548,10 +578,26 @@ function AssignmentsPageContent() {
     }
   };
 
-  // 재배정 실행 - 배치 처리로 최적화
+  // 개선된 재배정 함수
   const handleReassign = async () => {
-    if (!newCounselorForReassign || selectedAssignments.length === 0) {
-      toast.warning('선택 확인', '새로운 영업사원과 재배정할 고객을 선택해주세요.');
+    if (!newCounselorForReassign) {
+      toast.warning('선택 확인', '새로운 영업사원을 선택해주세요.');
+      return;
+    }
+
+    if (selectedAssignments.length > 0) {
+      setShowBulkReassignModal(true);
+      setBulkReassignMode('selected');
+    } else {
+      setShowBulkReassignModal(true);
+      setBulkReassignMode('count');
+    }
+  };
+
+  // 실제 재배정 실행 함수
+  const executeBulkReassign = async () => {
+    if (!newCounselorForReassign) {
+      toast.warning('선택 확인', '새로운 영업사원을 선택해주세요.');
       return;
     }
 
@@ -562,24 +608,41 @@ function AssignmentsPageContent() {
 
     setActionLoading(true);
     try {
-      console.log(`=== 배치 재배정 시작: ${selectedAssignments.length}개 ===`);
-      const startTime = Date.now();
+      let assignmentsToReassign: string[] = [];
+      
+      if (bulkReassignMode === 'selected') {
+        assignmentsToReassign = selectedAssignments;
+      } else {
+        const reassignCount = parseInt(bulkReassignCount);
+        if (isNaN(reassignCount) || reassignCount <= 0) {
+          toast.warning('입력 오류', '올바른 숫자를 입력해주세요.');
+          return;
+        }
+        
+        assignmentsToReassign = counselorAssignments
+          .slice(0, Math.min(reassignCount, counselorAssignments.length))
+          .map(assignment => assignment.id);
+      }
 
-      // 1. 기존 배정 레코드들에서 lead_id 추출
-      const leadIds = selectedAssignments.map(assignmentId => {
+      if (assignmentsToReassign.length === 0) {
+        toast.warning('선택 확인', '재배정할 고객이 없습니다.');
+        return;
+      }
+
+      console.log(`=== 배치 재배정 시작: ${assignmentsToReassign.length}개 ===`);
+
+      const leadIds = assignmentsToReassign.map(assignmentId => {
         const assignment = counselorAssignments.find(a => a.id === assignmentId);
         return assignment?.lead_id;
       }).filter(Boolean);
 
-      // 2. 기존 배정 레코드 일괄 삭제
       const { error: deleteError } = await supabase
         .from('lead_assignments')
         .delete()
-        .in('id', selectedAssignments);
+        .in('id', assignmentsToReassign);
 
       if (deleteError) throw deleteError;
 
-      // 3. 새로운 배정 레코드 일괄 생성
       const newAssignmentRecords = leadIds.map(leadId => ({
         lead_id: leadId,
         counselor_id: newCounselorForReassign,
@@ -594,21 +657,12 @@ function AssignmentsPageContent() {
 
       if (insertError) throw insertError;
 
-      const endTime = Date.now();
-      console.log(`배치 재배정 완료: ${endTime - startTime}ms`);
-
       const oldCounselor = counselors.find(c => c.id === selectedCounselorForView)?.full_name;
       const newCounselor = counselors.find(c => c.id === newCounselorForReassign)?.full_name;
       
       toast.success(
         '고객 재배정 완료',
-        `${selectedAssignments.length}개 고객이 ${oldCounselor}에서 ${newCounselor}으로 재배정되었습니다.`,
-        {
-          action: {
-            label: '새로고침',
-            onClick: () => window.location.reload()
-          }
-        }
+        `${assignmentsToReassign.length}개 고객이 ${oldCounselor}에서 ${newCounselor}으로 재배정되었습니다.`
       );
       
       await loadCounselorAssignments(selectedCounselorForView, reassignPage, debouncedReassignSearchTerm);
@@ -616,91 +670,80 @@ function AssignmentsPageContent() {
       setSelectedAssignments([]);
       setNewDepartmentForReassign('');
       setNewCounselorForReassign('');
+      setShowBulkReassignModal(false);
+      setBulkReassignCount('');
 
     } catch (error) {
       console.error('재배정 실패:', error);
-      toast.error(
-        '고객 재배정 실패',
-        error.message || '알 수 없는 오류가 발생했습니다.',
-        {
-          action: {
-            label: '다시 시도',
-            onClick: () => handleReassign()
-          }
-        }
-      );
+      toast.error('고객 재배정 실패', error.message || '알 수 없는 오류가 발생했습니다.');
     } finally {
       setActionLoading(false);
     }
   };
 
-// 미배정 처리 함수
-const handleUnassign = async () => {
-  if (selectedAssignments.length === 0) {
-    toast.warning('선택 확인', '미배정 처리할 고객을 선택해주세요.');
-    return;
-  }
+  // 미배정 처리 함수
+  const handleUnassign = async () => {
+    if (selectedAssignments.length === 0) {
+      toast.warning('선택 확인', '미배정 처리할 고객을 선택해주세요.');
+      return;
+    }
 
-  const confirmMessage = `선택한 ${selectedAssignments.length}개 고객의 배정을 취소하시겠습니까?\n해당 고객들은 다시 배정 가능한 상태가 됩니다.`;
-  if (!window.confirm(confirmMessage)) {
-    return;
-  }
+    const confirmMessage = `선택한 ${selectedAssignments.length}개 고객의 배정을 취소하시겠습니까?\n해당 고객들은 다시 배정 가능한 상태가 됩니다.`;
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
 
-  setActionLoading(true);
-  try {
-    console.log(`=== 미배정 처리 시작: ${selectedAssignments.length}개 ===`);
+    setActionLoading(true);
+    try {
+      console.log(`=== 미배정 처리 시작: ${selectedAssignments.length}개 ===`);
 
-    // 1. 선택된 배정에서 lead_id 추출
-    const leadIds = selectedAssignments.map(assignmentId => {
-      const assignment = counselorAssignments.find(a => a.id === assignmentId);
-      return assignment?.lead_id;
-    }).filter(Boolean);
+      const leadIds = selectedAssignments.map(assignmentId => {
+        const assignment = counselorAssignments.find(a => a.id === assignmentId);
+        return assignment?.lead_id;
+      }).filter(Boolean);
 
-    // 2. 배정 레코드 삭제
-    const { error: deleteError } = await supabase
-      .from('lead_assignments')
-      .delete()
-      .in('id', selectedAssignments);
+      const { error: deleteError } = await supabase
+        .from('lead_assignments')
+        .delete()
+        .in('id', selectedAssignments);
 
-    if (deleteError) throw deleteError;
+      if (deleteError) throw deleteError;
 
-    // 3. lead_pool 상태를 'available'로 변경
-    const { error: updateError } = await supabase
-      .from('lead_pool')
-      .update({ status: 'available' })
-      .in('id', leadIds);
+      const { error: updateError } = await supabase
+        .from('lead_pool')
+        .update({ status: 'available' })
+        .in('id', leadIds);
 
-    if (updateError) throw updateError;
+      if (updateError) throw updateError;
 
-    const counselorName = counselors.find(c => c.id === selectedCounselorForView)?.full_name;
-    
-    toast.success(
-      '미배정 처리 완료',
-      `${selectedAssignments.length}개 고객이 ${counselorName}에서 미배정 상태로 변경되었습니다.`,
-      {
-        action: {
-          label: '배정 가능 목록 보기',
-          onClick: () => setActiveTab('assign')
+      const counselorName = counselors.find(c => c.id === selectedCounselorForView)?.full_name;
+      
+      toast.success(
+        '미배정 처리 완료',
+        `${selectedAssignments.length}개 고객이 ${counselorName}에서 미배정 상태로 변경되었습니다.`,
+        {
+          action: {
+            label: '배정 가능 목록 보기',
+            onClick: () => setActiveTab('assign')
+          }
         }
-      }
-    );
-    
-    // 데이터 새로고침
-    await loadCounselorAssignments(selectedCounselorForView, reassignPage, debouncedReassignSearchTerm);
-    await loadCounselors();
-    await loadTotalLeadsCount();
-    setSelectedAssignments([]);
+      );
+      
+      await loadCounselorAssignments(selectedCounselorForView, reassignPage, debouncedReassignSearchTerm);
+      await loadCounselors();
+      await loadTotalLeadsCount();
+      setSelectedAssignments([]);
 
-  } catch (error) {
-    console.error('미배정 처리 실패:', error);
-    toast.error(
-      '미배정 처리 실패',
-      error.message || '알 수 없는 오류가 발생했습니다.'
-    );
-  } finally {
-    setActionLoading(false);
-  }
-};
+    } catch (error) {
+      console.error('미배정 처리 실패:', error);
+      toast.error(
+        '미배정 처리 실패',
+        error.message || '알 수 없는 오류가 발생했습니다.'
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const toggleAssignmentSelection = (assignmentId: string) => {
     setSelectedAssignments(prev => 
@@ -718,7 +761,6 @@ const handleUnassign = async () => {
     );
   };
 
-  // 전체 선택/해제
   const toggleSelectAllLeads = () => {
     if (selectedLeads.length === availableLeads.length) {
       setSelectedLeads([]);
@@ -735,7 +777,6 @@ const handleUnassign = async () => {
     }
   };
 
-  // 부서 선택시 해당 부서의 영업사원들로 필터링
   const filteredCounselors = counselors.filter(counselor => 
     !selectedDepartment || counselor.department === selectedDepartment
   );
@@ -782,7 +823,6 @@ const handleUnassign = async () => {
     }
   }, [selectedCounselorForView, reassignPage, debouncedReassignSearchTerm, reassignFilters]);
 
-  // 부서 변경시 영업사원 선택 초기화
   useEffect(() => {
     setSelectedCounselor('');
   }, [selectedDepartment]);
@@ -904,68 +944,68 @@ const handleUnassign = async () => {
               </div>
             </div>
 
-            {/* 벌크 액션 바 */}
-            {selectedLeads.length > 0 && (
-              <div className="sticky top-0 bg-bg-primary border border-border-primary p-3 z-10 shadow-sm mb-6 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-text-primary">
-                    {selectedLeads.length}개 고객 선택됨
-                  </span>
+            {/* 벌크 액션 바 - 상시 표시 */}
+            <div className="sticky top-0 bg-bg-primary border border-border-primary p-3 z-10 shadow-sm mb-6 rounded-lg">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-text-primary">
+                  {selectedLeads.length > 0 ? `${selectedLeads.length}개 고객 선택됨` : '고객을 선택하거나 숫자로 배정하세요'}
+                </span>
+                
+                <div className="flex items-center space-x-2">
+                  <select
+                    value={selectedDepartment}
+                    onChange={(e) => setSelectedDepartment(e.target.value)}
+                    className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
+                  >
+                    <option value="">부서 선택</option>
+                    {departments.map(dept => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
+                  </select>
                   
-                  <div className="flex items-center space-x-2">
-                    <select
-                      value={selectedDepartment}
-                      onChange={(e) => setSelectedDepartment(e.target.value)}
-                      className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
-                    >
-                      <option value="">부서 선택</option>
-                      {departments.map(dept => (
-                        <option key={dept} value={dept}>{dept}</option>
-                      ))}
-                    </select>
-                    
-                    <select
-                      value={selectedCounselor}
-                      onChange={(e) => setSelectedCounselor(e.target.value)}
-                      disabled={!selectedDepartment}
-                      className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50"
-                    >
-                      <option value="">영업사원 선택</option>
-                      {filteredCounselors.map(counselor => (
-                        <option key={counselor.id} value={counselor.id}>
-                          {counselor.full_name} ({counselor.active_count}개)
-                        </option>
-                      ))}
-                    </select>
-                    
-                    <button
-                      onClick={handleAssign}
-                      disabled={!selectedCounselor || actionLoading}
-                      className={designSystem.utils.cn(
-                        "px-3 py-1.5 text-xs rounded font-medium transition-colors",
-                        !selectedCounselor || actionLoading
-                          ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
-                          : "bg-accent text-white hover:bg-accent/90"
-                      )}
-                    >
-                      {actionLoading ? (
-                        <RefreshCw className="w-3 h-3 animate-spin mr-1 inline" />
-                      ) : (
-                        <businessIcons.success className="w-3 h-3 mr-1 inline" />
-                      )}
-                      {selectedLeads.length}개 배정
-                    </button>
-                    
+                  <select
+                    value={selectedCounselor}
+                    onChange={(e) => setSelectedCounselor(e.target.value)}
+                    disabled={!selectedDepartment}
+                    className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50"
+                  >
+                    <option value="">영업사원 선택</option>
+                    {filteredCounselors.map(counselor => (
+                      <option key={counselor.id} value={counselor.id}>
+                        {counselor.full_name} ({counselor.active_count}개)
+                      </option>
+                    ))}
+                  </select>
+                  
+                  <button
+                    onClick={handleAssign}
+                    disabled={!selectedCounselor || actionLoading}
+                    className={designSystem.utils.cn(
+                      "px-3 py-1.5 text-xs rounded font-medium transition-colors",
+                      !selectedCounselor || actionLoading
+                        ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
+                        : "bg-accent text-white hover:bg-accent/90"
+                    )}
+                  >
+                    {actionLoading ? (
+                      <RefreshCw className="w-3 h-3 animate-spin mr-1 inline" />
+                    ) : (
+                      <businessIcons.success className="w-3 h-3 mr-1 inline" />
+                    )}
+                    {selectedLeads.length > 0 ? `${selectedLeads.length}개 배정` : '숫자로 배정'}
+                  </button>
+                  
+                  {selectedLeads.length > 0 && (
                     <button
                       onClick={() => setSelectedLeads([])}
                       className="px-2 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
                     >
                       선택 해제
                     </button>
-                  </div>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
 
             {/* 제목과 검색 영역 */}
             <div className="flex items-center justify-between mb-3">
@@ -1053,7 +1093,6 @@ const handleUnassign = async () => {
                       <tbody>
                         {availableLeads.map((lead) => (
                           <tr key={lead.id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
-                            {/* 선택 체크박스 */}
                             <td className="py-1 px-1 text-center">
                               <button
                                 onClick={() => toggleLeadSelection(lead.id)}
@@ -1067,14 +1106,12 @@ const handleUnassign = async () => {
                               </button>
                             </td>
 
-                            {/* 연락처 */}
                             <td className="py-1 px-1 text-center">
                               <div className="font-mono text-text-primary font-medium text-xs truncate">
                                 {highlightText(maskPhoneNumber(lead.phone), debouncedSearchTerm)}
                               </div>
                             </td>
 
-                            {/* 고객명 */}
                             <td className="py-1 px-1 text-center">
                               <div className="text-xs whitespace-nowrap truncate">
                                 {lead.real_name || lead.contact_name ? (
@@ -1085,7 +1122,6 @@ const handleUnassign = async () => {
                               </div>
                             </td>
 
-                            {/* 관심분야 */}
                             <td className="py-1 px-1 text-center relative">
                               <div className="w-24 group mx-auto">
                                 {lead.contact_script ? (
@@ -1103,7 +1139,6 @@ const handleUnassign = async () => {
                               </div>
                             </td>
 
-                            {/* DB 출처 */}
                             <td className="py-1 px-1 text-center">
                               <div className="text-xs whitespace-nowrap truncate">
                                 <span className="text-text-primary font-medium">
@@ -1112,7 +1147,6 @@ const handleUnassign = async () => {
                               </div>
                             </td>
 
-                            {/* 배치명 */}
                             <td className="py-1 px-1 text-center">
                               <div className="text-xs whitespace-nowrap truncate">
                                 <span className="text-text-tertiary">
@@ -1121,7 +1155,6 @@ const handleUnassign = async () => {
                               </div>
                             </td>
 
-                            {/* 등록일 */}
                             <td className="py-1 px-1 text-center">
                               <span className="text-text-secondary text-xs whitespace-nowrap">
                                 {new Date(lead.created_at).toLocaleDateString('ko-KR', { 
@@ -1274,90 +1307,95 @@ const handleUnassign = async () => {
               </div>
             </div>
 
-{/* 재배정 액션 바 */}
-{selectedAssignments.length > 0 && (
-  <div className="sticky top-0 bg-bg-primary border border-border-primary p-3 z-10 shadow-sm mb-6 rounded-lg">
-    <div className="flex items-center justify-between">
-      <span className="text-xs font-medium text-text-primary">
-        {selectedAssignments.length}개 고객 선택됨
-      </span>
-      
-      <div className="flex items-center space-x-2">
-        {/* 미배정 처리 버튼 추가 */}
-        <button
-          onClick={handleUnassign}
-          disabled={actionLoading}
-          className={designSystem.utils.cn(
-            "px-3 py-1.5 text-xs rounded font-medium transition-colors",
-            actionLoading
-              ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
-              : "bg-warning text-white hover:bg-warning/90"
-          )}
-        >
-          {actionLoading ? (
-            <RefreshCw className="w-3 h-3 animate-spin mr-1 inline" />
-          ) : (
-            <UserX className="w-3 h-3 mr-1 inline" />
-          )}
-          미배정 처리
-        </button>
+            {/* 재배정 액션 바 - 상시 표시 */}
+            {selectedCounselorForView && (
+              <div className="sticky top-0 bg-bg-primary border border-border-primary p-3 z-10 shadow-sm mb-6 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-text-primary">
+                    {selectedAssignments.length > 0 ? `${selectedAssignments.length}개 고객 선택됨` : '고객을 선택하거나 숫자로 재배정하세요'}
+                  </span>
+                  
+                  <div className="flex items-center space-x-2">
+                    {/* 미배정 처리 버튼 */}
+                    <button
+                      onClick={handleUnassign}
+                      disabled={selectedAssignments.length === 0 || actionLoading}
+                      className={designSystem.utils.cn(
+                        "px-3 py-1.5 text-xs rounded font-medium transition-colors",
+                        selectedAssignments.length === 0 || actionLoading
+                          ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
+                          : "bg-warning text-white hover:bg-warning/90"
+                      )}
+                    >
+                      {actionLoading ? (
+                        <RefreshCw className="w-3 h-3 animate-spin mr-1 inline" />
+                      ) : (
+                        <UserX className="w-3 h-3 mr-1 inline" />
+                      )}
+                      미배정 처리
+                    </button>
 
-        {/* 구분선 */}
-        <div className="w-px h-6 bg-border-primary"></div>
-        
-        <select
-          value={newDepartmentForReassign}
-          onChange={(e) => setNewDepartmentForReassign(e.target.value)}
-          className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
-        >
-          <option value="">부서 선택</option>
-          {departments.map(dept => (
-            <option key={dept} value={dept}>{dept}</option>
-          ))}
-        </select>
-        
-        <select
-          value={newCounselorForReassign}
-          onChange={(e) => setNewCounselorForReassign(e.target.value)}
-          disabled={!newDepartmentForReassign}
-          className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50"
-        >
-          <option value="">새 영업사원 선택</option>
-          {filteredCounselorsForReassign.map(counselor => (
-            <option key={counselor.id} value={counselor.id}>
-              {counselor.full_name} ({counselor.active_count}개)
-            </option>
-          ))}
-        </select>
-        
-        <button
-          onClick={handleReassign}
-          disabled={!newCounselorForReassign || actionLoading}
-          className={designSystem.utils.cn(
-            "px-3 py-1.5 text-xs rounded font-medium transition-colors",
-            !newCounselorForReassign || actionLoading
-              ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
-              : "bg-accent text-white hover:bg-accent/90"
-          )}
-        >
-          {actionLoading ? (
-            <RefreshCw className="w-3 h-3 animate-spin mr-1 inline" />
-          ) : (
-            <RefreshCw className="w-3 h-3 mr-1 inline" />
-          )}
-          {selectedAssignments.length}개 재배정
-        </button>
-        
-        <button
-          onClick={() => setSelectedAssignments([])}
-          className="px-2 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
-        >
-          선택 해제
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+                    {/* 구분선 */}
+                    <div className="w-px h-6 bg-border-primary"></div>
+                    
+                    <select
+                      value={newDepartmentForReassign}
+                      onChange={(e) => setNewDepartmentForReassign(e.target.value)}
+                      className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary"
+                    >
+                      <option value="">부서 선택</option>
+                      {departments.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                    
+                    <select
+                      value={newCounselorForReassign}
+                      onChange={(e) => setNewCounselorForReassign(e.target.value)}
+                      disabled={!newDepartmentForReassign}
+                      className="px-2 py-1.5 text-xs border border-border-primary rounded bg-bg-primary text-text-primary disabled:opacity-50"
+                    >
+                      <option value="">새 영업사원 선택</option>
+                      {filteredCounselorsForReassign.map(counselor => (
+                        <option key={counselor.id} value={counselor.id}>
+                          {counselor.full_name} ({counselor.active_count}개)
+                        </option>
+                      ))}
+                    </select>
+                    
+                    <button
+                      onClick={handleReassign}
+                      disabled={!newCounselorForReassign || actionLoading}
+                      className={designSystem.utils.cn(
+                        "px-3 py-1.5 text-xs rounded font-medium transition-colors",
+                        !newCounselorForReassign || actionLoading
+                          ? "bg-bg-secondary text-text-tertiary cursor-not-allowed"
+                          : "bg-accent text-white hover:bg-accent/90"
+                      )}
+                    >
+                      {actionLoading ? (
+                        <RefreshCw className="w-3 h-3 animate-spin mr-1 inline" />
+                      ) : (
+                        <RefreshCw className="w-3 h-3 mr-1 inline" />
+                      )}
+                      {selectedAssignments.length > 0 
+                        ? `${selectedAssignments.length}개 재배정` 
+                        : '숫자로 재배정'
+                      }
+                    </button>
+                    
+                    {selectedAssignments.length > 0 && (
+                      <button
+                        onClick={() => setSelectedAssignments([])}
+                        className="px-2 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                      >
+                        선택 해제
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 영업사원별 고객 목록 */}
             {selectedCounselorForView ? (
@@ -1473,7 +1511,6 @@ const handleUnassign = async () => {
                             <tbody>
                               {counselorAssignments.map((assignment) => (
                                 <tr key={assignment.id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
-                                  {/* 선택 체크박스 */}
                                   <td className="py-1 px-1 text-center">
                                     <button
                                       onClick={() => toggleAssignmentSelection(assignment.id)}
@@ -1487,7 +1524,6 @@ const handleUnassign = async () => {
                                     </button>
                                   </td>
 
-                                  {/* 배정일 */}
                                   <td className="py-1 px-1 text-center">
                                     <span className="text-text-secondary text-xs whitespace-nowrap">
                                       {assignment.assigned_at ? 
@@ -1503,12 +1539,10 @@ const handleUnassign = async () => {
                                     </span>
                                   </td>
 
-                                  {/* 회원등급 */}
                                   <td className="py-1 px-1 text-center">
                                     {renderGradeBadge(assignment.lead.customer_grade)}
                                   </td>
 
-                                  {/* 고객명 */}
                                   <td className="py-1 px-1 text-center">
                                     <div className="text-xs whitespace-nowrap truncate">
                                       {assignment.lead.actual_customer_name ? (
@@ -1523,14 +1557,12 @@ const handleUnassign = async () => {
                                     </div>
                                   </td>
 
-                                  {/* 전화번호 */}
                                   <td className="py-1 px-1 text-center">
                                     <div className="font-mono text-text-primary font-medium text-xs truncate">
                                       {maskPhoneNumber(assignment.lead?.phone || '')}
                                     </div>
                                   </td>
 
-                                  {/* 관심분야 */}
                                   <td className="py-1 px-1 text-center relative">
                                     <div className="w-24 group mx-auto">
                                       {assignment.lead?.contact_script ? (
@@ -1548,7 +1580,6 @@ const handleUnassign = async () => {
                                     </div>
                                   </td>
 
-                                  {/* 상담메모 */}
                                   <td className="py-1 px-1 text-center relative">
                                     <div className="w-28 group mx-auto">
                                       {assignment.lead.counseling_memo ? (
@@ -1566,14 +1597,12 @@ const handleUnassign = async () => {
                                     </div>
                                   </td>
 
-                                  {/* 상담 횟수 */}
                                   <td className="py-1 px-1 text-center">
                                     <span className="font-medium text-text-primary text-xs">
                                       {assignment.lead.call_attempts || 0}
                                     </span>
                                   </td>
 
-                                  {/* 최근 상담 */}
                                   <td className="py-1 px-1 text-center">
                                     <span className="text-text-secondary text-xs whitespace-nowrap">
                                       {assignment.lead.last_contact_date 
@@ -1586,7 +1615,6 @@ const handleUnassign = async () => {
                                     </span>
                                   </td>
 
-                                  {/* 계약금액 */}
                                   <td className="py-1 px-1 text-center">
                                     {assignment.lead.contract_amount ? (
                                       <span className="font-medium text-success text-xs">
@@ -1671,6 +1699,273 @@ const handleUnassign = async () => {
               </div>
             )}
           </>
+        )}
+
+        {/* 벌크 배정 모달 */}
+        {showBulkAssignModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-md mx-auto">
+              <div className="p-6 border-b border-border-primary">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+                    <UserCheck className="w-5 h-5 text-accent" />
+                    고객 배정 확인
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowBulkAssignModal(false);
+                      setBulkAssignCount('');
+                    }}
+                    className="p-1 hover:bg-bg-hover rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5 text-text-secondary" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6">
+                <div className="mb-4 p-3 bg-accent/10 rounded-lg">
+                  <p className="text-sm text-text-primary">
+                    배정 대상: <span className="font-bold">{counselors.find(c => c.id === selectedCounselor)?.full_name}</span>
+                  </p>
+                </div>
+
+                {bulkAssignMode === 'selected' ? (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
+                      <p className="text-sm text-text-primary mb-2">
+                        선택한 <span className="font-bold text-success">{selectedLeads.length}개</span>의 고객을 배정하시겠습니까?
+                      </p>
+                    </div>
+                    
+                    <div className="text-center">
+                      <button
+                        onClick={() => {
+                          setBulkAssignMode('count');
+                          setSelectedLeads([]);
+                        }}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        숫자로 입력하여 배정하기
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-text-primary">
+                        배정할 고객 수 입력
+                      </label>
+                      <input
+                        type="number"
+                        value={bulkAssignCount}
+                        onChange={(e) => setBulkAssignCount(e.target.value)}
+                        placeholder="배정할 개수를 입력하세요"
+                        min="1"
+                        max={availableLeads.length}
+                        className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+                      />
+                      <p className="text-xs text-text-secondary mt-1">
+                        현재 페이지의 상위 {bulkAssignCount || 'N'}개 고객이 배정됩니다.
+                        (최대: {availableLeads.length}개)
+                      </p>
+                    </div>
+                    
+                    {bulkAssignCount && parseInt(bulkAssignCount) > 0 && (
+                      <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
+                        <p className="text-sm text-text-primary">
+                          상위 <span className="font-bold text-success">
+                            {Math.min(parseInt(bulkAssignCount), availableLeads.length)}개
+                          </span>의 고객이 배정됩니다.
+                        </p>
+                      </div>
+                    )}
+                    
+                    {selectedLeads.length > 0 && (
+                      <div className="text-center">
+                        <button
+                          onClick={() => setBulkAssignMode('selected')}
+                          className="text-xs text-accent hover:underline"
+                        >
+                          선택한 항목 배정으로 전환 ({selectedLeads.length}개)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-border-primary">
+                  <button
+                    onClick={() => {
+                      setShowBulkAssignModal(false);
+                      setBulkAssignCount('');
+                    }}
+                    disabled={actionLoading}
+                    className="px-4 py-2 bg-bg-secondary text-text-primary rounded-lg hover:bg-bg-hover transition-colors disabled:opacity-50"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={executeBulkAssign}
+                    disabled={
+                      actionLoading || 
+                      (bulkAssignMode === 'count' && (!bulkAssignCount || parseInt(bulkAssignCount) <= 0))
+                    }
+                    className="px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {actionLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        배정 중...
+                      </>
+                    ) : (
+                      <>
+                        <UserCheck className="w-4 h-4" />
+                        배정 확인
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 벌크 재배정 모달 */}
+        {showBulkReassignModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-md mx-auto">
+              <div className="p-6 border-b border-border-primary">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+                    <RefreshCw className="w-5 h-5 text-accent" />
+                    고객 재배정 확인
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowBulkReassignModal(false);
+                      setBulkReassignCount('');
+                    }}
+                    className="p-1 hover:bg-bg-hover rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5 text-text-secondary" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6">
+                <div className="mb-4 space-y-2">
+                  <div className="p-3 bg-warning/10 rounded-lg">
+                    <p className="text-sm text-text-primary">
+                      기존 영업사원: <span className="font-bold">{counselors.find(c => c.id === selectedCounselorForView)?.full_name}</span>
+                    </p>
+                  </div>
+                  <div className="p-3 bg-success/10 rounded-lg">
+                    <p className="text-sm text-text-primary">
+                      새 영업사원: <span className="font-bold">{counselors.find(c => c.id === newCounselorForReassign)?.full_name}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {bulkReassignMode === 'selected' ? (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-accent/10 border border-accent/20 rounded-lg">
+                      <p className="text-sm text-text-primary mb-2">
+                        선택한 <span className="font-bold text-accent">{selectedAssignments.length}개</span>의 고객을 재배정하시겠습니까?
+                      </p>
+                    </div>
+                    
+                    <div className="text-center">
+                      <button
+                        onClick={() => {
+                          setBulkReassignMode('count');
+                          setSelectedAssignments([]);
+                        }}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        숫자로 입력하여 재배정하기
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-text-primary">
+                        재배정할 고객 수 입력
+                      </label>
+                      <input
+                        type="number"
+                        value={bulkReassignCount}
+                        onChange={(e) => setBulkReassignCount(e.target.value)}
+                        placeholder="재배정할 개수를 입력하세요"
+                        min="1"
+                        max={counselorAssignments.length}
+                        className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+                      />
+                      <p className="text-xs text-text-secondary mt-1">
+                        현재 영업사원의 상위 {bulkReassignCount || 'N'}개 고객이 재배정됩니다.
+                        (최대: {counselorAssignments.length}개)
+                      </p>
+                    </div>
+                    
+                    {bulkReassignCount && parseInt(bulkReassignCount) > 0 && (
+                      <div className="p-4 bg-accent/10 border border-accent/20 rounded-lg">
+                        <p className="text-sm text-text-primary">
+                          상위 <span className="font-bold text-accent">
+                            {Math.min(parseInt(bulkReassignCount), counselorAssignments.length)}개
+                          </span>의 고객이 재배정됩니다.
+                        </p>
+                      </div>
+                    )}
+                    
+                    {selectedAssignments.length > 0 && (
+                      <div className="text-center">
+                        <button
+                          onClick={() => setBulkReassignMode('selected')}
+                          className="text-xs text-accent hover:underline"
+                        >
+                          선택한 항목 재배정으로 전환 ({selectedAssignments.length}개)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-border-primary">
+                  <button
+                    onClick={() => {
+                      setShowBulkReassignModal(false);
+                      setBulkReassignCount('');
+                    }}
+                    disabled={actionLoading}
+                    className="px-4 py-2 bg-bg-secondary text-text-primary rounded-lg hover:bg-bg-hover transition-colors disabled:opacity-50"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={executeBulkReassign}
+                    disabled={
+                      actionLoading || 
+                      (bulkReassignMode === 'count' && (!bulkReassignCount || parseInt(bulkReassignCount) <= 0))
+                    }
+                    className="px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {actionLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        재배정 중...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4" />
+                        재배정 확인
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </AdminLayout>
