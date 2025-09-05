@@ -66,7 +66,7 @@ function CustomerUploadContent() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 권한 체크 - 리드 페이지와 동일한 패턴 적용
-  if (!hasPermission('DATA_UPLOAD')) {
+  if (!hasPermission('upload')) {
     return (
       <AdminLayout>
         <div className="flex items-center justify-center min-h-96">
