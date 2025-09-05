@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { designSystem } from '@/lib/design-system';
 import { businessIcons } from '@/lib/design-system/icons';
+import { departmentPermissionService } from '@/lib/services/departmentPermissions';
 import { 
   Search, 
   RefreshCw, 
@@ -210,17 +211,53 @@ function AdminLeadsPageContent() {
       setLoading(true);
       console.log('=== 전체 데이터 로드 시작 ===');
 
+      if (!user?.id) {
+        console.log('사용자 정보 없음');
+        return;
+      }
+
       let allData: Lead[] = [];
       let from = 0;
       const batchSize = 1000;
       let hasMore = true;
 
+      // 접근 가능한 부서 확인 (설정된 권한 + 본인 부서)
+      const accessibleDepartments = await departmentPermissionService.getAccessibleDepartments(user.id);
+      console.log('접근 가능한 부서:', accessibleDepartments);
+
+      // 접근 가능한 부서의 영업사원 ID 목록을 가져오기
+      let allowedCounselorIds: string[] = [];
+      if (!isSuperAdmin && accessibleDepartments.length > 0) {
+        const { data: counselorsData } = await supabase
+          .from('users')
+          .select('id')
+          .eq('role', 'counselor')
+          .eq('is_active', true)
+          .in('department', accessibleDepartments);
+        
+        allowedCounselorIds = counselorsData?.map(c => c.id) || [];
+        console.log('접근 가능한 영업사원 ID:', allowedCounselorIds.length + '명');
+      }
+
       while (hasMore) {
-        const { data: batch, error } = await supabase
+        // 기본 쿼리 생성
+        let query = supabase
           .from('admin_leads_view')
           .select('*')
-          .order('created_at', { ascending: false })
-          .range(from, from + batchSize - 1);
+          .order('created_at', { ascending: false });
+
+        // 부서 권한이 있는 경우 필터링 적용
+        if (!isSuperAdmin && accessibleDepartments.length > 0 && allowedCounselorIds.length > 0) {
+          // 접근 가능한 영업사원의 리드 또는 미배정 리드만 조회
+          console.log('부서 필터링 적용: 접근 가능한 영업사원 + 미배정');
+          query = query.or(`counselor_id.in.(${allowedCounselorIds.join(',')}),counselor_id.is.null`);
+        } else if (!isSuperAdmin && accessibleDepartments.length === 0) {
+          // 접근 가능한 부서가 없으면 미배정 리드만
+          console.log('접근 가능한 부서 없음 - 미배정 리드만 조회');
+          query = query.is('counselor_id', null);
+        }
+
+        const { data: batch, error } = await query.range(from, from + batchSize - 1);
 
         if (error) throw error;
 
@@ -276,7 +313,7 @@ function AdminLeadsPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, user?.id, isSuperAdmin]);
 
   // 통계 로드 (원본 방식)
   const loadOverallStats = useCallback(async () => {

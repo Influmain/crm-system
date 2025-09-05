@@ -16,6 +16,7 @@ import {
   PERMISSION_DESCRIPTIONS,
   UserWithPermissions 
 } from '@/lib/services/permissions';
+import { departmentPermissionService } from '@/lib/services/departmentPermissions';
 import { supabase } from '@/lib/supabase';
 import { 
   Shield, Users, Settings, Eye, EyeOff, Save, 
@@ -85,8 +86,14 @@ const [loadingDepartments, setLoadingDepartments] = useState(false);
   // 데이터 로드
 useEffect(() => {
   loadUsersWithPermissions();
-  loadDepartmentsData(); // 추가
 }, []);
+
+// users가 로드된 후 부서 데이터 로드
+useEffect(() => {
+  if (users.length > 0) {
+    loadDepartmentsData();
+  }
+}, [users]);
 
   // 사용자 및 권한 데이터 로드
   const loadUsersWithPermissions = async () => {
@@ -129,21 +136,17 @@ const loadDepartmentsData = async () => {
     const uniqueDepts = [...new Set(deptData?.map(d => d.department).filter(Boolean))] as string[];
     setAvailableDepartments(uniqueDepts.sort());
     
-    // 2. localStorage에서 기존 권한 설정 로드
-    const savedPermissions = localStorage.getItem('crm_department_permissions');
-    if (savedPermissions) {
-      try {
-        const parsed = JSON.parse(savedPermissions);
-        setDepartmentPermissions(parsed);
-      } catch (e) {
-        console.error('부서 권한 파싱 오류:', e);
-        localStorage.removeItem('crm_department_permissions');
-      }
+    // 2. 모든 관리자의 부서 권한 로드
+    const permissionsMap: DepartmentPermissions = {};
+    for (const adminUser of users) {
+      const userDepartments = await departmentPermissionService.getUserDepartmentPermissions(adminUser.id);
+      permissionsMap[adminUser.id] = userDepartments;
     }
+    setDepartmentPermissions(permissionsMap);
     
     console.log('부서 데이터 로드 완료:', {
       departments: uniqueDepts,
-      savedPermissions: savedPermissions ? Object.keys(JSON.parse(savedPermissions)).length : 0
+      permissions: Object.keys(permissionsMap).length
     });
     
   } catch (error) {
@@ -401,25 +404,36 @@ const loadDepartmentsData = async () => {
   };
 
 // savePermissions 함수 아래에 추가
-const saveDepartmentPermissions = (userId: string, departments: string[]) => {
-  const newPermissions = {
-    ...departmentPermissions,
-    [userId]: departments
-  };
-  
-  setDepartmentPermissions(newPermissions);
-  localStorage.setItem('crm_department_permissions', JSON.stringify(newPermissions));
-  
-  // 해당 사용자 찾기
-  const user = users.find(u => u.id === userId);
-  const userName = user?.full_name || '사용자';
-  
-  if (departments.length === 0) {
-    toast.warning('부서 권한 제거', `${userName}님의 모든 부서 접근 권한이 제거되었습니다.`);
-  } else if (departments.length === availableDepartments.length) {
-    toast.success('전체 부서 권한', `${userName}님에게 모든 부서 접근 권한이 부여되었습니다.`);
-  } else {
-    toast.success('부서 권한 설정', `${userName}님에게 ${departments.length}개 부서 접근 권한이 설정되었습니다.`);
+const saveDepartmentPermissions = async (userId: string, departments: string[]) => {
+  try {
+    // 부서 권한 서비스를 사용하여 저장
+    await departmentPermissionService.saveDepartmentPermissions(
+      userId, 
+      departments, 
+      user?.id || ''
+    );
+    
+    // 로컬 상태 업데이트
+    const newPermissions = {
+      ...departmentPermissions,
+      [userId]: departments
+    };
+    setDepartmentPermissions(newPermissions);
+    
+    // 해당 사용자 찾기
+    const targetUser = users.find(u => u.id === userId);
+    const userName = targetUser?.full_name || '사용자';
+    
+    if (departments.length === 0) {
+      toast.warning('부서 권한 제거', `${userName}님의 모든 부서 접근 권한이 제거되었습니다.`);
+    } else if (departments.length === availableDepartments.length) {
+      toast.success('전체 부서 권한', `${userName}님에게 모든 부서 접근 권한이 부여되었습니다.`);
+    } else {
+      toast.success('부서 권한 설정', `${userName}님에게 ${departments.length}개 부서 접근 권한이 설정되었습니다.`);
+    }
+  } catch (error) {
+    console.error('부서 권한 저장 실패:', error);
+    toast.error('권한 저장 실패', '부서 권한 저장 중 오류가 발생했습니다.');
   }
 };
 

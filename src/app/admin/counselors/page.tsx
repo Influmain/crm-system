@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { useToastHelpers } from '@/components/ui/Toast';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { permissionService, PermissionType } from '@/lib/services/permissions';
+import { departmentPermissionService } from '@/lib/services/departmentPermissions';
 import { 
   UserPlus, Users, CheckCircle, XCircle, RefreshCw, 
   Edit2, Trash2, Building2, Mail, Phone, AlertTriangle,
@@ -119,7 +120,7 @@ function PermissionChecker({ children }: { children: React.ReactNode }) {
 }
 
 function CounselorsPageContent() {
-  const { user, userProfile } = useAuth();
+  const { user, userProfile, isSuperAdmin } = useAuth();
   const toast = useToastHelpers();
   const [mounted, setMounted] = useState(false);
   
@@ -201,11 +202,34 @@ function CounselorsPageContent() {
     try {
       console.log('전체 영업사원 조회 시작...');
 
-      const { data: counselorsData, error: counselorsError } = await supabase
+      if (!user?.id) {
+        console.log('사용자 정보 없음');
+        return;
+      }
+
+      // 기본 쿼리 생성
+      let query = supabase
         .from('users')
         .select('*')
         .eq('role', 'counselor')
         .order('full_name', { ascending: true });
+
+      // 부서별 필터링 적용 (설정된 권한 + 본인 부서)
+      const accessibleDepartments = await departmentPermissionService.getAccessibleDepartments(user.id);
+      console.log('접근 가능한 부서:', accessibleDepartments);
+
+      if (!isSuperAdmin && accessibleDepartments.length > 0) {
+        // 접근 가능한 부서의 영업사원만 조회
+        console.log('부서 필터링 적용: 접근 가능한 부서 -', accessibleDepartments.join(', '));
+        query = query.in('department', accessibleDepartments);
+      } else if (!isSuperAdmin && accessibleDepartments.length === 0) {
+        // 접근 가능한 부서가 없으면 빈 결과 반환
+        console.log('접근 가능한 부서 없음 - 영업사원 조회 불가');
+        setAllCounselors([]);
+        return;
+      }
+
+      const { data: counselorsData, error: counselorsError } = await query;
 
       if (counselorsError) {
         console.error('영업사원 조회 에러:', counselorsError);
@@ -232,7 +256,7 @@ function CounselorsPageContent() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, user?.id, isSuperAdmin]);
 
   // 클라이언트 사이드 필터링
   const applyFilters = useCallback(() => {

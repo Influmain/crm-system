@@ -8,6 +8,7 @@ import { businessIcons } from '@/lib/design-system/icons';
 import { supabase, leadAssignmentService, leadPoolService } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useToastHelpers } from '@/components/ui/Toast';
+import { departmentPermissionService } from '@/lib/services/departmentPermissions';
 import { 
   RefreshCw, 
   Search, 
@@ -282,13 +283,32 @@ function AssignmentsPageContent() {
   // 영업사원 데이터 로드
   const loadCounselors = async () => {
     try {
-      const { data: counselorsData, error: counselorsError } = await supabase
+      // 기본 쿼리 생성
+      let query = supabase
         .from('users')
         .select('*')
         .eq('role', 'counselor')
         .eq('is_active', true)
         .order('department', { ascending: true })
         .order('full_name', { ascending: true });
+
+      // 부서별 필터링 적용
+      if (user?.id) {
+        const accessibleDepartments = await departmentPermissionService.getAccessibleDepartments(user.id);
+        
+        if (!isSuperAdmin && accessibleDepartments.length > 0) {
+          // 접근 가능한 부서의 영업사원만 조회
+          console.log('영업사원 부서 필터링 적용:', accessibleDepartments.join(', '));
+          query = query.in('department', accessibleDepartments);
+        } else if (!isSuperAdmin && accessibleDepartments.length === 0) {
+          // 접근 가능한 부서가 없으면 빈 결과 반환
+          console.log('접근 가능한 부서 없음 - 영업사원 조회 불가');
+          setCounselors([]);
+          return;
+        }
+      }
+
+      const { data: counselorsData, error: counselorsError } = await query;
 
       if (counselorsError) throw counselorsError;
 
