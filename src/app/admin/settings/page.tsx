@@ -21,7 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { 
   Shield, Users, Settings, Eye, EyeOff, Save, 
   RefreshCw, UserPlus, Edit2, Trash2, CheckCircle, XCircle,
-  AlertTriangle
+  AlertTriangle, Check, X
 } from 'lucide-react';
 
 interface DepartmentPermissions {
@@ -87,6 +87,14 @@ const [loadingDepartments, setLoadingDepartments] = useState(false);
   const [showDeletedUsers, setShowDeletedUsers] = useState(false);
   const [deletedUsers, setDeletedUsers] = useState<UserWithPermissions[]>([]);
   const [loadingDeleted, setLoadingDeleted] = useState(false);
+
+  // 사용자 정보 수정 상태
+  const [editingUser, setEditingUser] = useState<UserWithPermissions | null>(null);
+  const [editForm, setEditForm] = useState({
+    full_name: '',
+    phone: '',
+    department: ''
+  });
 
   // 데이터 로드
 useEffect(() => {
@@ -512,6 +520,85 @@ const loadDepartmentsData = async () => {
     }
   };
 
+  // 사용자 정보 수정 시작
+  const startEditUser = (user: UserWithPermissions) => {
+    setEditingUser(user);
+    setEditForm({
+      full_name: user.full_name,
+      phone: user.phone || '',
+      department: user.department || ''
+    });
+  };
+
+  // 사용자 정보 수정 취소
+  const cancelEditUser = () => {
+    setEditingUser(null);
+    setEditForm({
+      full_name: '',
+      phone: '',
+      department: ''
+    });
+  };
+
+  // 사용자 정보 수정 저장
+  const saveUserInfo = async () => {
+    if (!editingUser || !user || !userProfile?.is_super_admin) {
+      toast.error('권한 오류', '최고관리자만 사용자 정보를 수정할 수 있습니다.');
+      return;
+    }
+
+    if (!editForm.full_name.trim()) {
+      toast.warning('입력 오류', '이름을 입력해주세요.');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('세션이 만료되었습니다. 다시 로그인해주세요.');
+
+      const response = await fetch('/api/admin/update-user', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          user_id: editingUser.id,
+          full_name: editForm.full_name,
+          phone: editForm.phone,
+          department: editForm.department
+        })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || '사용자 정보 수정에 실패했습니다.');
+      }
+
+      toast.success(
+        '정보 수정 완료',
+        `${editForm.full_name}님의 정보가 업데이트되었습니다.`,
+        {
+          action: {
+            label: '목록 새로고침',
+            onClick: () => loadUsersWithPermissions()
+          }
+        }
+      );
+
+      cancelEditUser();
+      await loadUsersWithPermissions();
+
+    } catch (error: any) {
+      console.error('사용자 정보 수정 실패:', error);
+      toast.error('정보 수정 실패', error.message || '사용자 정보 수정 중 오류가 발생했습니다.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
 // savePermissions 함수 아래에 추가
 const saveDepartmentPermissions = async (userId: string, departments: string[]) => {
   try {
@@ -760,7 +847,19 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
                 <div className="flex items-center gap-3 mb-2">
                   <div className="flex items-center gap-2">
                     <Users className="w-4 h-4 text-text-secondary" />
-                    <span className="font-medium text-text-primary">{admin.full_name}</span>
+                    {editingUser?.id === admin.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={editForm.full_name}
+                          onChange={(e) => setEditForm(prev => ({ ...prev, full_name: e.target.value }))}
+                          className="px-2 py-1 border border-border-primary rounded bg-bg-primary text-text-primary font-medium focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                          placeholder="이름"
+                        />
+                      </div>
+                    ) : (
+                      <span className="font-medium text-text-primary">{admin.full_name}</span>
+                    )}
                     {admin.is_super_admin && (
                       <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-accent text-bg-primary font-medium">
                         최고관리자
@@ -770,6 +869,25 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
                 </div>
                 
                 <p className="text-sm text-text-secondary mb-3">{admin.email}</p>
+                
+                {editingUser?.id === admin.id && (
+                  <div className="mb-3 space-y-2">
+                    <input
+                      type="text"
+                      value={editForm.phone}
+                      onChange={(e) => setEditForm(prev => ({ ...prev, phone: e.target.value }))}
+                      className="w-full px-2 py-1 border border-border-primary rounded bg-bg-primary text-text-primary text-sm focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                      placeholder="전화번호 (선택사항)"
+                    />
+                    <input
+                      type="text"
+                      value={editForm.department}
+                      onChange={(e) => setEditForm(prev => ({ ...prev, department: e.target.value }))}
+                      className="w-full px-2 py-1 border border-border-primary rounded bg-bg-primary text-text-primary text-sm focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                      placeholder="부서 (선택사항)"
+                    />
+                  </div>
+                )}
                 
                 <div className="flex flex-wrap gap-2">
                   {admin.is_super_admin ? (
@@ -785,30 +903,63 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
               </div>
               
               <div className="flex gap-2 ml-4">
-                {!admin.is_super_admin && admin.id !== user?.id && (
+                {editingUser?.id === admin.id ? (
                   <>
                     <button
-                      onClick={() => openPermissionModal(admin)}
-                      className={designSystem.components.button.secondary}
+                      onClick={saveUserInfo}
+                      disabled={actionLoading}
+                      className="px-3 py-2 bg-green-50 text-green-600 border border-green-200 rounded-lg hover:bg-green-100 transition-colors flex items-center gap-2 disabled:opacity-50"
                     >
-                      <Edit2 className="w-4 h-4 mr-2" />
-                      권한 수정
+                      <Check className="w-4 h-4" />
+                      저장
                     </button>
-                    
                     <button
-                      onClick={() => openDeleteModal(admin)}
-                      className="px-3 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-2"
+                      onClick={cancelEditUser}
+                      disabled={actionLoading}
+                      className="px-3 py-2 bg-gray-50 text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors flex items-center gap-2 disabled:opacity-50"
                     >
-                      <Trash2 className="w-4 h-4" />
-                      삭제
+                      <X className="w-4 h-4" />
+                      취소
                     </button>
                   </>
-                )}
-                
-                {admin.id === user?.id && (
-                  <span className="text-sm text-text-tertiary px-4 py-2">
-                    본인 계정
-                  </span>
+                ) : (
+                  <>
+                    {userProfile?.is_super_admin && (
+                      <button
+                        onClick={() => startEditUser(admin)}
+                        className={designSystem.components.button.secondary}
+                      >
+                        <Edit2 className="w-4 h-4 mr-2" />
+                        정보 수정
+                      </button>
+                    )}
+                    
+                    {!admin.is_super_admin && admin.id !== user?.id && (
+                      <>
+                        <button
+                          onClick={() => openPermissionModal(admin)}
+                          className={designSystem.components.button.secondary}
+                        >
+                          <Edit2 className="w-4 h-4 mr-2" />
+                          권한 수정
+                        </button>
+                        
+                        <button
+                          onClick={() => openDeleteModal(admin)}
+                          className="px-3 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors flex items-center gap-2"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          삭제
+                        </button>
+                      </>
+                    )}
+                    
+                    {admin.id === user?.id && (
+                      <span className="text-sm text-text-tertiary px-4 py-2">
+                        본인 계정
+                      </span>
+                    )}
+                  </>
                 )}
                 
                 {admin.is_super_admin && admin.id !== user?.id && (

@@ -62,6 +62,8 @@ export interface UserWithPermissions {
   id: string;
   email: string;
   full_name: string;
+  phone?: string | null;
+  department?: string | null;
   role: string;
   is_super_admin: boolean;
   is_active: boolean;
@@ -140,7 +142,7 @@ export const permissionService = {
     // 관리자 사용자들 조회
     const { data: users, error: usersError } = await supabase
       .from('users')
-      .select('id, email, full_name, role, is_super_admin, is_active')
+      .select('id, email, full_name, phone, department, role, is_super_admin, is_active')
       .eq('role', 'admin')
       .eq('is_active', true)
       .order('full_name');
