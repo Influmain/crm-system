@@ -9,6 +9,7 @@ import { useToastHelpers } from '@/components/ui/Toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
 import AdminLayout from '@/components/layout/AdminLayout';
+import { departmentPermissionService } from '@/lib/services/departmentPermissions';
 import { 
   RefreshCw, 
   Search, 
@@ -208,12 +209,26 @@ function CounselingMonitorContent() {
   // 부서 목록 로드
   const loadDepartments = async () => {
     try {
-      const { data: departmentData, error } = await supabase
+      if (!user?.id) return;
+
+      // 사용자가 접근할 수 있는 부서 목록 조회
+      const accessibleDepartments = await departmentPermissionService.getAccessibleDepartments(user.id);
+      
+      if (accessibleDepartments.length === 0) {
+        setDepartments([]);
+        return;
+      }
+
+      // 접근 가능한 부서에 영업사원이 있는지 확인
+      let query = supabase
         .from('users')
         .select('department')
         .eq('role', 'counselor')
         .eq('is_active', true)
-        .not('department', 'is', null);
+        .not('department', 'is', null)
+        .in('department', accessibleDepartments);
+
+      const { data: departmentData, error } = await query;
 
       if (error) throw error;
 
@@ -251,6 +266,20 @@ function CounselingMonitorContent() {
         .select('id, full_name, email, role, phone, department, is_active')
         .eq('role', 'counselor')
         .eq('is_active', true);
+
+      // 부서 권한 기반 필터링 적용
+      if (user?.id) {
+        const accessibleDepartments = await departmentPermissionService.getAccessibleDepartments(user.id);
+        
+        if (accessibleDepartments.length === 0) {
+          console.log('부서 권한 없음 - 영업사원 조회 불가');
+          setCounselors([]);
+          return;
+        }
+        
+        console.log(`영업사원 부서 필터링 적용: [${accessibleDepartments.join(', ')}]`);
+        query = query.in('department', accessibleDepartments);
+      }
 
       // 부서 필터 적용
       if (departmentFilter) {

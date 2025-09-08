@@ -14,7 +14,7 @@ import {
   UserPlus, Users, CheckCircle, XCircle, RefreshCw, 
   Edit2, Trash2, Building2, Mail, Phone, AlertTriangle,
   Search, ChevronLeft, ChevronRight, CheckSquare, Square,
-  User, Calendar, Filter, X, Plus, Tag
+  User, Calendar, Filter, X, Plus, Tag, Eye, EyeOff
 } from 'lucide-react';
 
 interface Counselor {
@@ -155,6 +155,11 @@ function CounselorsPageContent() {
     phone: '',
     department: ''
   });
+  
+  // 삭제된 사용자 복구 관련 상태
+  const [showDeletedCounselors, setShowDeletedCounselors] = useState(false);
+  const [deletedCounselors, setDeletedCounselors] = useState<Counselor[]>([]);
+  const [loadingDeleted, setLoadingDeleted] = useState(false);
   const [newCounselor, setNewCounselor] = useState<NewCounselorForm>({
     korean_name: '',
     english_id: '',
@@ -207,11 +212,12 @@ function CounselorsPageContent() {
         return;
       }
 
-      // 기본 쿼리 생성
+      // 기본 쿼리 생성 (활성 사용자만) - deleted_at 조건 제외
       let query = supabase
         .from('users')
         .select('*')
         .eq('role', 'counselor')
+        .eq('is_active', true)
         .order('full_name', { ascending: true });
 
       // 부서별 필터링 적용 (설정된 권한 + 본인 부서)
@@ -230,14 +236,20 @@ function CounselorsPageContent() {
       }
 
       const { data: counselorsData, error: counselorsError } = await query;
+      
+      // 클라이언트 사이드에서 deleted_at이 null인 것만 필터링
+      let filteredCounselors = counselorsData || [];
+      if (filteredCounselors.length > 0 && 'deleted_at' in filteredCounselors[0]) {
+        filteredCounselors = filteredCounselors.filter(counselor => !counselor.deleted_at);
+      }
 
       if (counselorsError) {
         console.error('영업사원 조회 에러:', counselorsError);
         throw new Error('영업사원 조회 실패: ' + counselorsError.message);
       }
 
-      console.log('조회된 영업사원 수:', counselorsData?.length || 0);
-      setAllCounselors(counselorsData || []);
+      console.log('조회된 영업사원 수:', filteredCounselors.length);
+      setAllCounselors(filteredCounselors);
       
     } catch (error: any) {
       console.error('영업사원 로드 실패:', error);
@@ -257,6 +269,133 @@ function CounselorsPageContent() {
       setLoading(false);
     }
   }, [toast, user?.id, isSuperAdmin]);
+
+  // 삭제된 영업사원 목록 로드
+  const loadDeletedCounselors = async () => {
+    setLoadingDeleted(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/restore-user', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '삭제된 영업사원 조회 실패');
+      }
+
+      const { deletedUsers } = await response.json();
+      // 영업사원만 필터링
+      const deletedCounselorData = (deletedUsers || []).filter((user: any) => user.role === 'counselor');
+      setDeletedCounselors(deletedCounselorData);
+    } catch (error: any) {
+      console.error('삭제된 영업사원 조회 실패:', error);
+      toast.error('조회 실패', error.message);
+    } finally {
+      setLoadingDeleted(false);
+    }
+  };
+
+  // 영업사원 복구
+  const restoreCounselor = async (userId: string, userName: string) => {
+    if (!confirm(`${userName}님의 계정을 복구하시겠습니까?`)) return;
+
+    setActionLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/restore-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          restored_by: user?.id
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '복구 실패');
+      }
+
+      const result = await response.json();
+      toast.success('복구 완료', result.message);
+      
+      // 목록 새로고침
+      await loadDeletedCounselors();
+      await loadAllCounselors();
+      await loadDepartments();
+    } catch (error: any) {
+      console.error('복구 실패:', error);
+      toast.error('복구 실패', error.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // 영업사원 완전 삭제
+  const permanentlyDeleteCounselor = async (userId: string, userName: string) => {
+    const confirmationText = `DELETE ${userName}`;
+    const userInput = prompt(
+      `⚠️ 경고: ${userName}님의 계정을 완전히 삭제합니다.\n\n` +
+      `이 작업은 되돌릴 수 없으며, Auth 계정과 모든 관련 데이터가 영구적으로 삭제됩니다.\n\n` +
+      `계속하려면 다음 텍스트를 정확히 입력하세요:\n` +
+      `"${confirmationText}"`
+    );
+
+    if (!userInput || userInput !== confirmationText) {
+      if (userInput !== null) {
+        toast.error('취소됨', '확인 텍스트가 일치하지 않습니다.');
+      }
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/permanently-delete-user', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          confirmation_text: confirmationText
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '완전 삭제 실패');
+      }
+
+      const result = await response.json();
+      toast.success('완전 삭제 완료', result.message);
+      
+      // 목록 새로고침
+      await loadDeletedCounselors();
+      await loadAllCounselors();
+      await loadDepartments();
+    } catch (error: any) {
+      console.error('완전 삭제 실패:', error);
+      toast.error('완전 삭제 실패', error.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   // 클라이언트 사이드 필터링
   const applyFilters = useCallback(() => {
@@ -823,17 +962,22 @@ function CounselorsPageContent() {
         return;
       }
 
+      // 소프트 삭제로 변경
       const { error } = await supabase
         .from('users')
-        .delete()
+        .update({
+          is_active: false,
+          deleted_at: new Date().toISOString(),
+          deleted_by: user?.id
+        })
         .in('id', selectedIds);
 
       if (error) throw error;
 
-      const successMessage = selectedIds.length + '명의 영업사원이 삭제되었습니다.\n\n삭제된 영업사원: ' + selectedCounselorNames.join(', ') + '\n\n참고: Supabase Auth 계정 삭제는 관리자가 별도 처리해야 할 수 있습니다.';
+      const successMessage = selectedIds.length + '명의 영업사원이 비활성화되었습니다 (복구 가능).\n\n비활성화된 영업사원: ' + selectedCounselorNames.join(', ');
 
       toast.success(
-        '삭제 완료',
+        '비활성화 완료',
         successMessage,
         {
           action: {
@@ -949,6 +1093,117 @@ function CounselorsPageContent() {
               <Building2 className="w-8 h-8 text-accent" />
             </div>
           </div>
+        </div>
+
+        {/* 삭제된 영업사원 복구 섹션 */}
+        <div className={designSystem.utils.cn(designSystem.components.card.base, "p-6 mb-6")}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <RefreshCw className="w-5 h-5 text-warning" />
+              <h3 className={designSystem.components.typography.h4}>삭제된 영업사원 복구</h3>
+              <span className="text-sm text-text-secondary">(관리자 전용)</span>
+            </div>
+            <button
+              onClick={() => {
+                setShowDeletedCounselors(!showDeletedCounselors);
+                if (!showDeletedCounselors && deletedCounselors.length === 0) {
+                  loadDeletedCounselors();
+                }
+              }}
+              className={designSystem.components.button.secondary}
+            >
+              {showDeletedCounselors ? (
+                <>
+                  <EyeOff className="w-4 h-4 mr-2" />
+                  숨기기
+                </>
+              ) : (
+                <>
+                  <Eye className="w-4 h-4 mr-2" />
+                  삭제된 영업사원 보기
+                </>
+              )}
+            </button>
+          </div>
+
+          {showDeletedCounselors && (
+            <div className="space-y-3">
+              {loadingDeleted ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="w-6 h-6 animate-spin text-accent mr-3" />
+                  <span className="text-text-secondary">삭제된 영업사원 조회 중...</span>
+                </div>
+              ) : deletedCounselors.length === 0 ? (
+                <div className="text-center py-6">
+                  <CheckCircle className="w-12 h-12 text-success mx-auto mb-3" />
+                  <h4 className="text-md font-medium text-text-primary mb-1">삭제된 영업사원이 없습니다</h4>
+                  <p className="text-sm text-text-secondary">모든 영업사원이 활성 상태입니다.</p>
+                </div>
+              ) : (
+                deletedCounselors.map((deletedCounselor) => (
+                  <div
+                    key={deletedCounselor.id}
+                    className="border border-border-primary rounded-lg p-3 bg-bg-secondary/20"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Users className="w-4 h-4 text-text-secondary" />
+                          <span className="font-medium text-text-primary">{deletedCounselor.full_name}</span>
+                          <XCircle className="w-4 h-4 text-warning" />
+                          <span className="text-xs text-warning bg-warning/10 px-2 py-0.5 rounded-full">
+                            삭제됨
+                          </span>
+                        </div>
+                        <div className="text-sm text-text-secondary grid grid-cols-1 md:grid-cols-3 gap-1">
+                          <div>이메일: {deletedCounselor.email}</div>
+                          {(deletedCounselor as any).department && (
+                            <div>부서: {(deletedCounselor as any).department}</div>
+                          )}
+                          {(deletedCounselor as any).deleted_at && (
+                            <div>삭제일: {new Date((deletedCounselor as any).deleted_at).toLocaleDateString('ko-KR')}</div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="ml-4 flex gap-2">
+                        <button
+                          onClick={() => restoreCounselor(deletedCounselor.id, deletedCounselor.full_name)}
+                          disabled={actionLoading}
+                          className={designSystem.utils.cn(
+                            designSystem.components.button.primary,
+                            "text-sm px-3 py-1.5"
+                          )}
+                        >
+                          {actionLoading ? (
+                            <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                          ) : (
+                            <RefreshCw className="w-3 h-3 mr-1" />
+                          )}
+                          복구
+                        </button>
+                        <button
+                          onClick={() => permanentlyDeleteCounselor(deletedCounselor.id, deletedCounselor.full_name)}
+                          disabled={actionLoading}
+                          className={designSystem.utils.cn(
+                            "px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
+                            "bg-red-50 hover:bg-red-100 text-red-700 border-red-200",
+                            "disabled:opacity-50 disabled:cursor-not-allowed"
+                          )}
+                        >
+                          {actionLoading ? (
+                            <Trash2 className="w-3 h-3 animate-pulse mr-1" />
+                          ) : (
+                            <Trash2 className="w-3 h-3 mr-1" />
+                          )}
+                          완전 삭제
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         {/* 필터 섹션 */}

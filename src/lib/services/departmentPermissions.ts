@@ -11,12 +11,12 @@ export interface DepartmentPermission {
   is_active: boolean;
 }
 
-// 부서별 데이터 필터링 서비스
+// DB 기반 부서별 데이터 필터링 서비스
 export const departmentPermissionService = {
-  // 사용자의 부서 권한 조회
+  // 사용자의 부서 권한 조회 (DB 기반)
   async getUserDepartmentPermissions(userId: string): Promise<string[]> {
     try {
-      console.log('=== 부서 권한 조회 시작 ===');
+      console.log('=== DB 기반 부서 권한 조회 시작 ===');
       console.log('사용자 ID:', userId);
 
       // 최고관리자인지 확인
@@ -43,101 +43,81 @@ export const departmentPermissionService = {
         return uniqueDepts;
       }
 
-      // localStorage와 sessionStorage에서 부서 권한 조회 (안정성을 위해)
-      console.log('일반 관리자 - 스토리지에서 권한 조회');
-      console.log('조회할 사용자 ID:', userId);
-      if (typeof window !== 'undefined') {
-        const savedLocalPermissions = localStorage.getItem('crm_department_permissions');
-        const savedSessionPermissions = sessionStorage.getItem('crm_department_permissions');
-        console.log('localStorage 권한 데이터:', savedLocalPermissions);
-        console.log('sessionStorage 권한 데이터:', savedSessionPermissions);
-        
-        // localStorage 우선, 없으면 sessionStorage 사용
-        const savedPermissions = savedLocalPermissions || savedSessionPermissions;
-        
-        if (savedPermissions) {
-          try {
-            const parsed = JSON.parse(savedPermissions);
-            console.log('파싱된 전체 권한 데이터:', parsed);
-            console.log('사용가능한 사용자 ID 목록:', Object.keys(parsed));
-            
-            const userPermissions = parsed[userId] || [];
-            console.log(`사용자 ${userId}의 부서 권한:`, userPermissions);
-            
-            // userId가 정확히 일치하는지 확인
-            if (!parsed.hasOwnProperty(userId)) {
-              console.warn(`⚠️ userId ${userId}에 해당하는 권한이 없습니다.`);
-              console.log('저장된 사용자들:', Object.keys(parsed));
-            }
-            
-            return userPermissions;
-          } catch (error) {
-            console.error('부서 권한 파싱 오류:', error);
-            return [];
-          }
-        } else {
-          console.log('📍 localStorage와 sessionStorage 모두 권한 데이터 없음');
-        }
+      // DB에서 부서 권한 조회
+      console.log('일반 관리자 - DB에서 권한 조회');
+      const { data: permissions, error } = await supabase
+        .from('department_permissions')
+        .select('department')
+        .eq('user_id', userId)
+        .eq('is_active', true);
+
+      if (error) {
+        console.error('DB 부서 권한 조회 실패:', error);
+        return [];
       }
 
-      console.log('부서 권한 없음');
-      return [];
+      const userPermissions = permissions?.map(p => p.department) || [];
+      console.log(`사용자 ${userId}의 DB 부서 권한:`, userPermissions);
+      
+      return userPermissions;
     } catch (error) {
       console.error('부서 권한 조회 실패:', error);
       return [];
     }
   },
 
-  // 사용자에게 부서 권한 부여
+  // 사용자에게 부서 권한 부여 (DB 기반)
   async saveDepartmentPermissions(
     userId: string,
     departments: string[],
     grantedBy: string
   ): Promise<void> {
     try {
-      console.log('=== 부서 권한 저장 시작 ===');
+      console.log('=== DB 기반 부서 권한 저장 시작 ===');
       console.log('사용자 ID:', userId);
       console.log('부서 목록:', departments);
       console.log('권한 부여자:', grantedBy);
 
-      // localStorage와 sessionStorage 동시 저장 (안정성을 위해)
-      if (typeof window !== 'undefined') {
-        const existingLocalData = localStorage.getItem('crm_department_permissions');
-        const existingSessionData = sessionStorage.getItem('crm_department_permissions');
-        console.log('기존 localStorage 데이터:', existingLocalData);
-        console.log('기존 sessionStorage 데이터:', existingSessionData);
-        
-        // localStorage 우선, 없으면 sessionStorage 사용
-        const existingData = existingLocalData || existingSessionData;
-        const currentPermissions = JSON.parse(existingData || '{}');
-        console.log('파싱된 기존 권한:', currentPermissions);
-        
-        currentPermissions[userId] = departments;
-        console.log('업데이트된 권한:', currentPermissions);
-        
-        const serializedData = JSON.stringify(currentPermissions);
-        
-        // 두 곳 모두에 저장
-        localStorage.setItem('crm_department_permissions', serializedData);
-        sessionStorage.setItem('crm_department_permissions', serializedData);
-        
-        // 저장 확인
-        const savedLocalData = localStorage.getItem('crm_department_permissions');
-        const savedSessionData = sessionStorage.getItem('crm_department_permissions');
-        console.log('localStorage 저장 후 확인:', savedLocalData);
-        console.log('sessionStorage 저장 후 확인:', savedSessionData);
-        
-        if (!savedLocalData && !savedSessionData) {
-          throw new Error('저장 실패 - localStorage, sessionStorage 모두 실패');
-        }
-      } else {
-        console.warn('브라우저 환경이 아님 - 스토리지 사용 불가');
-        throw new Error('브라우저 환경에서만 사용 가능합니다');
+      // 1. 기존 권한 모두 비활성화
+      const { error: deactivateError } = await supabase
+        .from('department_permissions')
+        .update({ 
+          is_active: false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId);
+
+      if (deactivateError) {
+        console.error('기존 권한 비활성화 실패:', deactivateError);
+        throw deactivateError;
       }
 
-      console.log(`✅ 부서 권한 저장 완료: ${userId} -> [${departments.join(', ')}]`);
+      // 2. 새로운 권한 추가
+      if (departments.length > 0) {
+        const newPermissions = departments.map(dept => ({
+          user_id: userId,
+          department: dept,
+          granted_by: grantedBy,
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }));
+
+        const { error: insertError } = await supabase
+          .from('department_permissions')
+          .upsert(newPermissions, {
+            onConflict: 'user_id, department'
+          });
+
+        if (insertError) {
+          console.error('새 권한 저장 실패:', insertError);
+          throw insertError;
+        }
+      }
+
+      console.log(`✅ DB 부서 권한 저장 완료: ${userId} -> [${departments.join(', ')}]`);
     } catch (error) {
-      console.error('❌ 부서 권한 저장 실패:', error);
+      console.error('❌ DB 부서 권한 저장 실패:', error);
       throw error;
     }
   },
@@ -271,8 +251,35 @@ export const departmentPermissionService = {
     }
   },
 
-  // 사용자가 접근 가능한 부서 목록 반환 (UI용) - 위의 getAccessibleDepartments와 통합됨
-  // async getAccessibleDepartments(userId: string): Promise<string[]> {
-  //   return this.getUserDepartmentPermissions(userId);
-  // }
+  // DB에서 모든 사용자의 부서 권한 조회 (관리자 설정 페이지용)
+  async getAllUserDepartmentPermissions(): Promise<Record<string, string[]>> {
+    try {
+      console.log('=== 모든 사용자 부서 권한 조회 ===');
+      
+      const { data: permissions, error } = await supabase
+        .from('department_permissions')
+        .select('user_id, department')
+        .eq('is_active', true);
+
+      if (error) {
+        console.error('모든 사용자 부서 권한 조회 실패:', error);
+        return {};
+      }
+
+      // user_id별로 부서 목록 그룹화
+      const permissionsMap: Record<string, string[]> = {};
+      permissions?.forEach(perm => {
+        if (!permissionsMap[perm.user_id]) {
+          permissionsMap[perm.user_id] = [];
+        }
+        permissionsMap[perm.user_id].push(perm.department);
+      });
+
+      console.log('모든 사용자 부서 권한:', permissionsMap);
+      return permissionsMap;
+    } catch (error) {
+      console.error('모든 사용자 부서 권한 조회 실패:', error);
+      return {};
+    }
+  }
 };

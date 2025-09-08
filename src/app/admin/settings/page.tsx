@@ -83,6 +83,11 @@ const [loadingDepartments, setLoadingDepartments] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [userToDelete, setUserToDelete] = useState<UserWithPermissions | null>(null);
 
+  // 삭제된 사용자 복구 관련 상태
+  const [showDeletedUsers, setShowDeletedUsers] = useState(false);
+  const [deletedUsers, setDeletedUsers] = useState<UserWithPermissions[]>([]);
+  const [loadingDeleted, setLoadingDeleted] = useState(false);
+
   // 데이터 로드
 useEffect(() => {
   loadUsersWithPermissions();
@@ -119,7 +124,129 @@ useEffect(() => {
     }
   };
 
-  // loadUsersWithPermissions 함수 아래에 추가
+  // 삭제된 사용자 목록 로드
+  const loadDeletedUsers = async () => {
+    setLoadingDeleted(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/restore-user', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '삭제된 사용자 조회 실패');
+      }
+
+      const { deletedUsers: data } = await response.json();
+      setDeletedUsers(data || []);
+    } catch (error: any) {
+      console.error('삭제된 사용자 조회 실패:', error);
+      toast.error('조회 실패', error.message);
+    } finally {
+      setLoadingDeleted(false);
+    }
+  };
+
+  // 사용자 복구
+  const restoreUser = async (userId: string, userName: string) => {
+    if (!confirm(`${userName}님의 계정을 복구하시겠습니까?`)) return;
+
+    setActionLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/restore-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          restored_by: user?.id
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '복구 실패');
+      }
+
+      const result = await response.json();
+      toast.success('복구 완료', result.message);
+      
+      // 목록 새로고침
+      await loadDeletedUsers();
+      await loadUsersWithPermissions();
+    } catch (error: any) {
+      console.error('복구 실패:', error);
+      toast.error('복구 실패', error.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // 사용자 완전 삭제
+  const permanentlyDeleteUser = async (userId: string, userName: string) => {
+    const confirmationText = `DELETE ${userName}`;
+    const userInput = prompt(
+      `⚠️ 경고: ${userName}님의 계정을 완전히 삭제합니다.\n\n` +
+      `이 작업은 되돌릴 수 없으며, Auth 계정과 모든 관련 데이터가 영구적으로 삭제됩니다.\n\n` +
+      `계속하려면 다음 텍스트를 정확히 입력하세요:\n` +
+      `"${confirmationText}"`
+    );
+
+    if (!userInput || userInput !== confirmationText) {
+      if (userInput !== null) {
+        toast.error('취소됨', '확인 텍스트가 일치하지 않습니다.');
+      }
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/permanently-delete-user', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          confirmation_text: confirmationText
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '완전 삭제 실패');
+      }
+
+      const result = await response.json();
+      toast.success('완전 삭제 완료', result.message);
+      
+      // 목록 새로고침
+      await loadDeletedUsers();
+      await loadUsersWithPermissions();
+    } catch (error: any) {
+      console.error('완전 삭제 실패:', error);
+      toast.error('완전 삭제 실패', error.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
 const loadDepartmentsData = async () => {
   setLoadingDepartments(true);
   try {
@@ -136,12 +263,8 @@ const loadDepartmentsData = async () => {
     const uniqueDepts = [...new Set(deptData?.map(d => d.department).filter(Boolean))] as string[];
     setAvailableDepartments(uniqueDepts.sort());
     
-    // 2. 모든 관리자의 부서 권한 로드
-    const permissionsMap: DepartmentPermissions = {};
-    for (const adminUser of users) {
-      const userDepartments = await departmentPermissionService.getUserDepartmentPermissions(adminUser.id);
-      permissionsMap[adminUser.id] = userDepartments;
-    }
+    // 2. 모든 관리자의 부서 권한 로드 (DB 기반)
+    const permissionsMap = await departmentPermissionService.getAllUserDepartmentPermissions();
     setDepartmentPermissions(permissionsMap);
     
     console.log('부서 데이터 로드 완료:', {
@@ -294,23 +417,7 @@ const loadDepartmentsData = async () => {
         );
       }
 
-      // 2. 권한 먼저 삭제
-      const { error: permError } = await supabase
-        .from('user_permissions')
-        .delete()
-        .eq('user_id', userToDelete.id);
-
-      if (permError) throw permError;
-
-      // 3. public.users에서 삭제
-      const { error: userError } = await supabase
-        .from('users')
-        .delete()
-        .eq('id', userToDelete.id);
-
-      if (userError) throw userError;
-
-      // 4. auth.users에서도 삭제 (관리자 API 필요)
+      // 2. 소프트 삭제 (API 호출)
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         try {
@@ -327,16 +434,18 @@ const loadDepartmentsData = async () => {
           });
 
           if (!response.ok) {
-            console.warn('auth.users 삭제 실패 (일부만 삭제됨)');
+            const errorData = await response.json();
+            throw new Error(errorData.error || '삭제 실패');
           }
-        } catch (authError) {
-          console.warn('auth.users 삭제 API 호출 실패:', authError);
+        } catch (deleteError) {
+          console.error('소프트 삭제 실패:', deleteError);
+          throw deleteError;
         }
       }
 
       toast.success(
-        '관리자 삭제 완료',
-        `${userToDelete.full_name}님의 계정이 삭제되었습니다.`
+        '관리자 비활성화 완료',
+        `${userToDelete.full_name}님의 계정이 비활성화되었습니다. (복구 가능)`
       );
 
       setShowDeleteModal(false);
@@ -721,6 +830,126 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
             <p className="text-text-secondary">
               시스템에 등록된 관리자를 찾을 수 없습니다.
             </p>
+          </div>
+        )}
+      </div>
+
+      {/* 삭제된 사용자 복구 섹션 */}
+      <div className={designSystem.utils.cn(designSystem.components.card.base, "p-6 mb-8")}>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <RefreshCw className="w-5 h-5 text-warning" />
+            <h3 className={designSystem.components.typography.h4}>삭제된 사용자 복구</h3>
+            <span className="text-sm text-text-secondary">(최고관리자만)</span>
+          </div>
+          <button
+            onClick={() => {
+              setShowDeletedUsers(!showDeletedUsers);
+              if (!showDeletedUsers && deletedUsers.length === 0) {
+                loadDeletedUsers();
+              }
+            }}
+            className={designSystem.components.button.secondary}
+          >
+            {showDeletedUsers ? (
+              <>
+                <EyeOff className="w-4 h-4 mr-2" />
+                숨기기
+              </>
+            ) : (
+              <>
+                <Eye className="w-4 h-4 mr-2" />
+                삭제된 사용자 보기
+              </>
+            )}
+          </button>
+        </div>
+
+        {showDeletedUsers && (
+          <div className="space-y-4">
+            {loadingDeleted ? (
+              <div className="flex items-center justify-center py-8">
+                <RefreshCw className="w-6 h-6 animate-spin text-accent mr-3" />
+                <span className="text-text-secondary">삭제된 사용자 조회 중...</span>
+              </div>
+            ) : deletedUsers.length === 0 ? (
+              <div className="text-center py-8">
+                <CheckCircle className="w-16 h-16 text-success mx-auto mb-4" />
+                <h4 className="text-lg font-medium text-text-primary mb-2">삭제된 사용자가 없습니다</h4>
+                <p className="text-text-secondary">모든 사용자가 활성 상태입니다.</p>
+              </div>
+            ) : (
+              deletedUsers.map((deletedUser) => (
+                <div
+                  key={deletedUser.id}
+                  className="border border-border-primary rounded-lg p-4 bg-bg-secondary/30"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="flex items-center gap-2">
+                          <Users className="w-4 h-4 text-text-secondary" />
+                          <span className="font-medium text-text-primary">{deletedUser.full_name}</span>
+                          <XCircle className="w-4 h-4 text-warning" />
+                          <span className="text-xs text-warning bg-warning/10 px-2 py-1 rounded-full">
+                            삭제됨
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-sm text-text-secondary space-y-1">
+                        <div>이메일: {deletedUser.email}</div>
+                        <div>역할: {deletedUser.role === 'admin' ? '관리자' : '영업사원'}</div>
+                        {(deletedUser as any).department && (
+                          <div>부서: {(deletedUser as any).department}</div>
+                        )}
+                        {(deletedUser as any).deleted_at && (
+                          <div>삭제일: {new Date((deletedUser as any).deleted_at).toLocaleDateString('ko-KR', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}</div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="ml-4 flex gap-2">
+                      <button
+                        onClick={() => restoreUser(deletedUser.id, deletedUser.full_name)}
+                        disabled={actionLoading}
+                        className={designSystem.utils.cn(
+                          designSystem.components.button.primary,
+                          "text-sm px-3 py-1.5"
+                        )}
+                      >
+                        {actionLoading ? (
+                          <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                        ) : (
+                          <RefreshCw className="w-3 h-3 mr-1" />
+                        )}
+                        복구
+                      </button>
+                      <button
+                        onClick={() => permanentlyDeleteUser(deletedUser.id, deletedUser.full_name)}
+                        disabled={actionLoading}
+                        className={designSystem.utils.cn(
+                          "px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
+                          "bg-red-50 hover:bg-red-100 text-red-700 border-red-200",
+                          "disabled:opacity-50 disabled:cursor-not-allowed"
+                        )}
+                      >
+                        {actionLoading ? (
+                          <Trash2 className="w-3 h-3 animate-pulse mr-1" />
+                        ) : (
+                          <Trash2 className="w-3 h-3 mr-1" />
+                        )}
+                        완전 삭제
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>
