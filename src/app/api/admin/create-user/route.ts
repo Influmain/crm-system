@@ -40,15 +40,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '유효하지 않은 인증 토큰입니다.' }, { status: 401 });
     }
 
-    // 요청자가 최고관리자인지 확인
+    // 요청자가 관리자이고 counselors 권한이 있는지 확인
     const { data: requesterProfile, error: profileError } = await supabaseAdmin
       .from('users')
-      .select('is_super_admin')
+      .select('role, is_super_admin')
       .eq('id', user.id)
       .single();
 
-    if (profileError || !requesterProfile?.is_super_admin) {
-      return NextResponse.json({ error: '최고관리자만 계정을 생성할 수 있습니다.' }, { status: 403 });
+    if (profileError || requesterProfile?.role !== 'admin') {
+      return NextResponse.json({ error: '관리자만 계정을 생성할 수 있습니다.' }, { status: 403 });
+    }
+
+    // 최고관리자가 아닌 경우 counselors 권한 확인
+    if (!requesterProfile.is_super_admin) {
+      const { data: permissions, error: permError } = await supabaseAdmin
+        .from('user_permissions')
+        .select('permission_type')
+        .eq('user_id', user.id)
+        .eq('permission_type', 'counselors')
+        .eq('is_active', true);
+
+      if (permError || !permissions || permissions.length === 0) {
+        return NextResponse.json({ error: '상담원 관리 권한이 없습니다.' }, { status: 403 });
+      }
     }
 
     // 2. Supabase Auth에 사용자 생성

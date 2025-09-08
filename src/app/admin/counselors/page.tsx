@@ -712,6 +712,21 @@ function CounselorsPageContent() {
       return;
     }
 
+    // counselors 권한이 없는 일반 관리자 체크
+    if (!isSuperAdmin) {
+      try {
+        const hasPermission = await permissionService.hasPermission(user.id, 'counselors');
+        if (!hasPermission) {
+          toast.error('권한 오류', '상담원 관리 권한이 없습니다. 최고관리자에게 권한을 요청하세요.');
+          return;
+        }
+      } catch (error) {
+        console.error('권한 확인 실패:', error);
+        toast.error('권한 확인 실패', '권한을 확인하는 중 오류가 발생했습니다.');
+        return;
+      }
+    }
+
     setActionLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
