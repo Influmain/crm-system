@@ -20,15 +20,23 @@ export async function POST(request: NextRequest) {
 
     // 1. 요청자 권한 확인
     const authHeader = request.headers.get('Authorization');
+    console.log('🔍 Authorization 헤더:', authHeader ? '존재' : '없음');
+    
     if (!authHeader) {
       return NextResponse.json({ error: '인증이 필요합니다.' }, { status: 401 });
     }
 
     const token = authHeader.replace('Bearer ', '');
+    console.log('🔍 토큰 길이:', token.length);
+    console.log('🔍 토큰 시작:', token.substring(0, 20) + '...');
     
     // 요청자의 JWT 토큰 검증
     const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+    console.log('🔍 토큰 검증 결과:', authError ? `오류: ${authError.message}` : '성공');
+    console.log('🔍 사용자 정보:', user ? `ID: ${user.id}, 이메일: ${user.email}` : '없음');
+    
     if (authError || !user) {
+      console.log('❌ 토큰 검증 실패:', authError?.message || '사용자 없음');
       return NextResponse.json({ error: '유효하지 않은 인증 토큰입니다.' }, { status: 401 });
     }
 
