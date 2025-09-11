@@ -135,7 +135,7 @@ function AdminLeadsPageContent() {
   const [pageSize] = useState(50); // 50으로 변경
   
   // 정렬 상태
-  const [sortColumn, setSortColumn] = useState<string>('created_at');
+  const [sortColumn, setSortColumn] = useState<string>('data_date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // 선택 상태
@@ -393,16 +393,22 @@ function AdminLeadsPageContent() {
       console.log('검색어 필터 후:', filtered.length);
     }
 
-    // 날짜 필터
+    // 날짜 필터 (데이터 생성일 기준)
     if (filters.startDate) {
       const startDate = new Date(filters.startDate);
-      filtered = filtered.filter(lead => new Date(lead.created_at) >= startDate);
+      filtered = filtered.filter(lead => {
+        const leadDate = new Date(lead.data_date || lead.created_at);
+        return leadDate >= startDate;
+      });
       console.log('시작일 필터 후:', filtered.length);
     }
     if (filters.endDate) {
       const endDate = new Date(filters.endDate);
       endDate.setHours(23, 59, 59, 999);
-      filtered = filtered.filter(lead => new Date(lead.created_at) <= endDate);
+      filtered = filtered.filter(lead => {
+        const leadDate = new Date(lead.data_date || lead.created_at);
+        return leadDate <= endDate;
+      });
       console.log('종료일 필터 후:', filtered.length);
     }
 
@@ -447,9 +453,9 @@ function AdminLeadsPageContent() {
       let bValue: any;
 
       switch (sortColumn) {
-        case 'created_at':
-          aValue = new Date(a.created_at);
-          bValue = new Date(b.created_at);
+        case 'data_date':
+          aValue = new Date(a.data_date || a.created_at);
+          bValue = new Date(b.data_date || b.created_at);
           break;
         case 'real_name':
           aValue = a.actual_customer_name || a.real_name || a.contact_name || '';
@@ -1017,9 +1023,9 @@ const executeBulkDelete = async () => {
               </select>
             </div>
 
-            {/* 날짜 필터 */}
+            {/* 데이터 생성일 필터 */}
             <div className="flex items-center gap-2">
-              <span className="text-text-secondary text-sm">기간:</span>
+              <span className="text-text-secondary text-sm">생성일:</span>
               <input
                 type="date"
                 value={filters.startDate}
@@ -1186,10 +1192,10 @@ const executeBulkDelete = async () => {
                         </button>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
-                          onClick={() => handleSort('created_at')}>
+                          onClick={() => handleSort('data_date')}>
                         <div className="flex items-center justify-center gap-0.5">
                           <Calendar className="w-3 h-3" />
-                          업로드일{renderSortIcon('created_at')}
+                          데이터 생성일{renderSortIcon('data_date')}
                         </div>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
@@ -1280,13 +1286,13 @@ const executeBulkDelete = async () => {
                           </button>
                         </td>
 
-                        {/* 업로드일 */}
+                        {/* 데이터 생성일 */}
                         <td className="py-1 px-1 text-center">
                           <span className="text-text-secondary text-xs whitespace-nowrap">
-                            {new Date(lead.created_at).toLocaleDateString('ko-KR', {
+                            {lead.data_date ? new Date(lead.data_date).toLocaleDateString('ko-KR', {
                               month: '2-digit',
                               day: '2-digit'
-                            })}
+                            }) : '-'}
                           </span>
                         </td>
 
@@ -1601,14 +1607,14 @@ const executeBulkDelete = async () => {
                   e.preventDefault();
                   const formData = new FormData(e.currentTarget);
                   
-                  const createdAtValue = formData.get('created_at') as string;
+                  const dataDateValue = formData.get('data_date') as string;
                   const updatedLead = {
                     phone: formData.get('phone') as string,
                     contact_name: formData.get('contact_name') as string,
                     data_source: formData.get('data_source') as string,
                     contact_script: formData.get('contact_script') as string,
                     extra_info: formData.get('extra_info') as string,
-                    created_at: createdAtValue ? new Date(createdAtValue).toISOString() : editingLead.created_at,
+                    data_date: dataDateValue || null,
                   };
                   
                   supabase
@@ -1681,15 +1687,15 @@ const executeBulkDelete = async () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-text-primary">업로드일</label>
+                  <label className="block text-sm font-medium mb-2 text-text-primary">데이터 생성일</label>
                   <input
-                    name="created_at"
-                    type="datetime-local"
-                    defaultValue={new Date(editingLead.created_at).toISOString().slice(0, 16)}
+                    name="data_date"
+                    type="date"
+                    defaultValue={editingLead.data_date ? new Date(editingLead.data_date).toISOString().slice(0, 10) : ''}
                     className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                   />
                   <p className="text-xs text-text-tertiary mt-1">
-                    리드가 시스템에 업로드된 날짜와 시간을 수정할 수 있습니다.
+                    고객 데이터가 실제로 생성된 날짜를 수정할 수 있습니다.
                   </p>
                 </div>
 

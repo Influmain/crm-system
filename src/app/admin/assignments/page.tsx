@@ -1105,7 +1105,7 @@ function AssignmentsPageContent() {
                           <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
                             <div className="flex items-center justify-center gap-0.5">
                               <Calendar className="w-3 h-3" />
-                              등록일
+                              데이터 생성일
                             </div>
                           </th>
                         </tr>
@@ -1177,10 +1177,10 @@ function AssignmentsPageContent() {
 
                             <td className="py-1 px-1 text-center">
                               <span className="text-text-secondary text-xs whitespace-nowrap">
-                                {new Date(lead.created_at).toLocaleDateString('ko-KR', { 
+                                {lead.data_date ? new Date(lead.data_date).toLocaleDateString('ko-KR', { 
                                   month: '2-digit', 
                                   day: '2-digit' 
-                                })}
+                                }) : '-'}
                               </span>
                             </td>
                           </tr>

@@ -48,6 +48,7 @@ const DB_FIELDS = [
   { key: 'real_name', label: '고객명', required: false, icon: businessIcons.contact },
   { key: 'data_source', label: 'DB업체명', required: false, icon: businessIcons.company },
   { key: 'contact_script', label: '관심분야', required: false, icon: businessIcons.script },
+  { key: 'data_date', label: '데이터 생성일', required: false, icon: businessIcons.date },
   { key: 'extra_info', label: '기타정보', required: false, icon: FileText },
 ];
 
@@ -59,6 +60,7 @@ function CustomerUploadContent() {
   const [currentStep, setCurrentStep] = useState<UploadStep>('upload');
   const [fileData, setFileData] = useState<FileData | null>(null);
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({});
+  const [defaultDataDate, setDefaultDataDate] = useState<string>(new Date().toISOString().split('T')[0]); // YYYY-MM-DD 형식
   const [duplicateResult, setDuplicateResult] = useState<DuplicateResult | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -604,23 +606,24 @@ function CustomerUploadContent() {
 
       setUploadProgress(10);
 
-      // 2. v6 패턴: 데이터 변환 및 검증 - data_date 자동 설정
+      // 2. v6 패턴: 데이터 변환 및 검증 - data_date 매핑 처리
       const recordsToInsert = duplicateResult.uniqueRecords.map(record => {
         const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone');
         const contactNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_name');
         const realNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'real_name');
         const dataSourceField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_source');
         const contactScriptField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_script');
+        const dataDateField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_date');
         const extraInfoField = Object.keys(columnMapping).find(key => columnMapping[key] === 'extra_info');
 
         return {
           id: crypto.randomUUID(),
-          phone: record[phoneField]?.toString().trim(),
+          phone: phoneField ? record[phoneField]?.toString().trim() : '',
           contact_name: contactNameField ? (record[contactNameField]?.toString().trim() || null) : null,
           real_name: realNameField ? (record[realNameField]?.toString().trim() || null) : null,
           data_source: dataSourceField ? (record[dataSourceField]?.toString().trim() || null) : null,
           contact_script: contactScriptField ? (record[contactScriptField]?.toString().trim() || null) : null,
-          data_date: new Date().toISOString(), // 자동으로 업로드 날짜 설정
+          data_date: dataDateField ? (record[dataDateField]?.toString().trim() || null) : defaultDataDate, // 매핑된 필드가 있으면 사용, 없으면 직접 설정한 날짜 사용
           extra_info: extraInfoField ? (record[extraInfoField]?.toString().trim() || null) : null,
           status: 'available',
           upload_batch_id: batchId,
@@ -900,6 +903,34 @@ function CustomerUploadContent() {
                 ))}
               </div>
 
+              {/* 데이터 생성일 직접 설정 */}
+              <div className="mt-6 p-4 bg-accent/5 rounded-lg border border-accent/20">
+                <h4 className="font-medium mb-3 text-text-primary flex items-center gap-2">
+                  <businessIcons.date className="w-4 h-4 text-accent" />
+                  데이터 생성일 설정
+                </h4>
+                
+                <div className="space-y-3">
+                  <div className="flex items-center gap-4">
+                    <label className="text-sm font-medium text-text-primary min-w-0 flex-shrink-0">
+                      기본 생성일:
+                    </label>
+                    <input
+                      type="date"
+                      value={defaultDataDate}
+                      onChange={(e) => setDefaultDataDate(e.target.value)}
+                      className="px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                    />
+                  </div>
+                  
+                  <div className="text-xs text-text-secondary">
+                    • 파일에 날짜 칼럼을 매핑하지 않으면 위 날짜가 모든 데이터에 적용됩니다
+                    <br />
+                    • 날짜 칼럼을 매핑하면 해당 칼럼 값이 우선 적용됩니다
+                  </div>
+                </div>
+              </div>
+
               {/* 매핑 상태 체크 */}
               <div className="mt-6 p-4 bg-bg-secondary rounded-lg border border-border-primary">
                 <h4 className="font-medium mb-3 text-text-primary flex items-center gap-2">
@@ -1119,6 +1150,7 @@ function CustomerUploadContent() {
                     setCurrentStep('upload');
                     setFileData(null);
                     setColumnMapping({});
+                    setDefaultDataDate(new Date().toISOString().split('T')[0]);
                     setDuplicateResult(null);
                     setUploadProgress(0);
                     setSelectedDuplicates([]);
