@@ -681,7 +681,9 @@ const executeBulkDelete = async () => {
   // 로딩 표시를 위한 약간의 지연
   await new Promise(resolve => setTimeout(resolve, 100));
   
-    try {
+  let logId: string | null = null;
+  
+  try {
     let leadIdsToDelete: string[] = [];
     
     if (bulkDeleteMode === 'selected') {
@@ -703,31 +705,130 @@ const executeBulkDelete = async () => {
       toast.warning('선택 확인', '삭제할 데이터가 없습니다.');
       return;
     }
+
+    // 삭제 시작 로그 기록
+    const deleteReason = bulkDeleteMode === 'selected' 
+      ? `선택 삭제 (${leadIdsToDelete.length}개)` 
+      : `숫자 입력 삭제 (${leadIdsToDelete.length}개)`;
+
+    const { data: logEntry, error: logError } = await supabase
+      .from('deletion_logs')
+      .insert({
+        table_name: 'lead_pool',
+        record_ids: leadIdsToDelete,
+        deleted_count: 0, // 아직 삭제 전
+        deleted_by: user?.id || '',
+        reason: `${deleteReason} - 시작`,
+        additional_info: {
+          mode: bulkDeleteMode,
+          filter_applied: filters.statuses.length > 0 || searchTerm.length > 0,
+          total_filtered: filteredLeads.length,
+          user_agent: navigator.userAgent
+        }
+      })
+      .select()
+      .single();
+
+    if (logError) {
+      console.warn('삭제 로그 기록 실패:', logError);
+    } else {
+      logId = logEntry.id;
+      console.log('삭제 로그 시작 기록:', logId);
+    }
     
     // 삭제 진행률 표시
     toast.info('삭제 중...', `${leadIdsToDelete.length}개 데이터 삭제 중입니다.`, {
       duration: 0
     });
     
-    // 배치 처리로 삭제 (50개씩)
+    // 배치 처리로 삭제 (50개씩) - 개선된 버전
     const BATCH_SIZE = 50;
+    let totalDeleted = 0;
+    let failedIds: string[] = [];
+
     for (let i = 0; i < leadIdsToDelete.length; i += BATCH_SIZE) {
       const batch = leadIdsToDelete.slice(i, i + BATCH_SIZE);
       
+      try {
+        // 1. 삭제 전 존재하는 리드만 확인
+        const { data: existingLeads, error: checkError } = await supabase
+          .from('lead_pool')
+          .select('id')
+          .in('id', batch);
+
+        if (checkError) {
+          console.error('리드 존재 확인 실패:', checkError);
+          failedIds.push(...batch);
+          continue;
+        }
+
+        const existingIds = existingLeads?.map(lead => lead.id) || [];
+        if (existingIds.length === 0) {
+          console.log('삭제할 리드가 이미 존재하지 않음:', batch);
+          continue;
+        }
+
+        // 2. lead_assignments 삭제 (실제 존재하는 리드만)
+        const { error: assignmentError } = await supabase
+          .from('lead_assignments')
+          .delete()
+          .in('lead_id', existingIds);
+
+        if (assignmentError) {
+          console.error('배정 기록 삭제 실패:', assignmentError);
+        }
+        
+        // 3. lead_pool 삭제 (실제 존재하는 리드만)
+        const { data: deletedLeads, error: deleteError } = await supabase
+          .from('lead_pool')
+          .delete()
+          .in('id', existingIds)
+          .select('id'); // 실제 삭제된 ID 반환
+
+        if (deleteError) {
+          console.error('리드 삭제 실패:', deleteError);
+          failedIds.push(...existingIds);
+        } else {
+          // 실제 삭제된 개수만 카운트
+          const actualDeletedCount = deletedLeads?.length || 0;
+          totalDeleted += actualDeletedCount;
+          
+          console.log(`배치 ${i/BATCH_SIZE + 1}: ${actualDeletedCount}/${existingIds.length}개 삭제 완료`);
+        }
+
+      } catch (error) {
+        console.error('배치 삭제 중 오류:', error);
+        failedIds.push(...batch);
+      }
+    }
+
+    // 실패한 삭제가 있으면 경고
+    if (failedIds.length > 0) {
+      console.warn('삭제 실패한 리드 ID:', failedIds);
+      toast.warning('일부 삭제 실패', `${failedIds.length}개 리드 삭제 중 오류가 발생했습니다.`);
+    }
+
+    // 성공 로그 업데이트
+    if (logId) {
       await supabase
-        .from('lead_assignments')
-        .delete()
-        .in('lead_id', batch);
-      
-      await supabase
-        .from('lead_pool')
-        .delete()
-        .in('id', batch);
+        .from('deletion_logs')
+        .update({ 
+          deleted_count: totalDeleted,
+          reason: `${deleteReason} - 완료`,
+          additional_info: {
+            mode: bulkDeleteMode,
+            filter_applied: filters.statuses.length > 0 || searchTerm.length > 0,
+            total_filtered: filteredLeads.length,
+            completed_at: new Date().toISOString(),
+            user_agent: navigator.userAgent
+          }
+        })
+        .eq('id', logId);
     }
     
     toast.success(
       '삭제 완료', 
-      `${leadIdsToDelete.length}개의 리드가 삭제되었습니다.`
+      `${totalDeleted}개의 리드가 삭제되었습니다.`
     );
     
     setSelectedLeads(new Set());
@@ -742,7 +843,43 @@ const executeBulkDelete = async () => {
     
   } catch (error) {
     console.error('벌크 삭제 실패:', error);
-    toast.error('삭제 실패', error.message || '알 수 없는 오류가 발생했습니다.');
+
+    // 실패 로그 기록/업데이트
+    const errorMessage = (error as Error)?.message || '알 수 없는 오류가 발생했습니다.';
+    
+    if (logId) {
+      // 기존 로그 업데이트
+      await supabase
+        .from('deletion_logs')
+        .update({ 
+          reason: `삭제 실패: ${errorMessage}`,
+          additional_info: {
+            mode: bulkDeleteMode,
+            error: errorMessage,
+            failed_at: new Date().toISOString(),
+            user_agent: navigator.userAgent
+          }
+        })
+        .eq('id', logId);
+    } else {
+      // 새 실패 로그 생성
+      await supabase
+        .from('deletion_logs')
+        .insert({
+          table_name: 'lead_pool',
+          record_ids: [],
+          deleted_count: 0,
+          deleted_by: user?.id || '',
+          reason: `삭제 실패: ${errorMessage}`,
+          additional_info: {
+            mode: bulkDeleteMode,
+            error: errorMessage,
+            user_agent: navigator.userAgent
+          }
+        });
+    }
+    
+    toast.error('삭제 실패', errorMessage);
   } finally {
     setLoading(false);
   }
@@ -1052,7 +1189,7 @@ const executeBulkDelete = async () => {
                           onClick={() => handleSort('created_at')}>
                         <div className="flex items-center justify-center gap-0.5">
                           <Calendar className="w-3 h-3" />
-                          배정일{renderSortIcon('created_at')}
+                          업로드일{renderSortIcon('created_at')}
                         </div>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
@@ -1143,30 +1280,24 @@ const executeBulkDelete = async () => {
                           </button>
                         </td>
 
-                        {/* 배정일 */}
+                        {/* 업로드일 */}
                         <td className="py-1 px-1 text-center">
                           <span className="text-text-secondary text-xs whitespace-nowrap">
-                            {lead.assignment_info ? 
-                              new Date(lead.assignment_info.assigned_at).toLocaleDateString('ko-KR', {
-                                month: '2-digit',
-                                day: '2-digit'
-                              }) : 
-                              new Date(lead.created_at).toLocaleDateString('ko-KR', {
-                                month: '2-digit',
-                                day: '2-digit'
-                              })
-                            }
+                            {new Date(lead.created_at).toLocaleDateString('ko-KR', {
+                              month: '2-digit',
+                              day: '2-digit'
+                            })}
                           </span>
                         </td>
 
                         {/* 영업사원 */}
                         <td className="py-1 px-1 text-center">
                           <div className="w-24 mx-auto">
-                            {lead.assignment_info ? (
+                            {lead.counselor_name ? (
                               <div className="text-xs flex items-center justify-center gap-1">
                                 <div className="w-1.5 h-1.5 bg-success rounded-full flex-shrink-0"></div>
                                 <span className="text-success font-medium truncate">
-                                  {lead.assignment_info.counselor_name}
+                                  {lead.counselor_name}
                                 </span>
                               </div>
                             ) : (
@@ -1190,7 +1321,7 @@ const executeBulkDelete = async () => {
                         {/* 회원등급 */}
                         <td className="py-1 px-1 text-center">
                           <div className="w-24 mx-auto">
-                            {renderGradeBadge(lead.customer_grade)}
+                            {renderGradeBadge(lead.additional_data)}
                           </div>
                         </td>
 
@@ -1470,12 +1601,14 @@ const executeBulkDelete = async () => {
                   e.preventDefault();
                   const formData = new FormData(e.currentTarget);
                   
+                  const createdAtValue = formData.get('created_at') as string;
                   const updatedLead = {
                     phone: formData.get('phone') as string,
                     contact_name: formData.get('contact_name') as string,
                     data_source: formData.get('data_source') as string,
                     contact_script: formData.get('contact_script') as string,
                     extra_info: formData.get('extra_info') as string,
+                    created_at: createdAtValue ? new Date(createdAtValue).toISOString() : editingLead.created_at,
                   };
                   
                   supabase
@@ -1545,6 +1678,19 @@ const executeBulkDelete = async () => {
                     rows={2}
                     className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-text-primary">업로드일</label>
+                  <input
+                    name="created_at"
+                    type="datetime-local"
+                    defaultValue={new Date(editingLead.created_at).toISOString().slice(0, 16)}
+                    className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <p className="text-xs text-text-tertiary mt-1">
+                    리드가 시스템에 업로드된 날짜와 시간을 수정할 수 있습니다.
+                  </p>
                 </div>
 
                 <div className="flex justify-end gap-3 pt-4">

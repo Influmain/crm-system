@@ -1270,14 +1270,13 @@ function CounselorConsultingContent() {
 
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2 text-text-primary">실제 고객명 *</label>
+                    <label className="block text-sm font-medium mb-2 text-text-primary">실제 고객명</label>
                     <input
                       type="text"
                       value={consultingForm.actual_customer_name}
                       onChange={(e) => setConsultingForm(prev => ({ ...prev, actual_customer_name: e.target.value }))}
                       className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder="실제 고객명 (확인시 입력)"
-                      required
                     />
                     <p className="text-xs text-text-tertiary mt-1">
                       DB고객명: <strong>{selectedLead.contact_name || '미확인'}</strong> | 관심분야: <strong>{selectedLead.contact_script || '미확인'}</strong>
@@ -1375,11 +1374,11 @@ function CounselorConsultingContent() {
                 <div className="flex gap-3 pt-4">
                   <button
                     onClick={saveConsultingRecord}
-                    disabled={saving || !consultingForm.counseling_memo || !consultingForm.actual_customer_name || !consultingForm.customer_grade}
+                    disabled={saving || !consultingForm.counseling_memo || !consultingForm.customer_grade}
                     className={designSystem.utils.cn(
                       designSystem.components.button.primary,
                       "flex-1",
-                      (!consultingForm.counseling_memo || !consultingForm.actual_customer_name || !consultingForm.customer_grade || saving) && "opacity-50 cursor-not-allowed"
+                      (!consultingForm.counseling_memo || !consultingForm.customer_grade || saving) && "opacity-50 cursor-not-allowed"
                     )}
                   >
                     {saving ? (
