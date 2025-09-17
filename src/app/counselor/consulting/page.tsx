@@ -65,6 +65,8 @@ interface AssignedLead {
   counseling_memo?: string
   status: 'not_contacted' | 'in_progress' | 'contracted'
   customer_grade?: CustomerGrade
+  data_date?: string // 데이터 업로드일
+  created_at?: string // 리드 생성일
 }
 
 interface ConsultingRecord {
@@ -94,6 +96,10 @@ function CounselorConsultingContent() {
   const [gradeFilters, setGradeFilters] = useState<string[]>([])
   const [searchTerm, setSearchTerm] = useState('')
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('')
+  const [dateFilters, setDateFilters] = useState({
+    startDate: '',
+    endDate: ''
+  })
   
   // 페이지네이션 상태
   const [currentPage, setCurrentPage] = useState(1)
@@ -208,7 +214,9 @@ function CounselorConsultingContent() {
           actual_customer_name: lead.actual_customer_name || null,
           counseling_memo: lead.counseling_memo || null,
           status,
-          customer_grade: customerGrade
+          customer_grade: customerGrade,
+          data_date: lead.data_date || null,
+          created_at: lead.created_at || null
         };
       });
 
@@ -254,6 +262,23 @@ function CounselorConsultingContent() {
         (lead.contact_script && lead.contact_script.toLowerCase().includes(searchLower)) ||
         (lead.customer_grade?.grade && lead.customer_grade.grade.toLowerCase().includes(searchLower))
       );
+    }
+
+    // 날짜 필터 (배정일 기준)
+    if (dateFilters.startDate) {
+      const startDate = new Date(dateFilters.startDate);
+      filtered = filtered.filter(lead => {
+        const assignedDate = new Date(lead.assigned_at);
+        return assignedDate >= startDate;
+      });
+    }
+    if (dateFilters.endDate) {
+      const endDate = new Date(dateFilters.endDate);
+      endDate.setHours(23, 59, 59, 999);
+      filtered = filtered.filter(lead => {
+        const assignedDate = new Date(lead.assigned_at);
+        return assignedDate <= endDate;
+      });
     }
 
     // 정렬 적용
@@ -748,6 +773,71 @@ function CounselorConsultingContent() {
           </div>
         </div>
 
+        {/* 날짜 필터 */}
+        <div className="mb-6">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-text-secondary text-sm">배정일:</span>
+              <input
+                type="date"
+                value={dateFilters.startDate}
+                onChange={(e) => setDateFilters(prev => ({...prev, startDate: e.target.value}))}
+                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+              <span className="text-text-secondary">~</span>
+              <input
+                type="date"
+                value={dateFilters.endDate}
+                onChange={(e) => setDateFilters(prev => ({...prev, endDate: e.target.value}))}
+                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+              {(dateFilters.startDate || dateFilters.endDate) && (
+                <button
+                  onClick={() => setDateFilters({startDate: '', endDate: ''})}
+                  className="text-xs text-accent hover:text-accent/80 underline"
+                >
+                  초기화
+                </button>
+              )}
+            </div>
+            
+            {/* 빠른 날짜 선택 버튼 */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => {
+                  const today = new Date().toISOString().slice(0, 10);
+                  setDateFilters({startDate: today, endDate: today});
+                }}
+                className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+              >
+                당일
+              </button>
+              <button
+                onClick={() => {
+                  const now = new Date();
+                  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+                  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+                  setDateFilters({startDate: startOfMonth, endDate: endOfMonth});
+                }}
+                className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+              >
+                당월
+              </button>
+              <button
+                onClick={() => {
+                  const now = new Date();
+                  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
+                  const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+                  setDateFilters({startDate: startOfLastMonth, endDate: endOfLastMonth});
+                }}
+                className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+              >
+                전월
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* 등급 필터 버튼 그룹 - 리드 페이지와 동일한 스타일 */}
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
@@ -963,6 +1053,12 @@ function CounselorConsultingContent() {
                           배정일{renderSortIcon('assigned_at')}
                         </div>
                       </th>
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-12">
+                        <div className="flex items-center justify-center gap-0.5">
+                          <businessIcons.date className="w-3 h-3" />
+                          업로드일
+                        </div>
+                      </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
                           onClick={() => handleSort('contract_amount')}>
                         <div className="flex items-center justify-center gap-0.5">
@@ -1085,6 +1181,19 @@ function CounselorConsultingContent() {
                           </span>
                         </td>
 
+                        {/* 데이터 업로드일 */}
+                        <td className="py-1 px-1 text-center">
+                          <span className="text-text-secondary text-xs whitespace-nowrap">
+                            {lead.data_date ? new Date(lead.data_date).toLocaleDateString('ko-KR', {
+                              month: '2-digit',
+                              day: '2-digit'
+                            }) : lead.created_at ? new Date(lead.created_at).toLocaleDateString('ko-KR', {
+                              month: '2-digit',
+                              day: '2-digit'
+                            }) : '-'}
+                          </span>
+                        </td>
+
                         {/* 계약금액 */}
                         <td className="py-1 px-1 text-center">
                           {lead.contract_amount ? (
@@ -1165,13 +1274,13 @@ function CounselorConsultingContent() {
             <div className="text-center py-12">
               <businessIcons.contact className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
               <h3 className="text-lg font-medium text-text-primary mb-2">
-                {gradeFilters.length > 0 || searchTerm ? '조건에 맞는 고객이 없습니다' : '배정받은 고객이 없습니다'}
+                {gradeFilters.length > 0 || searchTerm || dateFilters.startDate || dateFilters.endDate ? '조건에 맞는 고객이 없습니다' : '배정받은 고객이 없습니다'}
               </h3>
               <p className="text-text-secondary mb-4">
-                {gradeFilters.length > 0 || searchTerm ? '필터 조건을 변경해보세요.' : '관리자가 고객을 배정하면 여기에 표시됩니다.'}
+                {gradeFilters.length > 0 || searchTerm || dateFilters.startDate || dateFilters.endDate ? '필터 조건을 변경해보세요.' : '관리자가 고객을 배정하면 여기에 표시됩니다.'}
               </p>
               
-              {(gradeFilters.length > 0 || searchTerm) && (
+              {(gradeFilters.length > 0 || searchTerm || dateFilters.startDate || dateFilters.endDate) && (
                 <div className="flex items-center justify-center gap-2">
                   <button
                     onClick={() => setGradeFilters([])}
@@ -1186,9 +1295,16 @@ function CounselorConsultingContent() {
                     검색어 지우기
                   </button>
                   <button
+                    onClick={() => setDateFilters({startDate: '', endDate: ''})}
+                    className="px-3 py-1.5 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                  >
+                    날짜 필터 해제
+                  </button>
+                  <button
                     onClick={() => {
                       setSearchTerm('');
                       setGradeFilters([]);
+                      setDateFilters({startDate: '', endDate: ''});
                     }}
                     className="px-3 py-1.5 text-xs bg-accent text-white rounded hover:bg-accent/90 transition-colors"
                   >

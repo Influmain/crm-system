@@ -1024,29 +1024,66 @@ const executeBulkDelete = async () => {
             </div>
 
             {/* 데이터 생성일 필터 */}
-            <div className="flex items-center gap-2">
-              <span className="text-text-secondary text-sm">생성일:</span>
-              <input
-                type="date"
-                value={filters.startDate}
-                onChange={(e) => setFilters(prev => ({...prev, startDate: e.target.value}))}
-                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-              <span className="text-text-secondary">~</span>
-              <input
-                type="date"
-                value={filters.endDate}
-                onChange={(e) => setFilters(prev => ({...prev, endDate: e.target.value}))}
-                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-              {(filters.startDate || filters.endDate) && (
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-text-secondary text-sm">생성일:</span>
+                <input
+                  type="date"
+                  value={filters.startDate}
+                  onChange={(e) => setFilters(prev => ({...prev, startDate: e.target.value}))}
+                  className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                />
+                <span className="text-text-secondary">~</span>
+                <input
+                  type="date"
+                  value={filters.endDate}
+                  onChange={(e) => setFilters(prev => ({...prev, endDate: e.target.value}))}
+                  className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                />
+                {(filters.startDate || filters.endDate) && (
+                  <button
+                    onClick={() => setFilters(prev => ({...prev, startDate: '', endDate: ''}))}
+                    className="text-xs text-accent hover:text-accent/80 underline"
+                  >
+                    초기화
+                  </button>
+                )}
+              </div>
+              
+              {/* 빠른 날짜 선택 버튼 */}
+              <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setFilters(prev => ({...prev, startDate: '', endDate: ''}))}
-                  className="text-xs text-accent hover:text-accent/80 underline"
+                  onClick={() => {
+                    const today = new Date().toISOString().slice(0, 10);
+                    setFilters(prev => ({...prev, startDate: today, endDate: today}));
+                  }}
+                  className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
                 >
-                  초기화
+                  당일
                 </button>
-              )}
+                <button
+                  onClick={() => {
+                    const now = new Date();
+                    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+                    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+                    setFilters(prev => ({...prev, startDate: startOfMonth, endDate: endOfMonth}));
+                  }}
+                  className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                >
+                  당월
+                </button>
+                <button
+                  onClick={() => {
+                    const now = new Date();
+                    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
+                    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+                    setFilters(prev => ({...prev, startDate: startOfLastMonth, endDate: endOfLastMonth}));
+                  }}
+                  className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
+                >
+                  전월
+                </button>
+              </div>
             </div>
 
             <button
