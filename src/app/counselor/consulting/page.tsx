@@ -79,6 +79,14 @@ interface ConsultingRecord {
   customer_grade?: string
 }
 
+interface MemoHistory {
+  id: string
+  memo: string
+  created_at: string
+  created_by: string
+  created_by_name?: string
+}
+
 function CounselorConsultingContent() {
   const { user, userProfile } = useAuth()
   const toast = useToastHelpers()
@@ -91,6 +99,13 @@ function CounselorConsultingContent() {
   const [selectedLead, setSelectedLead] = useState<AssignedLead | null>(null)
   const [showConsultingModal, setShowConsultingModal] = useState(false)
   const [saving, setSaving] = useState(false)
+
+  // 메모 히스토리 상태
+  const [memoHistory, setMemoHistory] = useState<MemoHistory[]>([])
+  const [loadingMemoHistory, setLoadingMemoHistory] = useState(false)
+  const [showMemoHistoryModal, setShowMemoHistoryModal] = useState(false)
+  const [selectedLeadForMemoHistory, setSelectedLeadForMemoHistory] = useState<AssignedLead | null>(null)
+
   
   // 필터 상태 - 다중 선택으로 변경
   const [gradeFilters, setGradeFilters] = useState<string[]>([])
@@ -127,6 +142,69 @@ function CounselorConsultingContent() {
     }, 300);
     return () => clearTimeout(timer);
   }, [searchTerm]);
+
+  // 메모 히스토리 로드
+  const loadMemoHistory = async (assignmentId: string) => {
+    try {
+      setLoadingMemoHistory(true)
+      const { data, error } = await supabase
+        .from('consulting_memo_history')
+        .select(`
+          id,
+          memo,
+          created_at,
+          created_by,
+          users:created_by(full_name)
+        `)
+        .eq('assignment_id', assignmentId)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+
+      const memos = data?.map((memo: any) => ({
+        id: memo.id,
+        memo: memo.memo,
+        created_at: memo.created_at,
+        created_by: memo.created_by,
+        created_by_name: memo.users?.full_name || '알 수 없음'
+      })) || []
+
+      setMemoHistory(memos)
+    } catch (error) {
+      console.error('메모 히스토리 로드 실패:', error)
+    } finally {
+      setLoadingMemoHistory(false)
+    }
+  }
+
+  // 새 메모 추가
+  const addMemo = async (assignmentId: string, memo: string) => {
+    try {
+      const { error } = await supabase
+        .from('consulting_memo_history')
+        .insert([{
+          assignment_id: assignmentId,
+          memo: memo,
+          created_by: user?.id
+        }])
+
+      if (error) throw error
+
+      // 메모 히스토리 새로고침
+      await loadMemoHistory(assignmentId)
+    } catch (error) {
+      console.error('메모 추가 실패:', error)
+      throw error
+    }
+  }
+
+
+  // 메모 히스토리 모달 열기
+  const openMemoHistoryModal = async (lead: AssignedLead) => {
+    setSelectedLeadForMemoHistory(lead)
+    setShowMemoHistoryModal(true)
+    await loadMemoHistory(lead.assignment_id)
+  }
 
   // 권한 체크
   useEffect(() => {
@@ -529,7 +607,7 @@ function CounselorConsultingContent() {
         contact_date: new Date().toISOString(),
         contact_method: 'phone',
         contact_result: 'connected',
-        counseling_memo: consultingForm.counseling_memo,
+        // counseling_memo는 히스토리 테이블에 별도 저장
         actual_customer_name: consultingForm.actual_customer_name,
         investment_budget: consultingForm.investment_budget || null,
         contract_status: contractStatus,
@@ -563,6 +641,13 @@ function CounselorConsultingContent() {
         console.log('새로운 상담 기록 추가 성공')
       }
 
+      // 메모 히스토리 저장
+      if (consultingForm.counseling_memo.trim()) {
+        console.log('메모 히스토리 저장 시작')
+        await addMemo(selectedLead.assignment_id, consultingForm.counseling_memo)
+        console.log('메모 히스토리 저장 완료')
+      }
+
       // 등급 정보 저장 (원본 테이블 저장 - 변경 없음)
       if (consultingForm.customer_grade) {
         console.log('등급 정보 업데이트 시작:', consultingForm.customer_grade)
@@ -588,7 +673,7 @@ function CounselorConsultingContent() {
           })
         }
 
-        const gradeData = {
+        const gradeData: any = {
           grade: consultingForm.customer_grade,
           grade_memo: consultingForm.counseling_memo,
           grade_color: gradeOption?.color || '#6b7280',
@@ -690,6 +775,15 @@ function CounselorConsultingContent() {
       loadAssignedLeads()
     }
   }, [user?.id])
+
+  // 선택된 리드가 바뀔 때 메모 히스토리 로드
+  useEffect(() => {
+    if (selectedLead?.assignment_id) {
+      loadMemoHistory(selectedLead.assignment_id)
+    } else {
+      setMemoHistory([])
+    }
+  }, [selectedLead?.assignment_id])
 
   // 필터 적용 - useCallback 제거하고 직접 useEffect 사용
   useEffect(() => {
@@ -1135,19 +1229,20 @@ function CounselorConsultingContent() {
 
                         {/* 상담메모 */}
                         <td className="py-1 px-1 text-center relative">
-                          <div className="w-20 group mx-auto">
-                            {lead.counseling_memo ? (
-                              <>
-                                <div className="text-text-primary text-xs truncate cursor-help">
-                                  {lead.counseling_memo}
+                          <div className="w-20 mx-auto">
+                            <button
+                              onClick={() => openMemoHistoryModal(lead)}
+                              className="group w-full text-left hover:bg-bg-hover rounded px-1 transition-colors"
+                              title="클릭하여 메모 히스토리 보기"
+                            >
+                              {lead.counseling_memo ? (
+                                <div className="text-text-primary text-xs truncate cursor-pointer">
+                                  📝 {lead.counseling_memo}
                                 </div>
-                                <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-20 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
-                                  {lead.counseling_memo}
-                                </div>
-                              </>
-                            ) : (
-                              <span className="text-text-tertiary text-xs">-</span>
-                            )}
+                              ) : (
+                                <span className="text-text-tertiary text-xs">📝 메모보기</span>
+                              )}
+                            </button>
                           </div>
                         </td>
 
@@ -1474,14 +1569,48 @@ function CounselorConsultingContent() {
                     </div>
                   )}
 
+                  {/* 기존 메모 히스토리 */}
+                  {memoHistory.length > 0 && (
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-text-primary">이전 상담 메모</label>
+                      <div className="max-h-40 overflow-y-auto border border-border-primary rounded-lg p-3 bg-bg-secondary space-y-2">
+                        {loadingMemoHistory ? (
+                          <div className="text-center text-text-secondary text-xs">로딩 중...</div>
+                        ) : (
+                          memoHistory.map((memo, index) => (
+                            <div key={memo.id} className="bg-bg-primary rounded p-2 text-xs">
+                              <div className="flex justify-between items-start mb-1">
+                                <span className="text-text-secondary text-xs">#{memoHistory.length - index}</span>
+                                <span className="text-text-tertiary text-xs">
+                                  {new Date(memo.created_at).toLocaleString('ko-KR', {
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })}
+                                </span>
+                              </div>
+                              <div className="text-text-primary whitespace-pre-wrap">{memo.memo}</div>
+                              <div className="text-text-tertiary text-xs mt-1">- {memo.created_by_name}</div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 새 메모 입력 */}
                   <div>
-                    <label className="block text-sm font-medium mb-2 text-text-primary">상담 메모 (등급 설정 사유 포함) *</label>
+                    <label className="block text-sm font-medium mb-2 text-text-primary">
+                      새 상담 메모 (등급 설정 사유 포함) *
+                      {memoHistory.length > 0 && <span className="text-text-tertiary text-xs ml-1">#{memoHistory.length + 1}</span>}
+                    </label>
                     <textarea
                       value={consultingForm.counseling_memo}
                       onChange={(e) => setConsultingForm(prev => ({ ...prev, counseling_memo: e.target.value }))}
                       className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                       rows={4}
-                      placeholder="상담 내용과 등급 설정 사유를 함께 기록하세요..."
+                      placeholder="새로운 상담 내용과 등급 설정 사유를 기록하세요..."
                       required
                     />
                   </div>
@@ -1522,6 +1651,78 @@ function CounselorConsultingContent() {
                     취소
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 메모 히스토리 모달 */}
+        {showMemoHistoryModal && selectedLeadForMemoHistory && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-2xl mx-auto max-h-[80vh] overflow-hidden">
+              <div className="p-6 border-b border-border-primary">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-text-primary">상담 메모 히스토리</h3>
+                    <p className="text-sm text-text-secondary mt-1">
+                      {selectedLeadForMemoHistory.actual_customer_name || selectedLeadForMemoHistory.real_name || selectedLeadForMemoHistory.contact_name || '고객'} ({selectedLeadForMemoHistory.phone})
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowMemoHistoryModal(false)
+                      setSelectedLeadForMemoHistory(null)
+                      setMemoHistory([])
+                    }}
+                    className="p-1 hover:bg-bg-hover rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5 text-text-secondary" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 overflow-y-auto max-h-[60vh]">
+                {loadingMemoHistory ? (
+                  <div className="text-center py-8">
+                    <RefreshCw className="w-8 h-8 text-accent mx-auto mb-2 animate-spin" />
+                    <p className="text-text-secondary">메모 히스토리를 불러오는 중...</p>
+                  </div>
+                ) : memoHistory.length > 0 ? (
+                  <div className="space-y-4">
+                    {memoHistory.map((memo, index) => (
+                      <div key={memo.id} className="bg-bg-secondary rounded-lg p-4 border border-border-primary">
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="bg-accent text-white px-2 py-1 rounded text-xs font-medium">
+                              #{memoHistory.length - index}
+                            </span>
+                            <span className="text-text-secondary text-sm">
+                              {memo.created_by_name}
+                            </span>
+                          </div>
+                          <span className="text-text-tertiary text-sm">
+                            {new Date(memo.created_at).toLocaleString('ko-KR', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                        <div className="text-text-primary whitespace-pre-wrap leading-relaxed">
+                          {memo.memo}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <businessIcons.message className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-text-primary mb-2">메모가 없습니다</h3>
+                    <p className="text-text-secondary">아직 상담 메모가 기록되지 않았습니다.</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

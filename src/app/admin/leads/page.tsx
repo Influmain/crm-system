@@ -155,6 +155,12 @@ function AdminLeadsPageContent() {
   // 인라인 편집 상태
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null);
 
+  // 메모 히스토리 모달 상태
+  const [showMemoHistoryModal, setShowMemoHistoryModal] = useState(false);
+  const [selectedLeadForMemo, setSelectedLeadForMemo] = useState<Lead | null>(null);
+  const [memoHistory, setMemoHistory] = useState<any[]>([]);
+  const [loadingMemoHistory, setLoadingMemoHistory] = useState(false);
+
   // Hydration 오류 방지
   useEffect(() => {
     setMounted(true);
@@ -491,15 +497,15 @@ function AdminLeadsPageContent() {
     gradeOptions.forEach(option => {
       stats[option.value] = 0;
     });
-    
+
     let unclassifiedCount = 0;
-    
+
     allLeads.forEach(lead => {
       if (lead.additional_data && lead.additional_data !== null) {
-        const additionalData = typeof lead.additional_data === 'string' 
-          ? JSON.parse(lead.additional_data) 
+        const additionalData = typeof lead.additional_data === 'string'
+          ? JSON.parse(lead.additional_data)
           : lead.additional_data;
-        
+
         if (additionalData?.grade && stats.hasOwnProperty(additionalData.grade)) {
           stats[additionalData.grade]++;
         } else {
@@ -509,10 +515,57 @@ function AdminLeadsPageContent() {
         unclassifiedCount++;
       }
     });
-    
+
     stats['미분류'] = unclassifiedCount;
     setGradeStats(stats);
   }, [allLeads]); // filteredLeads → allLeads로 변경
+
+  // 메모 히스토리 로드
+  const loadMemoHistory = async (assignmentId: string) => {
+    try {
+      setLoadingMemoHistory(true);
+      const { data, error } = await supabase
+        .from('consulting_memo_history')
+        .select(`
+          id,
+          memo,
+          created_at,
+          created_by,
+          users:created_by(full_name)
+        `)
+        .eq('assignment_id', assignmentId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const memos = data?.map((memo: any) => ({
+        id: memo.id,
+        memo: memo.memo,
+        created_at: memo.created_at,
+        created_by: memo.created_by,
+        created_by_name: memo.users?.full_name || '알 수 없음'
+      })) || [];
+
+      setMemoHistory(memos);
+    } catch (error) {
+      console.error('메모 히스토리 로드 실패:', error);
+      toast.error('메모 히스토리 로드 실패', '메모 히스토리를 불러올 수 없습니다.');
+    } finally {
+      setLoadingMemoHistory(false);
+    }
+  };
+
+  // 메모 히스토리 모달 열기
+  const openMemoHistoryModal = async (lead: Lead) => {
+    if (!lead.assignment_id) {
+      toast.warning('배정 정보 없음', '아직 배정되지 않은 리드입니다.');
+      return;
+    }
+
+    setSelectedLeadForMemo(lead);
+    setShowMemoHistoryModal(true);
+    await loadMemoHistory(lead.assignment_id);
+  };
 
   // 페이지네이션을 위한 현재 페이지 데이터
   const getCurrentPageLeads = () => {
@@ -1413,15 +1466,20 @@ const executeBulkDelete = async () => {
                         {/* 상담메모 */}
                         <td className="py-1 px-1 text-center relative">
                           <div className="w-28 mx-auto">
-                            {lead.counseling_memo ? (
-                              <div className="group">
-                                <div className="text-text-primary text-xs truncate cursor-help px-1">
-                                  {lead.counseling_memo}
-                                </div>
-                                <div className="absolute left-0 top-full mt-1 p-2 bg-black/90 text-white text-xs rounded shadow-lg z-20 max-w-80 break-words opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
-                                  {lead.counseling_memo}
-                                </div>
-                              </div>
+                            {lead.assignment_id ? (
+                              <button
+                                onClick={() => openMemoHistoryModal(lead)}
+                                className="group w-full text-left hover:bg-bg-hover rounded px-1 transition-colors"
+                                title="메모 히스토리 보기"
+                              >
+                                {lead.counseling_memo ? (
+                                  <div className="text-text-primary text-xs truncate cursor-pointer">
+                                    📝 {lead.counseling_memo}
+                                  </div>
+                                ) : (
+                                  <span className="text-text-tertiary text-xs">📝 메모보기</span>
+                                )}
+                              </button>
                             ) : (
                               <span className="text-text-tertiary text-xs">-</span>
                             )}
@@ -1883,6 +1941,78 @@ const executeBulkDelete = async () => {
     </div>
   </div>
 )}
+
+        {/* 메모 히스토리 모달 */}
+        {showMemoHistoryModal && selectedLeadForMemo && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-2xl mx-auto max-h-[80vh] overflow-hidden">
+              <div className="p-6 border-b border-border-primary">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-text-primary">상담 메모 히스토리</h3>
+                    <p className="text-sm text-text-secondary mt-1">
+                      {selectedLeadForMemo.actual_customer_name || selectedLeadForMemo.real_name || selectedLeadForMemo.contact_name || '고객'} ({selectedLeadForMemo.phone})
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowMemoHistoryModal(false);
+                      setSelectedLeadForMemo(null);
+                      setMemoHistory([]);
+                    }}
+                    className="p-1 hover:bg-bg-hover rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5 text-text-secondary" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 overflow-y-auto max-h-[60vh]">
+                {loadingMemoHistory ? (
+                  <div className="text-center py-8">
+                    <RefreshCw className="w-8 h-8 text-accent mx-auto mb-2 animate-spin" />
+                    <p className="text-text-secondary">메모 히스토리를 불러오는 중...</p>
+                  </div>
+                ) : memoHistory.length > 0 ? (
+                  <div className="space-y-4">
+                    {memoHistory.map((memo, index) => (
+                      <div key={memo.id} className="bg-bg-secondary rounded-lg p-4 border border-border-primary">
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="bg-accent text-white px-2 py-1 rounded text-xs font-medium">
+                              #{memoHistory.length - index}
+                            </span>
+                            <span className="text-text-secondary text-sm">
+                              {memo.created_by_name}
+                            </span>
+                          </div>
+                          <span className="text-text-tertiary text-sm">
+                            {new Date(memo.created_at).toLocaleString('ko-KR', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                        <div className="text-text-primary whitespace-pre-wrap leading-relaxed">
+                          {memo.memo}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <MessageSquare className="w-16 h-16 text-text-tertiary mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-text-primary mb-2">메모가 없습니다</h3>
+                    <p className="text-text-secondary">아직 상담 메모가 기록되지 않았습니다.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AdminLayout>
   );
