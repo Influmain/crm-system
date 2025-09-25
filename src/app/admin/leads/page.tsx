@@ -652,18 +652,61 @@ function AdminLeadsPageContent() {
   // 전화번호 마스킹 함수
   const maskPhoneNumber = (phone: string): string => {
     if (!phone) return '-';
-    
+
     if (hasPermission('phone_unmask')) {
       return phone;
     }
-    
+
     if (phone.length >= 8) {
       const start = phone.slice(0, 3);
       const end = phone.slice(-4);
       return start + '****' + end;
     }
-    
+
     return phone.slice(0, 2) + '*'.repeat(phone.length - 2);
+  };
+
+  // 등급 수정 함수
+  const handleGradeUpdate = async (leadId: string, newGrade: string) => {
+    if (!user) {
+      toast.error('인증 오류', '로그인이 필요합니다.');
+      return;
+    }
+
+    try {
+      const now = new Date().toISOString();
+      const gradeOption = gradeOptions.find(g => g.value === newGrade);
+
+      const gradeData = {
+        grade: newGrade,
+        grade_color: gradeOption?.color || '#6b7280',
+        grade_memo: '',
+        updated_at: now,
+        updated_by: user.id
+      };
+
+      const { error } = await supabase
+        .from('lead_pool')
+        .update({
+          additional_data: gradeData,
+          updated_at: now
+        })
+        .eq('id', leadId);
+
+      if (error) throw error;
+
+      toast.success('등급 수정 완료', `등급이 "${newGrade}"로 변경되었습니다.`);
+
+      // 데이터 새로고침
+      await loadAllLeads();
+
+    } catch (error) {
+      console.error('등급 수정 실패:', error);
+      const errorMessage = (error as Error)?.message || '알 수 없는 오류가 발생했습니다.';
+      toast.error('등급 수정 실패', errorMessage);
+    } finally {
+      setInlineEdit(null);
+    }
   };
 
   // 리드 추가 함수
@@ -711,7 +754,8 @@ const handleAddLead = async (e: React.FormEvent<HTMLFormElement>) => {
     
   } catch (error) {
     console.error('리드 추가 실패:', error);
-    toast.error('리드 추가 실패', error.message || '알 수 없는 오류가 발생했습니다.');
+    const errorMessage = (error as Error)?.message || '알 수 없는 오류가 발생했습니다.';
+    toast.error('리드 추가 실패', errorMessage);
   } finally {
     setAddingLead(false);
   }
@@ -1412,7 +1456,38 @@ const executeBulkDelete = async () => {
                         {/* 회원등급 */}
                         <td className="py-1 px-1 text-center">
                           <div className="w-24 mx-auto">
-                            {renderGradeBadge(lead.additional_data)}
+                            {inlineEdit?.leadId === lead.id && inlineEdit.field === 'grade' ? (
+                              <select
+                                value={(() => {
+                                  if (lead.additional_data) {
+                                    const additionalData = typeof lead.additional_data === 'string'
+                                      ? JSON.parse(lead.additional_data)
+                                      : lead.additional_data;
+                                    return additionalData?.grade || '미분류';
+                                  }
+                                  return '미분류';
+                                })()}
+                                onChange={(e) => handleGradeUpdate(lead.id, e.target.value)}
+                                onBlur={() => setInlineEdit(null)}
+                                autoFocus
+                                className="w-full text-xs h-6 px-2 bg-bg-primary text-text-primary border border-accent rounded focus:outline-none focus:ring-2 focus:ring-accent-light"
+                              >
+                                <option value="미분류">미분류</option>
+                                {gradeOptions.map(option => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <button
+                                onClick={() => setInlineEdit({ leadId: lead.id, field: 'grade', value: '' })}
+                                className="w-full hover:bg-bg-hover rounded transition-colors"
+                                title="등급 변경하기"
+                              >
+                                {renderGradeBadge(lead.additional_data)}
+                              </button>
+                            )}
                           </div>
                         </td>
 
