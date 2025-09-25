@@ -680,16 +680,11 @@ const handleAddLead = async (e: React.FormEvent<HTMLFormElement>) => {
   try {
     const formData = new FormData(e.currentTarget);
     
-    // DB출처를 사용자 정보 기반으로 자동 설정
-    const dataSource = userProfile?.full_name 
-      ? `수동입력-${userProfile.full_name}`
-      : `수동입력-${user.email?.split('@')[0]}`;
-    
     const newLead = {
       phone: formData.get('phone') as string,
-      contact_name: formData.get('contact_name') as string,
+      contact_name: '미입력', // 기본값으로 설정
       contact_script: formData.get('contact_script') as string,
-      data_source: dataSource,
+      data_source: formData.get('data_source') as string,
       status: 'available',
       uploaded_by: user.id,
       // upload_batch_id 제거 - nullable이므로 null로 처리
@@ -1612,7 +1607,7 @@ const executeBulkDelete = async () => {
                   </button>
                 </div>
                 <p className="text-sm text-text-secondary mt-1">
-                  DB출처는 자동으로 설정됩니다: {userProfile?.full_name ? `수동입력-${userProfile.full_name}` : `수동입력-${user?.email?.split('@')[0]}`}
+                  전화번호와 DB출처를 입력하세요.
                 </p>
               </div>
 
@@ -1634,13 +1629,13 @@ const executeBulkDelete = async () => {
 
                 <div>
                   <label className="block text-sm font-medium mb-2 text-text-primary">
-                    고객명 <span className="text-error">*</span>
+                    DB출처 <span className="text-error">*</span>
                   </label>
                   <input
-                    name="contact_name"
+                    name="data_source"
                     type="text"
                     required
-                    placeholder="고객명을 입력하세요"
+                    placeholder="DB출처를 입력하세요 (예: 네이버광고, 카카오광고, 수동입력 등)"
                     className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
                   />
                 </div>
