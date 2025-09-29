@@ -60,18 +60,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const id = generateUniqueToastId();
     const newToast: Toast = {
       id,
-      duration: 5000, // 기본 5초
+      duration: 3000, // 기본 3초로 단축
       ...toast,
     };
 
     setToasts(prev => [...prev, newToast]);
 
-    // 자동 제거
-    if (newToast.duration && newToast.duration > 0) {
-      setTimeout(() => {
-        hideToast(id);
-      }, newToast.duration);
-    }
+    // 자동 제거는 각 ToastItem 컴포넌트에서 처리하므로 여기서는 제거
   };
 
   const hideToast = (id: string) => {
@@ -95,7 +90,7 @@ function ToastContainer({ toasts, onClose }: { toasts: Toast[]; onClose: (id: st
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2">
+    <div className="fixed bottom-4 right-4 z-50 space-y-2">
       {toasts.map(toast => (
         <ToastItem key={toast.id} toast={toast} onClose={onClose} />
       ))}
@@ -114,7 +109,20 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: (id: string) => 
     return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    // 자동 사라짐 타이머 - 컴포넌트별로 독립적으로 관리
+    if (toast.duration && toast.duration > 0) {
+      const autoCloseTimer = setTimeout(() => {
+        handleClose();
+      }, toast.duration);
+
+      return () => clearTimeout(autoCloseTimer);
+    }
+  }, [toast.duration, toast.id]);
+
   const handleClose = () => {
+    if (isLeaving) return; // 이미 닫히는 중이면 무시
+
     setIsLeaving(true);
     setTimeout(() => {
       onClose(toast.id);
@@ -124,8 +132,8 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: (id: string) => 
   const getToastStyles = () => {
     const baseStyles = `
       transform transition-all duration-300 ease-in-out
-      ${isVisible && !isLeaving ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}
-      max-w-md w-full bg-bg-primary border rounded-lg shadow-lg p-4
+      ${isVisible && !isLeaving ? 'translate-x-0 translate-y-0 opacity-100' : 'translate-x-full translate-y-2 opacity-0'}
+      max-w-sm w-full bg-bg-primary border rounded-lg shadow-lg p-3
     `;
 
     switch (toast.type) {
@@ -179,7 +187,8 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: (id: string) => 
             
             <button
               onClick={handleClose}
-              className="ml-3 flex-shrink-0 text-text-tertiary hover:text-text-primary transition-colors"
+              className="ml-3 flex-shrink-0 text-text-tertiary hover:text-text-primary hover:bg-bg-hover rounded-md p-1 transition-colors"
+              title="닫기"
             >
               <X className="w-4 h-4" />
             </button>

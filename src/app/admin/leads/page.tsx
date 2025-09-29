@@ -66,7 +66,7 @@ interface FilterOptions {
   statuses: string[]; // 다중 선택으로 변경
   startDate: string;
   endDate: string;
-  department: string;
+  departments: string[]; // 복수 선택으로 변경
   counselorId: string;
 }
 
@@ -110,7 +110,7 @@ function AdminLeadsPageContent() {
     statuses: [],
     startDate: '',
     endDate: '',
-    department: '',
+    departments: [],
     counselorId: ''
   });
 
@@ -152,6 +152,12 @@ function AdminLeadsPageContent() {
   const [bulkDeleteCount, setBulkDeleteCount] = useState('');
   const [bulkDeleteMode, setBulkDeleteMode] = useState<'selected' | 'count'>('selected');
 
+  // 벌크 등급 설정 상태
+  const [showBulkGradeModal, setShowBulkGradeModal] = useState(false);
+  const [bulkGradeValue, setBulkGradeValue] = useState('');
+  const [bulkGradeMode, setBulkGradeMode] = useState<'selected' | 'count'>('selected');
+  const [bulkGradeCount, setBulkGradeCount] = useState('');
+
   // 인라인 편집 상태
   const [inlineEdit, setInlineEdit] = useState<InlineEdit | null>(null);
 
@@ -164,6 +170,23 @@ function AdminLeadsPageContent() {
   // Hydration 오류 방지
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  // 드롭다운 외부 클릭 시 닫기
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const dropdown = document.getElementById('department-dropdown');
+      const button = event.target as HTMLElement;
+
+      if (dropdown && !dropdown.contains(button) && !button.closest('.department-filter-button')) {
+        dropdown.classList.add('hidden');
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
   }, []);
 
   // 검색어 디바운싱
@@ -187,7 +210,8 @@ function AdminLeadsPageContent() {
       if (error) throw error;
 
       const uniqueDepartments = [...new Set(departmentData?.map(d => d.department).filter(Boolean))] as string[];
-      setDepartments(uniqueDepartments.sort());
+      // 한글 정렬 적용
+      setDepartments(uniqueDepartments.sort((a, b) => a.localeCompare(b, 'ko-KR')));
     } catch (error) {
       console.error('부서 목록 로드 실패:', error);
     }
@@ -200,12 +224,21 @@ function AdminLeadsPageContent() {
         .from('users')
         .select('id, full_name, email, department')
         .eq('role', 'counselor')
-        .eq('is_active', true)
-        .order('department', { ascending: true })
-        .order('full_name', { ascending: true });
+        .eq('is_active', true);
 
       if (error) throw error;
-      setCounselors(counselorsData || []);
+
+      // 클라이언트에서 한글 이름을 올바르게 정렬
+      const sortedCounselors = (counselorsData || []).sort((a, b) => {
+        // 부서명 먼저 정렬
+        const deptCompare = (a.department || '').localeCompare(b.department || '', 'ko-KR');
+        if (deptCompare !== 0) return deptCompare;
+
+        // 같은 부서 내에서는 이름으로 정렬 (한글 정렬 지원)
+        return (a.full_name || '').localeCompare(b.full_name || '', 'ko-KR');
+      });
+
+      setCounselors(sortedCounselors);
     } catch (error) {
       console.error('영업사원 목록 로드 실패:', error);
     }
@@ -315,7 +348,8 @@ function AdminLeadsPageContent() {
 
     } catch (error) {
       console.error('전체 데이터 로드 실패:', error);
-      toast.error('데이터 로드 실패', error.message);
+      const errorMessage = (error as Error)?.message || '알 수 없는 오류가 발생했습니다.';
+      toast.error('데이터 로드 실패', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -373,7 +407,8 @@ function AdminLeadsPageContent() {
 
     } catch (error) {
       console.error('전체 통계 로드 실패:', error);
-      toast.error('통계 로드 실패', error.message);
+      const errorMessage = (error as Error)?.message || '알 수 없는 오류가 발생했습니다.';
+      toast.error('통계 로드 실패', errorMessage);
     } finally {
       setStatsLoading(false);
     }
@@ -418,10 +453,12 @@ function AdminLeadsPageContent() {
       console.log('종료일 필터 후:', filtered.length);
     }
 
-    // 팀별 필터
-    if (filters.department) {
-      const departmentCounselors = counselors.filter(c => c.department === filters.department).map(c => c.id);
-      filtered = filtered.filter(lead => 
+    // 팀별 필터 (복수 선택)
+    if (filters.departments.length > 0) {
+      const departmentCounselors = counselors
+        .filter(c => filters.departments.includes(c.department))
+        .map(c => c.id);
+      filtered = filtered.filter(lead =>
         lead.counselor_id && departmentCounselors.includes(lead.counselor_id)
       );
       console.log('팀 필터 후:', filtered.length);
@@ -475,11 +512,22 @@ function AdminLeadsPageContent() {
           aValue = a.data_source || '';
           bValue = b.data_source || '';
           break;
+        case 'counselor_name':
+          aValue = a.counselor_name || 'zzzz_미배정'; // 미배정을 맨 뒤로
+          bValue = b.counselor_name || 'zzzz_미배정';
+          break;
         default:
           aValue = a[sortColumn as keyof Lead] || '';
           bValue = b[sortColumn as keyof Lead] || '';
       }
 
+      // 한글 정렬을 위한 localeCompare 사용
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        const compare = aValue.localeCompare(bValue, 'ko-KR');
+        return sortDirection === 'asc' ? compare : -compare;
+      }
+
+      // 날짜나 숫자의 경우 기존 방식 사용
       if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
       if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
       return 0;
@@ -769,6 +817,118 @@ const handleBulkDelete = async () => {
   } else {
     setShowBulkDeleteModal(true);
     setBulkDeleteMode('count');
+  }
+};
+
+// 벌크 등급 설정 함수
+const handleBulkGrade = async () => {
+  if (selectedLeads.size > 0) {
+    setShowBulkGradeModal(true);
+    setBulkGradeMode('selected');
+  } else {
+    setShowBulkGradeModal(true);
+    setBulkGradeMode('count');
+  }
+};
+
+// 벌크 등급 설정 실행 함수
+const executeBulkGrade = async () => {
+  if (!bulkGradeValue) {
+    toast.warning('등급 선택 필요', '설정할 등급을 선택해주세요.');
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    let leadIdsToUpdate: string[] = [];
+
+    if (bulkGradeMode === 'selected') {
+      leadIdsToUpdate = Array.from(selectedLeads);
+    } else {
+      const updateCount = parseInt(bulkGradeCount);
+      if (isNaN(updateCount) || updateCount <= 0) {
+        toast.warning('입력 오류', '올바른 숫자를 입력해주세요.');
+        return;
+      }
+
+      leadIdsToUpdate = filteredLeads
+        .slice(0, Math.min(updateCount, filteredLeads.length))
+        .map(lead => lead.id);
+    }
+
+    if (leadIdsToUpdate.length === 0) {
+      toast.warning('선택 확인', '등급을 설정할 데이터가 없습니다.');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const gradeOption = gradeOptions.find(g => g.value === bulkGradeValue);
+
+    const gradeData = {
+      grade: bulkGradeValue,
+      grade_color: gradeOption?.color || '#6b7280',
+      grade_memo: '',
+      updated_at: now,
+      updated_by: user?.id
+    };
+
+    // 배치 처리로 등급 업데이트 (50개씩)
+    const BATCH_SIZE = 50;
+    let totalUpdated = 0;
+    let failedIds: string[] = [];
+
+    for (let i = 0; i < leadIdsToUpdate.length; i += BATCH_SIZE) {
+      const batch = leadIdsToUpdate.slice(i, i + BATCH_SIZE);
+
+      try {
+        const { error } = await supabase
+          .from('lead_pool')
+          .update({
+            additional_data: gradeData,
+            updated_at: now
+          })
+          .in('id', batch);
+
+        if (error) {
+          console.error('배치 등급 업데이트 실패:', error);
+          failedIds.push(...batch);
+        } else {
+          totalUpdated += batch.length;
+          console.log(`배치 ${i/BATCH_SIZE + 1}: ${batch.length}개 등급 업데이트 완료`);
+        }
+
+      } catch (error) {
+        console.error('배치 등급 업데이트 중 오류:', error);
+        failedIds.push(...batch);
+      }
+    }
+
+    // 실패한 업데이트가 있으면 경고
+    if (failedIds.length > 0) {
+      console.warn('등급 업데이트 실패한 리드 ID:', failedIds);
+      toast.warning('일부 업데이트 실패', `${failedIds.length}개 리드 등급 업데이트 중 오류가 발생했습니다.`);
+    }
+
+    toast.success(
+      '등급 설정 완료',
+      `${totalUpdated}개의 리드 등급이 "${bulkGradeValue}"로 설정되었습니다.`
+    );
+
+    setSelectedLeads(new Set());
+    setShowBulkGradeModal(false);
+    setBulkGradeValue('');
+    setBulkGradeCount('');
+
+    // 데이터 새로고침
+    await loadAllLeads();
+
+  } catch (error) {
+    console.error('벌크 등급 설정 실패:', error);
+    const errorMessage = (error as Error)?.message || '알 수 없는 오류가 발생했습니다.';
+    toast.error('등급 설정 실패', errorMessage);
+  } finally {
+    setLoading(false);
   }
 };
 
@@ -1084,16 +1244,70 @@ const executeBulkDelete = async () => {
           <div className="flex items-center gap-4 mb-4">
             <div className="flex items-center gap-2">
               <span className="text-text-secondary text-sm">팀별 조회:</span>
-              <select
-                value={filters.department}
-                onChange={(e) => setFilters(prev => ({...prev, department: e.target.value, counselorId: ''}))}
-                className="px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-              >
-                <option value="">전체 팀</option>
-                {departments.map(dept => (
-                  <option key={dept} value={dept}>{dept}</option>
-                ))}
-              </select>
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    const dropdown = document.getElementById('department-dropdown');
+                    if (dropdown) {
+                      dropdown.classList.toggle('hidden');
+                    }
+                  }}
+                  className="department-filter-button px-2 py-1.5 text-sm border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent min-w-32 text-left flex items-center justify-between"
+                >
+                  <span>
+                    {filters.departments.length === 0
+                      ? '전체 팀'
+                      : filters.departments.length === 1
+                        ? filters.departments[0]
+                        : `${filters.departments.length}개 팀 선택됨`
+                    }
+                  </span>
+                  <ChevronRight className="w-3 h-3 transform rotate-90" />
+                </button>
+                <div
+                  id="department-dropdown"
+                  className="hidden absolute top-full left-0 mt-1 bg-bg-primary border border-border-primary rounded-lg shadow-lg z-20 min-w-40 max-h-48 overflow-y-auto"
+                >
+                  <div className="p-2 space-y-1">
+                    <label className="flex items-center gap-2 p-1.5 hover:bg-bg-hover rounded cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filters.departments.length === 0}
+                        onChange={() => {
+                          setFilters(prev => ({...prev, departments: [], counselorId: ''}));
+                        }}
+                        className="w-3 h-3 text-accent bg-bg-primary border-border-primary rounded focus:ring-accent"
+                      />
+                      <span className="text-sm text-text-primary">전체 팀</span>
+                    </label>
+                    {departments.map(dept => (
+                      <label key={dept} className="flex items-center gap-2 p-1.5 hover:bg-bg-hover rounded cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={filters.departments.includes(dept)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setFilters(prev => ({
+                                ...prev,
+                                departments: [...prev.departments, dept],
+                                counselorId: ''
+                              }));
+                            } else {
+                              setFilters(prev => ({
+                                ...prev,
+                                departments: prev.departments.filter(d => d !== dept),
+                                counselorId: ''
+                              }));
+                            }
+                          }}
+                          className="w-3 h-3 text-accent bg-bg-primary border-border-primary rounded focus:ring-accent"
+                        />
+                        <span className="text-sm text-text-primary">{dept}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center gap-2">
@@ -1105,7 +1319,7 @@ const executeBulkDelete = async () => {
               >
                 <option value="">전체 영업사원</option>
                 {counselors
-                  .filter(c => !filters.department || c.department === filters.department)
+                  .filter(c => filters.departments.length === 0 || filters.departments.includes(c.department))
                   .map(counselor => (
                     <option key={counselor.id} value={counselor.id}>
                       {counselor.full_name} ({counselor.department})
@@ -1261,18 +1475,34 @@ const executeBulkDelete = async () => {
   </div>
   
   <div className="flex items-center gap-2">
+{/* 벌크 등급 설정 버튼 */}
+      <button
+        onClick={handleBulkGrade}
+        className={`px-3 py-1 text-xs ${
+          selectedLeads.size > 0
+            ? 'bg-success text-white'
+            : 'bg-accent text-white'
+        } rounded hover:opacity-90 flex items-center gap-1 font-medium`}
+      >
+        <Tag className="w-3 h-3" />
+        {selectedLeads.size > 0
+          ? `${selectedLeads.size}개 등급설정`
+          : '벌크 등급설정'
+        }
+      </button>
+
 {/* 벌크 삭제 버튼 - 항상 표시 */}
       <button
   onClick={handleBulkDelete}
   className={`px-3 py-1 text-xs ${
-    selectedLeads.size > 0 
-      ? 'bg-error text-white' 
+    selectedLeads.size > 0
+      ? 'bg-error text-white'
       : 'bg-warning text-white'
   } rounded hover:opacity-90 flex items-center gap-1 font-medium`}
 >
   <Trash2 className="w-3 h-3" />
-  {selectedLeads.size > 0 
-    ? `${selectedLeads.size}개 삭제` 
+  {selectedLeads.size > 0
+    ? `${selectedLeads.size}개 삭제`
     : '벌크 삭제'
   }
 </button>
@@ -1327,10 +1557,11 @@ const executeBulkDelete = async () => {
                           데이터 생성일{renderSortIcon('data_date')}
                         </div>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24 cursor-pointer hover:bg-bg-hover transition-colors"
+                          onClick={() => handleSort('counselor_name')}>
                         <div className="flex items-center justify-center gap-0.5">
                           <UserCheck className="w-3 h-3" />
-                          영업사원
+                          영업사원{renderSortIcon('counselor_name')}
                         </div>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
@@ -1882,6 +2113,179 @@ const executeBulkDelete = async () => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* 벌크 등급 설정 모달 */}
+        {showBulkGradeModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-bg-primary border border-border-primary rounded-xl w-full max-w-md mx-auto">
+              <div className="p-6 border-b border-border-primary">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+                    <Tag className="w-5 h-5 text-accent" />
+                    벌크 등급 설정
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowBulkGradeModal(false);
+                      setBulkGradeValue('');
+                      setBulkGradeCount('');
+                    }}
+                    className="p-1 hover:bg-bg-hover rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5 text-text-secondary" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6">
+                {/* 등급 선택 */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium mb-3 text-text-primary">
+                    설정할 등급 선택 <span className="text-error">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {gradeOptions.map(grade => (
+                      <button
+                        key={grade.value}
+                        onClick={() => setBulkGradeValue(grade.value)}
+                        className={`px-3 py-2 text-xs rounded-lg border transition-all text-left ${
+                          bulkGradeValue === grade.value
+                            ? 'text-white font-medium border-transparent'
+                            : 'bg-bg-primary border-border-primary text-text-secondary hover:border-accent/50'
+                        }`}
+                        style={bulkGradeValue === grade.value ? {
+                          backgroundColor: grade.color,
+                          borderColor: grade.color
+                        } : {}}
+                      >
+                        {grade.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {bulkGradeMode === 'selected' ? (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-accent/10 border border-accent/20 rounded-lg">
+                      <p className="text-sm text-text-primary mb-2">
+                        선택한 <span className="font-bold text-accent">{selectedLeads.size}개</span>의 리드 등급을 설정하시겠습니까?
+                      </p>
+                      {bulkGradeValue && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-xs text-text-secondary">설정될 등급:</span>
+                          <span
+                            className="px-2 py-1 text-xs text-white font-medium rounded"
+                            style={{ backgroundColor: gradeOptions.find(g => g.value === bulkGradeValue)?.color || '#6b7280' }}
+                          >
+                            {bulkGradeValue}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="text-center">
+                      <button
+                        onClick={() => {
+                          setBulkGradeMode('count');
+                          setSelectedLeads(new Set());
+                        }}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        숫자로 입력하여 설정하기
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-text-primary">
+                        등급 설정할 리드 개수 입력
+                      </label>
+                      <input
+                        type="number"
+                        value={bulkGradeCount}
+                        onChange={(e) => setBulkGradeCount(e.target.value)}
+                        placeholder="설정할 개수를 입력하세요"
+                        min="1"
+                        max={filteredLeads.length}
+                        className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent"
+                      />
+                      <p className="text-xs text-text-secondary mt-1">
+                        필터링된 전체 {filteredLeads.length.toLocaleString()}개 중에서 상위 {bulkGradeCount || 'N'}개의 등급이 설정됩니다.
+                      </p>
+                    </div>
+
+                    {bulkGradeCount && parseInt(bulkGradeCount) > 0 && bulkGradeValue && (
+                      <div className="p-4 bg-accent/10 border border-accent/20 rounded-lg">
+                        <p className="text-sm text-text-primary mb-2">
+                          필터링된 전체 데이터에서 상위 <span className="font-bold text-accent">
+                            {Math.min(parseInt(bulkGradeCount), filteredLeads.length)}개
+                          </span>의 리드 등급이 설정됩니다.
+                        </p>
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-xs text-text-secondary">설정될 등급:</span>
+                          <span
+                            className="px-2 py-1 text-xs text-white font-medium rounded"
+                            style={{ backgroundColor: gradeOptions.find(g => g.value === bulkGradeValue)?.color || '#6b7280' }}
+                          >
+                            {bulkGradeValue}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedLeads.size > 0 && (
+                      <div className="text-center">
+                        <button
+                          onClick={() => setBulkGradeMode('selected')}
+                          className="text-xs text-accent hover:underline"
+                        >
+                          선택한 항목으로 전환 ({selectedLeads.size}개)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-border-primary">
+                  <button
+                    onClick={() => {
+                      setShowBulkGradeModal(false);
+                      setBulkGradeValue('');
+                      setBulkGradeCount('');
+                    }}
+                    disabled={loading}
+                    className="px-4 py-2 bg-bg-secondary text-text-primary rounded-lg hover:bg-bg-hover transition-colors disabled:opacity-50"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={executeBulkGrade}
+                    disabled={
+                      loading ||
+                      !bulkGradeValue ||
+                      (bulkGradeMode === 'count' && (!bulkGradeCount || parseInt(bulkGradeCount) <= 0)) ||
+                      (bulkGradeMode === 'selected' && selectedLeads.size === 0)
+                    }
+                    className="px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {loading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        설정 중...
+                      </>
+                    ) : (
+                      <>
+                        <Tag className="w-4 h-4" />
+                        등급 설정
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
