@@ -1458,6 +1458,10 @@ function CounselorConsultingContent() {
                       <span className="text-text-secondary">연락처:</span>
                       <span className="ml-2 font-mono font-medium text-text-primary">{selectedLead.phone}</span>
                     </div>
+                    <div>
+                      <span className="text-text-secondary">DB 출처:</span>
+                      <span className="ml-2 font-medium text-text-primary">{selectedLead.data_source || '미지정'}</span>
+                    </div>
                     <div className="col-span-2">
                       <span className="text-text-secondary">관심분야:</span>
                       <span className="ml-2 text-text-primary">{selectedLead.contact_script || '미확인'}</span>
