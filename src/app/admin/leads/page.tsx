@@ -120,7 +120,8 @@ function AdminLeadsPageContent() {
     totalAssigned: 0,
     totalUnassigned: 0,
     totalContracted: 0,
-    totalRevenue: 0
+    totalRevenue: 0,
+    totalCurrentMonth: 0
   });
 
   // 등급별 통계 상태
@@ -359,7 +360,7 @@ function AdminLeadsPageContent() {
   const loadOverallStats = useCallback(async () => {
     try {
       setStatsLoading(true);
-      
+
       let allLeads: any[] = [];
       let from = 0;
       const batchSize = 1000;
@@ -368,13 +369,13 @@ function AdminLeadsPageContent() {
       while (hasMore) {
         const { data: batch } = await supabase
           .from('admin_leads_view')
-          .select('id, assignment_id, contract_status, contract_amount')
+          .select('id, assignment_id, contract_status, contract_amount, data_date, created_at')
           .range(from, from + batchSize - 1);
-        
+
         if (batch && batch.length > 0) {
           allLeads = allLeads.concat(batch);
           from += batchSize;
-          
+
           if (batch.length < batchSize) {
             hasMore = false;
           }
@@ -386,24 +387,35 @@ function AdminLeadsPageContent() {
       const totalLeads = allLeads.length;
       const totalAssigned = allLeads.filter(lead => lead.assignment_id).length;
       const totalUnassigned = totalLeads - totalAssigned;
-      
-      const contractedLeads = allLeads.filter(lead => 
+
+      const contractedLeads = allLeads.filter(lead =>
         lead.contract_status === 'contracted'
       );
-      
-      const totalRevenue = contractedLeads.reduce((sum, lead) => 
+
+      const totalRevenue = contractedLeads.reduce((sum, lead) =>
         sum + (lead.contract_amount || 0), 0
       );
+
+      // 당월 고객수 계산
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+      const totalCurrentMonth = allLeads.filter(lead => {
+        const leadDate = new Date(lead.data_date || lead.created_at);
+        return leadDate >= startOfMonth && leadDate <= endOfMonth;
+      }).length;
 
       setOverallStats({
         totalLeads,
         totalAssigned,
         totalUnassigned,
         totalContracted: contractedLeads.length,
-        totalRevenue
+        totalRevenue,
+        totalCurrentMonth
       });
 
-      console.log(`통계 계산 완료 (총 ${totalLeads}개): 배정 ${totalAssigned}, 계약 ${contractedLeads.length}, 매출 ${totalRevenue}`);
+      console.log(`통계 계산 완료 (총 ${totalLeads}개): 배정 ${totalAssigned}, 계약 ${contractedLeads.length}, 매출 ${totalRevenue}, 당월 ${totalCurrentMonth}`);
 
     } catch (error) {
       console.error('전체 통계 로드 실패:', error);
@@ -437,6 +449,7 @@ function AdminLeadsPageContent() {
     // 날짜 필터 (데이터 생성일 기준)
     if (filters.startDate) {
       const startDate = new Date(filters.startDate);
+      startDate.setHours(0, 0, 0, 0);
       filtered = filtered.filter(lead => {
         const leadDate = new Date(lead.data_date || lead.created_at);
         return leadDate >= startDate;
@@ -1181,7 +1194,7 @@ const executeBulkDelete = async () => {
         </div>
 
         {/* 통계 카드 */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
           <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -1189,6 +1202,16 @@ const executeBulkDelete = async () => {
                 <p className="text-2xl font-bold text-text-primary">{overallStats.totalLeads.toLocaleString()}</p>
               </div>
               <User className="w-8 h-8 text-accent" />
+            </div>
+          </div>
+
+          <div className="bg-bg-primary border border-border-primary rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-text-secondary text-sm">당월 고객</p>
+                <p className="text-2xl font-bold text-blue-500">{overallStats.totalCurrentMonth.toLocaleString()}</p>
+              </div>
+              <Calendar className="w-8 h-8 text-blue-500" />
             </div>
           </div>
 
@@ -1360,8 +1383,9 @@ const executeBulkDelete = async () => {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => {
-                    const today = new Date().toISOString().slice(0, 10);
-                    setFilters(prev => ({...prev, startDate: today, endDate: today}));
+                    const today = new Date();
+                    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+                    setFilters(prev => ({...prev, startDate: todayStr, endDate: todayStr}));
                   }}
                   className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
                 >
@@ -1370,9 +1394,11 @@ const executeBulkDelete = async () => {
                 <button
                   onClick={() => {
                     const now = new Date();
-                    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-                    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-                    setFilters(prev => ({...prev, startDate: startOfMonth, endDate: endOfMonth}));
+                    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+                    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                    const startStr = `${startOfMonth.getFullYear()}-${String(startOfMonth.getMonth() + 1).padStart(2, '0')}-${String(startOfMonth.getDate()).padStart(2, '0')}`;
+                    const endStr = `${endOfMonth.getFullYear()}-${String(endOfMonth.getMonth() + 1).padStart(2, '0')}-${String(endOfMonth.getDate()).padStart(2, '0')}`;
+                    setFilters(prev => ({...prev, startDate: startStr, endDate: endStr}));
                   }}
                   className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
                 >
@@ -1381,9 +1407,11 @@ const executeBulkDelete = async () => {
                 <button
                   onClick={() => {
                     const now = new Date();
-                    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
-                    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
-                    setFilters(prev => ({...prev, startDate: startOfLastMonth, endDate: endOfLastMonth}));
+                    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+                    const startStr = `${startOfLastMonth.getFullYear()}-${String(startOfLastMonth.getMonth() + 1).padStart(2, '0')}-${String(startOfLastMonth.getDate()).padStart(2, '0')}`;
+                    const endStr = `${endOfLastMonth.getFullYear()}-${String(endOfLastMonth.getMonth() + 1).padStart(2, '0')}-${String(endOfLastMonth.getDate()).padStart(2, '0')}`;
+                    setFilters(prev => ({...prev, startDate: startStr, endDate: endStr}));
                   }}
                   className="px-2 py-1 text-xs bg-bg-secondary text-text-primary rounded hover:bg-bg-hover transition-colors"
                 >

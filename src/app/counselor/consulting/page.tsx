@@ -1606,7 +1606,7 @@ function CounselorConsultingContent() {
                   {/* 새 메모 입력 */}
                   <div>
                     <label className="block text-sm font-medium mb-2 text-text-primary">
-                      새 상담 메모 (등급 설정 사유 포함) *
+                      새 상담 메모 (등급 설정 사유 포함)
                       {memoHistory.length > 0 && <span className="text-text-tertiary text-xs ml-1">#{memoHistory.length + 1}</span>}
                     </label>
                     <textarea
@@ -1615,7 +1615,6 @@ function CounselorConsultingContent() {
                       className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                       rows={4}
                       placeholder="새로운 상담 내용과 등급 설정 사유를 기록하세요..."
-                      required
                     />
                   </div>
                 </div>
@@ -1623,11 +1622,11 @@ function CounselorConsultingContent() {
                 <div className="flex gap-3 pt-4">
                   <button
                     onClick={saveConsultingRecord}
-                    disabled={saving || !consultingForm.counseling_memo || !consultingForm.customer_grade}
+                    disabled={saving || !consultingForm.customer_grade}
                     className={designSystem.utils.cn(
                       designSystem.components.button.primary,
                       "flex-1",
-                      (!consultingForm.counseling_memo || !consultingForm.customer_grade || saving) && "opacity-50 cursor-not-allowed"
+                      (!consultingForm.customer_grade || saving) && "opacity-50 cursor-not-allowed"
                     )}
                   >
                     {saving ? (

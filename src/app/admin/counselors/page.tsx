@@ -212,12 +212,11 @@ function CounselorsPageContent() {
         return;
       }
 
-      // 기본 쿼리 생성 (활성 사용자만) - deleted_at 조건 제외
+      // 기본 쿼리 생성 (모든 사용자) - deleted_at 조건 제외
       let query = supabase
         .from('users')
         .select('*')
         .eq('role', 'counselor')
-        .eq('is_active', true)
         .order('full_name', { ascending: true });
 
       // 부서별 필터링 적용 (설정된 권한 + 본인 부서)
