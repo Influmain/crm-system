@@ -142,7 +142,6 @@ function AdminLeadsPageContent() {
   // 선택 상태
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
   
   // 리드 추가 모달 상태
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
@@ -356,75 +355,41 @@ function AdminLeadsPageContent() {
     }
   }, [toast, user?.id, isSuperAdmin]);
 
-  // 통계 로드 (원본 방식)
-  const loadOverallStats = useCallback(async () => {
-    try {
-      setStatsLoading(true);
+  // filteredLeads 기반 통계 계산 (필터링된 데이터 반영)
+  const calculateFilteredStats = useCallback((leads: Lead[]) => {
+    const totalLeads = leads.length;
+    const totalAssigned = leads.filter(lead => lead.assignment_id).length;
+    const totalUnassigned = totalLeads - totalAssigned;
 
-      let allLeads: any[] = [];
-      let from = 0;
-      const batchSize = 1000;
-      let hasMore = true;
+    const contractedLeads = leads.filter(lead =>
+      lead.contract_status === 'contracted'
+    );
 
-      while (hasMore) {
-        const { data: batch } = await supabase
-          .from('admin_leads_view')
-          .select('id, assignment_id, contract_status, contract_amount, data_date, created_at')
-          .range(from, from + batchSize - 1);
+    const totalRevenue = contractedLeads.reduce((sum, lead) =>
+      sum + (lead.contract_amount || 0), 0
+    );
 
-        if (batch && batch.length > 0) {
-          allLeads = allLeads.concat(batch);
-          from += batchSize;
+    // 당월 고객수 계산
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
-          if (batch.length < batchSize) {
-            hasMore = false;
-          }
-        } else {
-          hasMore = false;
-        }
-      }
+    const totalCurrentMonth = leads.filter(lead => {
+      const leadDate = new Date(lead.data_date || lead.created_at);
+      return leadDate >= startOfMonth && leadDate <= endOfMonth;
+    }).length;
 
-      const totalLeads = allLeads.length;
-      const totalAssigned = allLeads.filter(lead => lead.assignment_id).length;
-      const totalUnassigned = totalLeads - totalAssigned;
+    setOverallStats({
+      totalLeads,
+      totalAssigned,
+      totalUnassigned,
+      totalContracted: contractedLeads.length,
+      totalRevenue,
+      totalCurrentMonth
+    });
 
-      const contractedLeads = allLeads.filter(lead =>
-        lead.contract_status === 'contracted'
-      );
-
-      const totalRevenue = contractedLeads.reduce((sum, lead) =>
-        sum + (lead.contract_amount || 0), 0
-      );
-
-      // 당월 고객수 계산
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-      const totalCurrentMonth = allLeads.filter(lead => {
-        const leadDate = new Date(lead.data_date || lead.created_at);
-        return leadDate >= startOfMonth && leadDate <= endOfMonth;
-      }).length;
-
-      setOverallStats({
-        totalLeads,
-        totalAssigned,
-        totalUnassigned,
-        totalContracted: contractedLeads.length,
-        totalRevenue,
-        totalCurrentMonth
-      });
-
-      console.log(`통계 계산 완료 (총 ${totalLeads}개): 배정 ${totalAssigned}, 계약 ${contractedLeads.length}, 매출 ${totalRevenue}, 당월 ${totalCurrentMonth}`);
-
-    } catch (error) {
-      console.error('전체 통계 로드 실패:', error);
-      const errorMessage = (error as Error)?.message || '알 수 없는 오류가 발생했습니다.';
-      toast.error('통계 로드 실패', errorMessage);
-    } finally {
-      setStatsLoading(false);
-    }
-  }, [toast]);
+    console.log(`통계 계산 완료 (필터링된 ${totalLeads}개): 배정 ${totalAssigned}, 계약 ${contractedLeads.length}, 매출 ${totalRevenue}, 당월 ${totalCurrentMonth}`);
+  }, []);
 
   // 클라이언트 사이드 필터링
   const applyFilters = useCallback(() => {
@@ -806,12 +771,9 @@ const handleAddLead = async (e: React.FormEvent<HTMLFormElement>) => {
     
     // 폼 리셋
     (e.target as HTMLFormElement).reset();
-    
-    // 데이터 새로고침
-    await Promise.all([
-      loadAllLeads(),
-      loadOverallStats()
-    ]);
+
+    // 데이터 새로고침 (통계는 자동으로 재계산됨)
+    await loadAllLeads();
     
   } catch (error) {
     console.error('리드 추가 실패:', error);
@@ -1105,12 +1067,9 @@ const executeBulkDelete = async () => {
     setSelectedLeads(new Set());
     setShowBulkDeleteModal(false);
     setBulkDeleteCount('');
-    
-    // 데이터 새로고침
-    await Promise.all([
-      loadAllLeads(),
-      loadOverallStats()
-    ]);
+
+    // 데이터 새로고침 (통계는 자동으로 재계산됨)
+    await loadAllLeads();
     
   } catch (error) {
     console.error('벌크 삭제 실패:', error);
@@ -1168,13 +1127,19 @@ const executeBulkDelete = async () => {
     calculateGradeStats();
   }, [calculateGradeStats]);
 
+  // filteredLeads 변경 시 통계 재계산
+  useEffect(() => {
+    if (filteredLeads.length > 0 || allLeads.length > 0) {
+      calculateFilteredStats(filteredLeads);
+    }
+  }, [filteredLeads, calculateFilteredStats, allLeads.length]);
+
   // 초기 데이터 로드
   useEffect(() => {
     if (!authLoading && user && mounted) {
       Promise.all([
         loadDepartments(),
         loadCounselors(),
-        loadOverallStats(),
         loadAllLeads()
       ]);
     }
@@ -1422,16 +1387,15 @@ const executeBulkDelete = async () => {
 
             <button
               onClick={() => {
-                loadOverallStats();
                 loadAllLeads();
               }}
-              disabled={loading || statsLoading}
+              disabled={loading}
               className={designSystem.utils.cn(
                 designSystem.components.button.secondary,
                 "px-4 py-2"
               )}
             >
-              <RefreshCw className={`w-4 h-4 mr-2 ${(loading || statsLoading) ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
               새로고침
             </button>
           </div>
