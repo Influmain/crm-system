@@ -1556,6 +1556,13 @@ const executeBulkDelete = async () => {
                           영업사원{renderSortIcon('counselor_name')}
                         </div>
                       </th>
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
+                          onClick={() => handleSort('assigned_at')}>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <Calendar className="w-3 h-3" />
+                          배정일{renderSortIcon('assigned_at')}
+                        </div>
+                      </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
                           onClick={() => handleSort('data_source')}>
                         <div className="flex items-center justify-center gap-0.5">
@@ -1665,6 +1672,16 @@ const executeBulkDelete = async () => {
                               </div>
                             )}
                           </div>
+                        </td>
+
+                        {/* 배정일 */}
+                        <td className="py-1 px-1 text-center">
+                          <span className="text-text-secondary text-xs whitespace-nowrap">
+                            {lead.assigned_at ? new Date(lead.assigned_at).toLocaleDateString('ko-KR', {
+                              month: '2-digit',
+                              day: '2-digit'
+                            }) : '-'}
+                          </span>
                         </td>
 
                         {/* DB출처 */}
