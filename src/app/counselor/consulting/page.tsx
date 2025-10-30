@@ -664,7 +664,7 @@ function CounselorConsultingContent() {
         const gradeOption = gradeOptions.find(opt => opt.value === consultingForm.customer_grade)
         const now = new Date().toISOString()
 
-        const updatedHistory = [...currentGrade.history]
+        const updatedHistory = Array.isArray(currentGrade.history) ? [...currentGrade.history] : []
         if (currentGrade.grade !== consultingForm.customer_grade) {
           updatedHistory.push({
             grade: currentGrade.grade,

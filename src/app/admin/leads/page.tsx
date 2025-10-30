@@ -845,7 +845,8 @@ const executeBulkGrade = async () => {
       grade_color: gradeOption?.color || '#6b7280',
       grade_memo: '',
       updated_at: now,
-      updated_by: user?.id
+      updated_by: user?.id,
+      history: []
     };
 
     // 배치 처리로 등급 업데이트 (50개씩)
