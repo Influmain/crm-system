@@ -266,12 +266,16 @@ function CounselorConsultingContent() {
         // 회원등급 정보 추출 (기존 로직 유지)
         let customerGrade: CustomerGrade | undefined;
         if (lead.additional_data) {
-          const additionalData = typeof lead.additional_data === 'string' 
-            ? JSON.parse(lead.additional_data) 
+          const additionalData = typeof lead.additional_data === 'string'
+            ? JSON.parse(lead.additional_data)
             : lead.additional_data;
-          
+
           if (additionalData && additionalData.grade) {
-            customerGrade = additionalData;
+            // history 필드를 안전하게 정규화
+            customerGrade = {
+              ...additionalData,
+              history: Array.isArray(additionalData.history) ? additionalData.history : []
+            };
           }
         }
 
@@ -652,6 +656,7 @@ function CounselorConsultingContent() {
       if (consultingForm.customer_grade) {
         console.log('등급 정보 업데이트 시작:', consultingForm.customer_grade)
 
+        // 현재 등급 정보를 안전하게 가져오기
         const currentGrade = selectedLead.customer_grade || {
           grade: '신규',
           grade_memo: '',
@@ -664,7 +669,23 @@ function CounselorConsultingContent() {
         const gradeOption = gradeOptions.find(opt => opt.value === consultingForm.customer_grade)
         const now = new Date().toISOString()
 
-        const updatedHistory = Array.isArray(currentGrade.history) ? [...currentGrade.history] : []
+        // history를 안전하게 복사 (다중 방어)
+        let updatedHistory: Array<{grade: string; date: string; memo?: string}> = []
+        try {
+          if (Array.isArray(currentGrade.history)) {
+            updatedHistory = [...currentGrade.history]
+          } else if (currentGrade.history && typeof currentGrade.history === 'string') {
+            // 문자열인 경우 JSON 파싱 시도
+            updatedHistory = JSON.parse(currentGrade.history)
+            if (!Array.isArray(updatedHistory)) {
+              updatedHistory = []
+            }
+          }
+        } catch (error) {
+          console.error('History 파싱 오류:', error)
+          updatedHistory = []
+        }
+
         if (currentGrade.grade !== consultingForm.customer_grade) {
           updatedHistory.push({
             grade: currentGrade.grade,

@@ -558,14 +558,15 @@ function AssignmentsPageContent() {
           ...lead,
           customer_grade: (() => {
             if (lead.additional_data) {
-              const additionalData = typeof lead.additional_data === 'string' 
-                ? JSON.parse(lead.additional_data) 
+              const additionalData = typeof lead.additional_data === 'string'
+                ? JSON.parse(lead.additional_data)
                 : lead.additional_data;
-              
+
               if (additionalData && additionalData.grade) {
                 return {
                   grade: additionalData.grade,
-                  grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280'
+                  grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280',
+                  history: Array.isArray(additionalData.history) ? additionalData.history : []
                 };
               }
             }

@@ -159,12 +159,16 @@ function CounselorDashboardContent() {
         // 회원등급 정보 추출
         let customerGrade: CustomerGrade | undefined;
         if (lead.additional_data) {
-          const additionalData = typeof lead.additional_data === 'string' 
-            ? JSON.parse(lead.additional_data) 
+          const additionalData = typeof lead.additional_data === 'string'
+            ? JSON.parse(lead.additional_data)
             : lead.additional_data;
-          
+
           if (additionalData && additionalData.grade) {
-            customerGrade = additionalData;
+            // history 필드를 안전하게 정규화
+            customerGrade = {
+              ...additionalData,
+              history: Array.isArray(additionalData.history) ? additionalData.history : []
+            };
           }
         }
 

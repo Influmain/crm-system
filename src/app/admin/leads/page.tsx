@@ -314,13 +314,15 @@ function AdminLeadsPageContent() {
             } : undefined,
             customer_grade: (() => {
               if (lead.additional_data) {
-                const additionalData = typeof lead.additional_data === 'string' 
-                  ? JSON.parse(lead.additional_data) 
+                const additionalData = typeof lead.additional_data === 'string'
+                  ? JSON.parse(lead.additional_data)
                   : lead.additional_data;
-                
+
                 if (additionalData && additionalData.grade) {
                   return {
+                    ...additionalData,
                     grade: additionalData.grade,
+                    history: Array.isArray(additionalData.history) ? additionalData.history : [],
                     grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280',
                     grade_memo: additionalData.grade_memo,
                     updated_at: additionalData.updated_at,

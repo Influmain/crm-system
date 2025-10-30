@@ -431,14 +431,15 @@ function CounselingMonitorContent() {
         // 등급 정보 추출
         let customer_grade = undefined;
         if (lead.additional_data) {
-          const additionalData = typeof lead.additional_data === 'string' 
-            ? JSON.parse(lead.additional_data) 
+          const additionalData = typeof lead.additional_data === 'string'
+            ? JSON.parse(lead.additional_data)
             : lead.additional_data;
-          
+
           if (additionalData && additionalData.grade) {
             customer_grade = {
               grade: additionalData.grade,
-              grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280'
+              grade_color: additionalData.grade_color || gradeOptions.find(g => g.value === additionalData.grade)?.color || '#6b7280',
+              history: Array.isArray(additionalData.history) ? additionalData.history : []
             };
           }
         }
