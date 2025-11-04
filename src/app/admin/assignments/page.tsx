@@ -652,31 +652,18 @@ function AssignmentsPageContent() {
 
       console.log(`=== 배치 재배정 시작: ${assignmentsToReassign.length}개 ===`);
 
-      const leadIds = assignmentsToReassign.map(assignmentId => {
-        const assignment = counselorAssignments.find(a => a.id === assignmentId);
-        return assignment?.lead_id;
-      }).filter(Boolean);
-
-      const { error: deleteError } = await supabase
+      // 재배정: DELETE + INSERT 대신 UPDATE 사용 (상담 이력 보존)
+      const { error: updateError } = await supabase
         .from('lead_assignments')
-        .delete()
+        .update({
+          counselor_id: newCounselorForReassign,
+          assigned_by: user.id,
+          assigned_at: new Date().toISOString(), // 재배정일로 갱신
+          status: 'active'
+        })
         .in('id', assignmentsToReassign);
 
-      if (deleteError) throw deleteError;
-
-      const newAssignmentRecords = leadIds.map(leadId => ({
-        lead_id: leadId,
-        counselor_id: newCounselorForReassign,
-        assigned_by: user.id,
-        assigned_at: new Date().toISOString(),
-        status: 'active'
-      }));
-
-      const { error: insertError } = await supabase
-        .from('lead_assignments')
-        .insert(newAssignmentRecords);
-
-      if (insertError) throw insertError;
+      if (updateError) throw updateError;
 
       const oldCounselor = counselors.find(c => c.id === selectedCounselorForView)?.full_name;
       const newCounselor = counselors.find(c => c.id === newCounselorForReassign)?.full_name;
