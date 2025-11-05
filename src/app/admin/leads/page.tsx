@@ -106,6 +106,7 @@ function AdminLeadsPageContent() {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const [searchColumn, setSearchColumn] = useState<'all' | 'counselor' | 'phone' | 'data_source' | 'customer_name' | 'interest'>('all');
   const [filters, setFilters] = useState<FilterOptions>({
     statuses: [],
     startDate: '',
@@ -400,16 +401,34 @@ function AdminLeadsPageContent() {
     console.log('=== 클라이언트 필터링 시작 ===');
     console.log('전체 데이터:', allLeads.length);
 
-    // 검색어 필터
+    // 검색어 필터 (칼럼별 검색 지원)
     if (debouncedSearchTerm.trim()) {
       const searchLower = debouncedSearchTerm.toLowerCase();
-      filtered = filtered.filter(lead => 
-        lead.phone?.toLowerCase().includes(searchLower) ||
-        lead.contact_name?.toLowerCase().includes(searchLower) ||
-        lead.real_name?.toLowerCase().includes(searchLower) ||
-        lead.actual_customer_name?.toLowerCase().includes(searchLower) ||
-        lead.data_source?.toLowerCase().includes(searchLower)
-      );
+      filtered = filtered.filter(lead => {
+        switch (searchColumn) {
+          case 'counselor':
+            return lead.counselor_name?.toLowerCase().includes(searchLower);
+          case 'phone':
+            return lead.phone?.toLowerCase().includes(searchLower);
+          case 'data_source':
+            return lead.data_source?.toLowerCase().includes(searchLower);
+          case 'customer_name':
+            return lead.contact_name?.toLowerCase().includes(searchLower) ||
+                   lead.real_name?.toLowerCase().includes(searchLower) ||
+                   lead.actual_customer_name?.toLowerCase().includes(searchLower);
+          case 'interest':
+            return lead.contact_script?.toLowerCase().includes(searchLower);
+          case 'all':
+          default:
+            return lead.counselor_name?.toLowerCase().includes(searchLower) ||
+                   lead.phone?.toLowerCase().includes(searchLower) ||
+                   lead.data_source?.toLowerCase().includes(searchLower) ||
+                   lead.contact_name?.toLowerCase().includes(searchLower) ||
+                   lead.real_name?.toLowerCase().includes(searchLower) ||
+                   lead.actual_customer_name?.toLowerCase().includes(searchLower) ||
+                   lead.contact_script?.toLowerCase().includes(searchLower);
+        }
+      });
       console.log('검색어 필터 후:', filtered.length);
     }
 
@@ -517,7 +536,7 @@ function AdminLeadsPageContent() {
     setFilteredLeads(filtered);
     setCurrentPage(1); // 필터 변경시 첫 페이지로
 
-  }, [allLeads, debouncedSearchTerm, filters, counselors, sortColumn, sortDirection]);
+  }, [allLeads, debouncedSearchTerm, searchColumn, filters, counselors, sortColumn, sortDirection]);
 
   // 등급별 통계 계산 (전체 데이터 기준)
   const calculateGradeStats = useCallback(() => {
@@ -1511,16 +1530,38 @@ const executeBulkDelete = async () => {
       리드 추가
     </button>
     
-    {/* 기존 검색 입력 */}
-    <div className="relative">
-      <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
-      <input
-        type="text"
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-        placeholder="고객명, 전화번호, DB출처로 검색..."
-        className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
-      />
+    {/* 검색 필터 */}
+    <div className="flex items-center gap-2">
+      <select
+        value={searchColumn}
+        onChange={(e) => setSearchColumn(e.target.value as 'all' | 'counselor' | 'phone' | 'data_source' | 'customer_name' | 'interest')}
+        className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+      >
+        <option value="all">전체</option>
+        <option value="counselor">영업사원</option>
+        <option value="phone">전화번호</option>
+        <option value="data_source">DB출처</option>
+        <option value="customer_name">고객명</option>
+        <option value="interest">관심분야</option>
+      </select>
+
+      <div className="relative">
+        <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder={
+            searchColumn === 'counselor' ? '영업사원으로 검색...' :
+            searchColumn === 'phone' ? '전화번호로 검색...' :
+            searchColumn === 'data_source' ? 'DB출처로 검색...' :
+            searchColumn === 'customer_name' ? '고객명으로 검색...' :
+            searchColumn === 'interest' ? '관심분야로 검색...' :
+            '영업사원, 전화번호, DB출처, 고객명, 관심분야로 검색...'
+          }
+          className="pl-7 pr-3 py-1 w-56 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+      </div>
     </div>
   </div>
 </div>
