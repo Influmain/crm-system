@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
 import ProtectedRoute from '@/components/auth/ProtectedRoute';
-import { useToastHelpers } from '@/components/ui/Toast';
+import { useToastHelpers, useToast } from '@/components/ui/Toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { designSystem } from '@/lib/design-system';
@@ -80,6 +80,7 @@ interface InlineEdit {
 function AdminLeadsPageContent() {
   const { user, userProfile, loading: authLoading, hasPermission, isSuperAdmin } = useAuth();
   const toast = useToastHelpers();
+  const { clearAllToasts } = useToast();
   const [mounted, setMounted] = useState(false);
 
   // 회원등급 옵션 정의
@@ -274,7 +275,7 @@ function AdminLeadsPageContent() {
           .eq('role', 'counselor')
           .eq('is_active', true)
           .in('department', accessibleDepartments);
-        
+
         allowedCounselorIds = counselorsData?.map(c => c.id) || [];
         console.log('접근 가능한 영업사원 ID:', allowedCounselorIds.length + '명');
       }
@@ -297,9 +298,19 @@ function AdminLeadsPageContent() {
           query = query.is('counselor_id', null);
         }
 
-        const { data: batch, error } = await query.range(from, from + batchSize - 1);
+        const { data: batch, error } = await query
+          .range(from, from + batchSize - 1);
 
-        if (error) throw error;
+        if (error) {
+          console.error(`배치 ${from / batchSize + 1} 로드 실패:`, error);
+          // 502 또는 타임아웃 에러인 경우 로드 중단하고 지금까지 로드된 데이터 표시
+          if (error.message?.includes('502') || error.message?.includes('timeout')) {
+            console.warn(`${allData.length}개까지 로드 완료. 서버 타임아웃으로 중단.`);
+            toast.warning('일부 데이터 로드', `${allData.length}개 리드가 로드되었습니다. 서버 응답 시간 초과로 일부 데이터는 로드되지 않았습니다.`);
+            break;
+          }
+          throw error;
+        }
 
         if (batch && batch.length > 0) {
           // 뷰 데이터를 기존 인터페이스에 맞게 변환
@@ -337,7 +348,9 @@ function AdminLeadsPageContent() {
 
           allData = allData.concat(enrichedBatch);
           from += batchSize;
-          
+
+          console.log(`배치 ${from / batchSize}: ${batch.length}개 로드, 총 누적: ${allData.length}개`);
+
           if (batch.length < batchSize) {
             hasMore = false;
           }
@@ -1023,17 +1036,75 @@ const executeBulkDelete = async () => {
           continue;
         }
 
-        // 2. lead_assignments 삭제 (실제 존재하는 리드만)
-        const { error: assignmentError } = await supabase
+        // 2. 먼저 lead_assignments의 ID 가져오기
+        const { data: assignments, error: assignmentFetchError } = await supabase
+          .from('lead_assignments')
+          .select('id')
+          .in('lead_id', existingIds);
+
+        if (assignmentFetchError) {
+          console.error('배정 기록 조회 실패:', assignmentFetchError);
+          failedIds.push(...existingIds);
+          continue;
+        }
+
+        const assignmentIds = assignments?.map(a => a.id) || [];
+
+        // 3. counseling_activities 삭제 (assignment_id로)
+        if (assignmentIds.length > 0) {
+          const { error: activitiesError } = await supabase
+            .from('counseling_activities')
+            .delete()
+            .in('assignment_id', assignmentIds);
+
+          if (activitiesError) {
+            console.error('상담 활동 삭제 실패:', activitiesError);
+            console.error('에러 상세:', JSON.stringify(activitiesError, null, 2));
+            failedIds.push(...existingIds);
+            continue;
+          }
+
+          // 4. consulting_memo_history 삭제 (assignment_id로)
+          const { error: memoError } = await supabase
+            .from('consulting_memo_history')
+            .delete()
+            .in('assignment_id', assignmentIds);
+
+          if (memoError) {
+            console.error('상담 메모 이력 삭제 실패:', memoError);
+            console.error('에러 상세:', JSON.stringify(memoError, null, 2));
+            failedIds.push(...existingIds);
+            continue;
+          }
+
+          // 5. assignment_history는 lead_id로 삭제 (lead_id 직접 참조)
+          const { error: historyError } = await supabase
+            .from('assignment_history')
+            .delete()
+            .in('lead_id', existingIds);
+
+          if (historyError) {
+            console.error('배정 이력 삭제 실패:', historyError);
+            console.error('에러 상세:', JSON.stringify(historyError, null, 2));
+            failedIds.push(...existingIds);
+            continue;
+          }
+        }
+
+        // 6. lead_assignments 삭제
+        const { error: assignmentDeleteError } = await supabase
           .from('lead_assignments')
           .delete()
           .in('lead_id', existingIds);
 
-        if (assignmentError) {
-          console.error('배정 기록 삭제 실패:', assignmentError);
+        if (assignmentDeleteError) {
+          console.error('배정 기록 삭제 실패:', assignmentDeleteError);
+          console.error('에러 상세:', JSON.stringify(assignmentDeleteError, null, 2));
+          failedIds.push(...existingIds);
+          continue;
         }
-        
-        // 3. lead_pool 삭제 (실제 존재하는 리드만)
+
+        // 7. lead_pool 삭제 (실제 존재하는 리드만)
         const { data: deletedLeads, error: deleteError } = await supabase
           .from('lead_pool')
           .delete()
@@ -1042,6 +1113,7 @@ const executeBulkDelete = async () => {
 
         if (deleteError) {
           console.error('리드 삭제 실패:', deleteError);
+          console.error('에러 상세:', JSON.stringify(deleteError, null, 2));
           failedIds.push(...existingIds);
         } else {
           // 실제 삭제된 개수만 카운트
@@ -1057,6 +1129,9 @@ const executeBulkDelete = async () => {
       }
     }
 
+    // 이전 toast들 모두 닫기 (삭제 중... 알림 포함)
+    clearAllToasts();
+
     // 실패한 삭제가 있으면 경고
     if (failedIds.length > 0) {
       console.warn('삭제 실패한 리드 ID:', failedIds);
@@ -1067,7 +1142,7 @@ const executeBulkDelete = async () => {
     if (logId) {
       await supabase
         .from('deletion_logs')
-        .update({ 
+        .update({
           deleted_count: totalDeleted,
           reason: `${deleteReason} - 완료`,
           additional_info: {
@@ -1080,9 +1155,9 @@ const executeBulkDelete = async () => {
         })
         .eq('id', logId);
     }
-    
+
     toast.success(
-      '삭제 완료', 
+      '삭제 완료',
       `${totalDeleted}개의 리드가 삭제되었습니다.`
     );
     
@@ -1130,7 +1205,10 @@ const executeBulkDelete = async () => {
           }
         });
     }
-    
+
+    // 이전 toast들 모두 닫기 (삭제 중... 알림 포함)
+    clearAllToasts();
+
     toast.error('삭제 실패', errorMessage);
   } finally {
     setLoading(false);
