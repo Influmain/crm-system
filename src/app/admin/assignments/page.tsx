@@ -461,9 +461,10 @@ function AssignmentsPageContent() {
         status: 'active'
       }));
 
-      const { error: assignError } = await supabase
+      const { data: newAssignments, error: assignError } = await supabase
         .from('lead_assignments')
-        .insert(assignmentRecords);
+        .insert(assignmentRecords)
+        .select('id, lead_id');
 
       if (assignError) throw assignError;
 
@@ -473,6 +474,28 @@ function AssignmentsPageContent() {
         .in('id', leadsToAssign);
 
       if (updateError) throw updateError;
+
+      // 최초 배정 이력 기록
+      if (newAssignments && newAssignments.length > 0) {
+        const historyRecords = newAssignments.map(assignment => ({
+          lead_id: assignment.lead_id,
+          assignment_id: assignment.id,
+          action_type: 'assign',
+          previous_counselor_id: null,
+          new_counselor_id: selectedCounselor,
+          changed_by: user.id,
+          changed_at: new Date().toISOString()
+        }));
+
+        const { error: historyError } = await supabase
+          .from('assignment_history')
+          .insert(historyRecords);
+
+        if (historyError) {
+          console.error('이력 기록 실패:', historyError);
+          // 이력 기록 실패는 에러로 throw하지 않음 (배정 자체는 성공)
+        }
+      }
 
       toast.success(
         '고객 배정 완료', 
@@ -495,11 +518,11 @@ function AssignmentsPageContent() {
       await loadCounselors();
       await loadTotalLeadsCount();
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('배정 실패:', error);
       toast.error(
-        '고객 배정 실패', 
-        error.message || '알 수 없는 오류가 발생했습니다.'
+        '고객 배정 실패',
+        error?.message || '알 수 없는 오류가 발생했습니다.'
       );
     } finally {
       setActionLoading(false);
@@ -652,7 +675,15 @@ function AssignmentsPageContent() {
 
       console.log(`=== 배치 재배정 시작: ${assignmentsToReassign.length}개 ===`);
 
-      // 재배정: DELETE + INSERT 대신 UPDATE 사용 (상담 이력 보존)
+      // 1. 재배정 전 현재 배정 정보 조회 (이력 기록용)
+      const { data: currentAssignments, error: fetchError } = await supabase
+        .from('lead_assignments')
+        .select('id, lead_id, counselor_id')
+        .in('id', assignmentsToReassign);
+
+      if (fetchError) throw fetchError;
+
+      // 2. 재배정: DELETE + INSERT 대신 UPDATE 사용 (상담 이력 보존)
       const { error: updateError } = await supabase
         .from('lead_assignments')
         .update({
@@ -664,6 +695,26 @@ function AssignmentsPageContent() {
         .in('id', assignmentsToReassign);
 
       if (updateError) throw updateError;
+
+      // 3. 재배정 이력 기록
+      const historyRecords = currentAssignments.map(assignment => ({
+        lead_id: assignment.lead_id,
+        assignment_id: assignment.id,
+        action_type: 'reassign',
+        previous_counselor_id: assignment.counselor_id,
+        new_counselor_id: newCounselorForReassign,
+        changed_by: user.id,
+        changed_at: new Date().toISOString()
+      }));
+
+      const { error: historyError } = await supabase
+        .from('assignment_history')
+        .insert(historyRecords);
+
+      if (historyError) {
+        console.error('이력 기록 실패:', historyError);
+        // 이력 기록 실패는 에러로 throw하지 않음 (재배정 자체는 성공)
+      }
 
       const oldCounselor = counselors.find(c => c.id === selectedCounselorForView)?.full_name;
       const newCounselor = counselors.find(c => c.id === newCounselorForReassign)?.full_name;
@@ -681,9 +732,9 @@ function AssignmentsPageContent() {
       setShowBulkReassignModal(false);
       setBulkReassignCount('');
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('재배정 실패:', error);
-      toast.error('고객 재배정 실패', error.message || '알 수 없는 오류가 발생했습니다.');
+      toast.error('고객 재배정 실패', error?.message || '알 수 없는 오류가 발생했습니다.');
     } finally {
       setActionLoading(false);
     }
@@ -705,11 +756,39 @@ function AssignmentsPageContent() {
     try {
       console.log(`=== 미배정 처리 시작: ${selectedAssignments.length}개 ===`);
 
-      const leadIds = selectedAssignments.map(assignmentId => {
-        const assignment = counselorAssignments.find(a => a.id === assignmentId);
-        return assignment?.lead_id;
-      }).filter(Boolean);
+      // 1. 미배정 전 현재 배정 정보 조회 (이력 기록용)
+      const { data: currentAssignments, error: fetchError } = await supabase
+        .from('lead_assignments')
+        .select('id, lead_id, counselor_id')
+        .in('id', selectedAssignments);
 
+      if (fetchError) throw fetchError;
+
+      const leadIds = currentAssignments.map(a => a.lead_id);
+
+      // 2. 미배정 이력 기록 (삭제 전에 먼저 기록)
+      if (currentAssignments && currentAssignments.length > 0 && user?.id) {
+        const historyRecords = currentAssignments.map(assignment => ({
+          lead_id: assignment.lead_id,
+          assignment_id: assignment.id,
+          action_type: 'unassign',
+          previous_counselor_id: assignment.counselor_id,
+          new_counselor_id: null,
+          changed_by: user.id,
+          changed_at: new Date().toISOString()
+        }));
+
+        const { error: historyError } = await supabase
+          .from('assignment_history')
+          .insert(historyRecords);
+
+        if (historyError) {
+          console.error('이력 기록 실패:', historyError);
+          // 이력 기록 실패는 에러로 throw하지 않음
+        }
+      }
+
+      // 3. 배정 삭제
       const { error: deleteError } = await supabase
         .from('lead_assignments')
         .delete()
@@ -717,6 +796,7 @@ function AssignmentsPageContent() {
 
       if (deleteError) throw deleteError;
 
+      // 4. 리드 상태 업데이트
       const { error: updateError } = await supabase
         .from('lead_pool')
         .update({ status: 'available' })
@@ -742,11 +822,11 @@ function AssignmentsPageContent() {
       await loadTotalLeadsCount();
       setSelectedAssignments([]);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('미배정 처리 실패:', error);
       toast.error(
         '미배정 처리 실패',
-        error.message || '알 수 없는 오류가 발생했습니다.'
+        error?.message || '알 수 없는 오류가 발생했습니다.'
       );
     } finally {
       setActionLoading(false);
