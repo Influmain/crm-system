@@ -34,37 +34,51 @@ export default function AdminSidebar({ className }: AdminSidebarProps) {
     {
       href: '/admin/dashboard',
       label: '대시보드',
-      icon: businessIcons.dashboard
+      icon: businessIcons.dashboard,
+      badge: undefined,
+      badgeType: undefined
     },
     {
       href: '/admin/upload',
       label: '데이터 업로드',
-      icon: businessIcons.upload
+      icon: businessIcons.upload,
+      badge: undefined,
+      badgeType: undefined
     },
     {
       href: '/admin/leads',
       label: '리드 관리',
-      icon: businessIcons.contact
+      icon: businessIcons.contact,
+      badge: undefined,
+      badgeType: undefined
     },
     {
       href: '/admin/counselors',
       label: '영업사원 관리',
-      icon: businessIcons.team
+      icon: businessIcons.team,
+      badge: undefined,
+      badgeType: undefined
     },
     {
       href: '/admin/assignments',
       label: '배정 관리',
-      icon: businessIcons.assignment
+      icon: businessIcons.assignment,
+      badge: undefined,
+      badgeType: undefined
     },
     {
       href: '/admin/consulting-monitor',
       label: '상담 모니터링',
-      icon: businessIcons.analytics
+      icon: businessIcons.analytics,
+      badge: undefined,
+      badgeType: undefined
     },
     {
       href: '/admin/settings',
       label: '시스템 설정',
-      icon: businessIcons.settings
+      icon: businessIcons.settings,
+      badge: undefined,
+      badgeType: undefined
     }
   ]
 
