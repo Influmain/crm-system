@@ -87,6 +87,10 @@ function CounselingMonitorContent() {
   const [totalPages, setTotalPages] = useState(0)
   const itemsPerPage = 300
 
+  // 정렬 상태
+  const [sortColumn, setSortColumn] = useState<string>('assigned_at')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+
   // 부서 목록
   const [departments, setDepartments] = useState<string[]>([])
 
@@ -579,6 +583,82 @@ function CounselingMonitorContent() {
     }
   }
 
+  // 정렬 변경 핸들러
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('desc');
+    }
+  };
+
+  // 정렬 아이콘 렌더링
+  const renderSortIcon = (column: string) => {
+    if (sortColumn !== column) {
+      return <span className="text-text-tertiary text-xs ml-0.5">↕</span>;
+    }
+    return sortDirection === 'asc' ?
+      <span className="text-accent text-xs ml-0.5">↑</span> :
+      <span className="text-accent text-xs ml-0.5">↓</span>;
+  };
+
+  // 정렬된 리드 목록 가져오기
+  const getSortedLeads = () => {
+    const sorted = [...counselorLeads];
+
+    sorted.sort((a, b) => {
+      let aValue: any = '';
+      let bValue: any = '';
+
+      switch (sortColumn) {
+        case 'assigned_at':
+          aValue = new Date(a.assigned_at).getTime();
+          bValue = new Date(b.assigned_at).getTime();
+          break;
+        case 'customer_grade':
+          aValue = a.customer_grade?.grade || '미분류';
+          bValue = b.customer_grade?.grade || '미분류';
+          break;
+        case 'customer_name':
+          aValue = a.actual_customer_name || a.real_name || a.contact_name || '';
+          bValue = b.actual_customer_name || b.real_name || b.contact_name || '';
+          break;
+        case 'phone':
+          aValue = a.phone;
+          bValue = b.phone;
+          break;
+        case 'call_attempts':
+          aValue = a.call_attempts;
+          bValue = b.call_attempts;
+          break;
+        case 'last_contact_date':
+          aValue = a.last_contact_date ? new Date(a.last_contact_date).getTime() : 0;
+          bValue = b.last_contact_date ? new Date(b.last_contact_date).getTime() : 0;
+          break;
+        case 'status':
+          const statusOrder = { 'not_contacted': 0, 'in_progress': 1, 'completed': 2, 'contracted': 3 };
+          aValue = statusOrder[a.status];
+          bValue = statusOrder[b.status];
+          break;
+        case 'contract_amount':
+          aValue = a.contract_amount || 0;
+          bValue = b.contract_amount || 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (sortDirection === 'asc') {
+        return aValue > bValue ? 1 : -1;
+      } else {
+        return aValue < bValue ? 1 : -1;
+      }
+    });
+
+    return sorted;
+  };
+
   // 부서 필터 변경시 영업사원 목록 재로드
   useEffect(() => {
     if (mounted && userProfile) {
@@ -816,28 +896,32 @@ function CounselingMonitorContent() {
                   <table className="w-full table-fixed">
                     <thead className="bg-bg-secondary sticky top-0 z-10">
                       <tr>
-                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
+                            onClick={() => handleSort('assigned_at')}>
                           <div className="flex items-center justify-center gap-0.5">
                             <Calendar className="w-3 h-3" />
-                            배정일
+                            배정일{renderSortIcon('assigned_at')}
                           </div>
                         </th>
-                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
+                            onClick={() => handleSort('customer_grade')}>
                           <div className="flex items-center justify-center gap-0.5">
                             <businessIcons.assignment className="w-3 h-3" />
-                            등급
+                            등급{renderSortIcon('customer_grade')}
                           </div>
                         </th>
-                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
+                            onClick={() => handleSort('customer_name')}>
                           <div className="flex items-center justify-center gap-0.5">
                             <User className="w-3 h-3" />
-                            고객명
+                            고객명{renderSortIcon('customer_name')}
                           </div>
                         </th>
-                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
+                            onClick={() => handleSort('phone')}>
                           <div className="flex items-center justify-center gap-0.5">
                             <Phone className="w-3 h-3" />
-                            전화번호
+                            전화번호{renderSortIcon('phone')}
                           </div>
                         </th>
                         <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24">
@@ -852,34 +936,38 @@ function CounselingMonitorContent() {
                             상담메모
                           </div>
                         </th>
-                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-10">
+                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-10 cursor-pointer hover:bg-bg-hover transition-colors"
+                            onClick={() => handleSort('call_attempts')}>
                           <div className="flex items-center justify-center gap-0.5">
                             <businessIcons.phone className="w-3 h-3" />
-                            횟수
+                            횟수{renderSortIcon('call_attempts')}
                           </div>
                         </th>
-                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
+                            onClick={() => handleSort('last_contact_date')}>
                           <div className="flex items-center justify-center gap-0.5">
                             <businessIcons.date className="w-3 h-3" />
-                            최근상담
+                            최근상담{renderSortIcon('last_contact_date')}
                           </div>
                         </th>
-                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
+                            onClick={() => handleSort('status')}>
                           <div className="flex items-center justify-center gap-0.5">
                             <businessIcons.team className="w-3 h-3" />
-                            상태
+                            상태{renderSortIcon('status')}
                           </div>
                         </th>
-                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20">
+                        <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
+                            onClick={() => handleSort('contract_amount')}>
                           <div className="flex items-center justify-center gap-0.5">
                             <businessIcons.script className="w-3 h-3" />
-                            계약금액
+                            계약금액{renderSortIcon('contract_amount')}
                           </div>
                         </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {counselorLeads.map((lead) => (
+                      {getSortedLeads().map((lead) => (
                         <tr key={lead.assignment_id} className="border-b border-border-primary hover:bg-bg-hover transition-colors">
                           {/* 배정일 */}
                           <td className="py-1 px-1 text-center">

@@ -319,7 +319,7 @@ function CounselorConsultingContent() {
   }, [user?.id, toast]);
 
   // 클라이언트 사이드 필터링 - useCallback 제거
-  const applyFilter = () => {
+  const applyFilter = (resetPage: boolean = false) => {
     let filtered = [...leads];
 
     // 등급 필터 (다중 선택)
@@ -336,7 +336,7 @@ function CounselorConsultingContent() {
     // 검색 필터
     if (debouncedSearchTerm.trim()) {
       const searchLower = debouncedSearchTerm.toLowerCase();
-      filtered = filtered.filter(lead => 
+      filtered = filtered.filter(lead =>
         lead.phone.includes(debouncedSearchTerm) ||
         (lead.contact_name && lead.contact_name.toLowerCase().includes(searchLower)) ||
         (lead.real_name && lead.real_name.toLowerCase().includes(searchLower)) ||
@@ -367,7 +367,7 @@ function CounselorConsultingContent() {
     filtered.sort((a, b) => {
       let aValue: any = '';
       let bValue: any = '';
-      
+
       switch (sortColumn) {
         case 'phone':
           aValue = a.phone;
@@ -404,7 +404,7 @@ function CounselorConsultingContent() {
         default:
           return 0;
       }
-      
+
       if (sortDirection === 'asc') {
         return aValue > bValue ? 1 : -1;
       } else {
@@ -413,7 +413,11 @@ function CounselorConsultingContent() {
     });
 
     setFilteredLeads(filtered);
-    setCurrentPage(1);
+
+    // 필터 조건이 변경되었을 때만 페이지를 1로 리셋
+    if (resetPage) {
+      setCurrentPage(1);
+    }
   };
 
   // 다중 등급 필터 토글
@@ -806,12 +810,19 @@ function CounselorConsultingContent() {
     }
   }, [selectedLead?.assignment_id])
 
-  // 필터 적용 - useCallback 제거하고 직접 useEffect 사용
+  // 필터 조건이 변경될 때만 페이지를 1로 리셋
   useEffect(() => {
     if (leads.length > 0) {
-      applyFilter();
+      applyFilter(true); // 필터 조건 변경 시 페이지 리셋
     }
-  }, [leads, gradeFilters, debouncedSearchTerm, sortColumn, sortDirection])
+  }, [gradeFilters, debouncedSearchTerm, dateFilters.startDate, dateFilters.endDate, sortColumn, sortDirection])
+
+  // leads가 변경될 때는 현재 페이지 유지 (상담 저장 후 새로고침)
+  useEffect(() => {
+    if (leads.length > 0) {
+      applyFilter(false); // 데이터 새로고침 시 현재 페이지 유지
+    }
+  }, [leads])
 
   if (loading) {
     return (
