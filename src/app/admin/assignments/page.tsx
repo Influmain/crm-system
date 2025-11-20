@@ -138,6 +138,14 @@ function AssignmentsPageContent() {
   const [reassignSearchTerm, setReassignSearchTerm] = useState('');
   const [debouncedReassignSearchTerm, setDebouncedReassignSearchTerm] = useState('');
 
+  // 날짜 필터 상태 (배정하기 탭)
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  // 날짜 필터 상태 (재배정 관리 탭)
+  const [reassignStartDate, setReassignStartDate] = useState('');
+  const [reassignEndDate, setReassignEndDate] = useState('');
+
   // 부서 목록 상태
   const [departments, setDepartments] = useState<string[]>([]);
 
@@ -347,7 +355,7 @@ function AssignmentsPageContent() {
       let query = supabase
         .from('lead_pool')
         .select(`
-          id, phone, name, contact_name, data_source, contact_script, 
+          id, phone, name, contact_name, data_source, contact_script,
           created_at, upload_batch_id, status, data_date, real_name
         `, { count: 'exact' })
         .eq('status', 'available')
@@ -355,6 +363,18 @@ function AssignmentsPageContent() {
 
       if (searchQuery.trim()) {
         query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,data_source.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%`);
+      }
+
+      // 날짜 필터 적용 (데이터 생성일 기준)
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        query = query.gte('data_date', start.toISOString());
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query = query.lte('data_date', end.toISOString());
       }
 
       query = query.range(startRange, endRange);
@@ -561,6 +581,18 @@ function AssignmentsPageContent() {
 
       if (searchQuery.trim()) {
         query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%,actual_customer_name.ilike.%${searchQuery}%`);
+      }
+
+      // 날짜 필터 적용 (데이터 생성일 기준)
+      if (reassignStartDate) {
+        const start = new Date(reassignStartDate);
+        start.setHours(0, 0, 0, 0);
+        query = query.gte('data_date', start.toISOString());
+      }
+      if (reassignEndDate) {
+        const end = new Date(reassignEndDate);
+        end.setHours(23, 59, 59, 999);
+        query = query.lte('data_date', end.toISOString());
       }
 
       query = query.range(startRange, endRange);
@@ -903,13 +935,13 @@ function AssignmentsPageContent() {
     if (activeTab === 'assign') {
       loadAvailableLeads(currentPage, debouncedSearchTerm);
     }
-  }, [activeTab, currentPage, debouncedSearchTerm]);
+  }, [activeTab, currentPage, debouncedSearchTerm, startDate, endDate]);
 
   useEffect(() => {
     if (selectedCounselorForView) {
       loadCounselorAssignments(selectedCounselorForView, reassignPage, debouncedReassignSearchTerm);
     }
-  }, [selectedCounselorForView, reassignPage, debouncedReassignSearchTerm, reassignFilters]);
+  }, [selectedCounselorForView, reassignPage, debouncedReassignSearchTerm, reassignFilters, reassignStartDate, reassignEndDate]);
 
   useEffect(() => {
     setSelectedCounselor('');
@@ -922,6 +954,15 @@ function AssignmentsPageContent() {
   useEffect(() => {
     setSelectedCounselorForView('');
   }, [reassignFilters.selectedDepartmentForView]);
+
+  // 날짜 필터 변경 시 페이지를 1로 리셋
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [startDate, endDate]);
+
+  useEffect(() => {
+    setReassignPage(1);
+  }, [reassignStartDate, reassignEndDate]);
 
   if (loading) {
     return (
@@ -1107,16 +1148,36 @@ function AssignmentsPageContent() {
                   <span className="text-xs text-accent animate-pulse">로딩 중...</span>
                 )}
               </div>
-              
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="전화번호, 고객명, DB출처로 검색..."
-                  className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
-                />
+
+              <div className="flex items-center gap-2">
+                {/* 날짜 필터 */}
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                  <span className="text-xs text-text-secondary">~</span>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+
+                {/* 검색 */}
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="전화번호, 고객명, DB출처로 검색..."
+                    className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
               </div>
             </div>
 
@@ -1508,16 +1569,36 @@ function AssignmentsPageContent() {
                         <span className="text-xs text-accent animate-pulse">로딩 중...</span>
                       )}
                     </div>
-                    
-                    <div className="relative">
-                      <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
-                      <input
-                        type="text"
-                        value={reassignSearchTerm}
-                        onChange={(e) => setReassignSearchTerm(e.target.value)}
-                        placeholder="고객명, 전화번호로 검색..."
-                        className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
+
+                    <div className="flex items-center gap-2">
+                      {/* 날짜 필터 */}
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="date"
+                          value={reassignStartDate}
+                          onChange={(e) => setReassignStartDate(e.target.value)}
+                          className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                        <span className="text-xs text-text-secondary">~</span>
+                        <input
+                          type="date"
+                          value={reassignEndDate}
+                          onChange={(e) => setReassignEndDate(e.target.value)}
+                          className="px-2 py-1 text-xs border border-border-primary rounded bg-bg-primary text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+
+                      {/* 검색 */}
+                      <div className="relative">
+                        <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-text-secondary" />
+                        <input
+                          type="text"
+                          value={reassignSearchTerm}
+                          onChange={(e) => setReassignSearchTerm(e.target.value)}
+                          placeholder="고객명, 전화번호로 검색..."
+                          className="pl-7 pr-3 py-1 w-48 text-xs border border-border-primary rounded bg-bg-primary text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -1544,6 +1625,12 @@ function AssignmentsPageContent() {
                                   <div className="flex items-center justify-center gap-0.5">
                                     <Calendar className="w-3 h-3" />
                                     배정일
+                                  </div>
+                                </th>
+                                <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
+                                  <div className="flex items-center justify-center gap-0.5">
+                                    <Calendar className="w-3 h-3" />
+                                    데이터 생성일
                                   </div>
                                 </th>
                                 <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16">
@@ -1614,16 +1701,25 @@ function AssignmentsPageContent() {
 
                                   <td className="py-1 px-1 text-center">
                                     <span className="text-text-secondary text-xs whitespace-nowrap">
-                                      {assignment.assigned_at ? 
+                                      {assignment.assigned_at ?
                                         new Date(assignment.assigned_at).toLocaleDateString('ko-KR', {
                                           month: '2-digit',
                                           day: '2-digit'
-                                        }) : 
+                                        }) :
                                         new Date(assignment.lead.created_at).toLocaleDateString('ko-KR', {
                                           month: '2-digit',
                                           day: '2-digit'
                                         })
                                       }
+                                    </span>
+                                  </td>
+
+                                  <td className="py-1 px-1 text-center">
+                                    <span className="text-text-secondary text-xs whitespace-nowrap">
+                                      {assignment.lead.data_date ? new Date(assignment.lead.data_date).toLocaleDateString('ko-KR', {
+                                        month: '2-digit',
+                                        day: '2-digit'
+                                      }) : '-'}
                                     </span>
                                   </td>
 

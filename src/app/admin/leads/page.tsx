@@ -391,7 +391,8 @@ function AdminLeadsPageContent() {
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
     const totalCurrentMonth = leads.filter(lead => {
-      const leadDate = new Date(lead.data_date || lead.created_at);
+      if (!lead.data_date) return false;
+      const leadDate = new Date(lead.data_date);
       return leadDate >= startOfMonth && leadDate <= endOfMonth;
     }).length;
 
@@ -450,7 +451,8 @@ function AdminLeadsPageContent() {
       const startDate = new Date(filters.startDate);
       startDate.setHours(0, 0, 0, 0);
       filtered = filtered.filter(lead => {
-        const leadDate = new Date(lead.data_date || lead.created_at);
+        if (!lead.data_date) return false;
+        const leadDate = new Date(lead.data_date);
         return leadDate >= startDate;
       });
       console.log('시작일 필터 후:', filtered.length);
@@ -459,7 +461,8 @@ function AdminLeadsPageContent() {
       const endDate = new Date(filters.endDate);
       endDate.setHours(23, 59, 59, 999);
       filtered = filtered.filter(lead => {
-        const leadDate = new Date(lead.data_date || lead.created_at);
+        if (!lead.data_date) return false;
+        const leadDate = new Date(lead.data_date);
         return leadDate <= endDate;
       });
       console.log('종료일 필터 후:', filtered.length);
@@ -509,8 +512,8 @@ function AdminLeadsPageContent() {
 
       switch (sortColumn) {
         case 'data_date':
-          aValue = new Date(a.data_date || a.created_at);
-          bValue = new Date(b.data_date || b.created_at);
+          aValue = a.data_date ? new Date(a.data_date) : new Date(0);
+          bValue = b.data_date ? new Date(b.data_date) : new Date(0);
           break;
         case 'real_name':
           aValue = a.actual_customer_name || a.real_name || a.contact_name || '';
@@ -1671,18 +1674,18 @@ const executeBulkDelete = async () => {
                           데이터 생성일{renderSortIcon('data_date')}
                         </div>
                       </th>
-                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24 cursor-pointer hover:bg-bg-hover transition-colors"
-                          onClick={() => handleSort('counselor_name')}>
-                        <div className="flex items-center justify-center gap-0.5">
-                          <UserCheck className="w-3 h-3" />
-                          영업사원{renderSortIcon('counselor_name')}
-                        </div>
-                      </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-16 cursor-pointer hover:bg-bg-hover transition-colors"
                           onClick={() => handleSort('assigned_at')}>
                         <div className="flex items-center justify-center gap-0.5">
                           <Calendar className="w-3 h-3" />
                           배정일{renderSortIcon('assigned_at')}
+                        </div>
+                      </th>
+                      <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-24 cursor-pointer hover:bg-bg-hover transition-colors"
+                          onClick={() => handleSort('counselor_name')}>
+                        <div className="flex items-center justify-center gap-0.5">
+                          <UserCheck className="w-3 h-3" />
+                          영업사원{renderSortIcon('counselor_name')}
                         </div>
                       </th>
                       <th className="text-center py-2 px-1 font-medium text-text-secondary text-xs w-20 cursor-pointer hover:bg-bg-hover transition-colors"
@@ -1777,6 +1780,16 @@ const executeBulkDelete = async () => {
                           </span>
                         </td>
 
+                        {/* 배정일 */}
+                        <td className="py-1 px-1 text-center">
+                          <span className="text-text-secondary text-xs whitespace-nowrap">
+                            {lead.assigned_at ? new Date(lead.assigned_at).toLocaleDateString('ko-KR', {
+                              month: '2-digit',
+                              day: '2-digit'
+                            }) : '-'}
+                          </span>
+                        </td>
+
                         {/* 영업사원 */}
                         <td className="py-1 px-1 text-center">
                           <div className="w-24 mx-auto">
@@ -1794,16 +1807,6 @@ const executeBulkDelete = async () => {
                               </div>
                             )}
                           </div>
-                        </td>
-
-                        {/* 배정일 */}
-                        <td className="py-1 px-1 text-center">
-                          <span className="text-text-secondary text-xs whitespace-nowrap">
-                            {lead.assigned_at ? new Date(lead.assigned_at).toLocaleDateString('ko-KR', {
-                              month: '2-digit',
-                              day: '2-digit'
-                            }) : '-'}
-                          </span>
                         </td>
 
                         {/* DB출처 */}
