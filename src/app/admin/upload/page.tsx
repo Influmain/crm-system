@@ -383,6 +383,34 @@ function CustomerUploadContent() {
       return;
     }
 
+    // 전화번호 형식 검증 (010-0000-0000 형식)
+    const phoneFormatRegex = /^010-\d{4}-\d{4}$/;
+    const invalidPhoneRecords: { rowIndex: number; phone: string }[] = [];
+
+    fileData.data.forEach((row, index) => {
+      const phone = row[phoneField]?.toString().trim();
+      if (phone && !phoneFormatRegex.test(phone)) {
+        invalidPhoneRecords.push({
+          rowIndex: index + 2, // Excel 행 번호 (헤더 포함)
+          phone: phone
+        });
+      }
+    });
+
+    if (invalidPhoneRecords.length > 0) {
+      const sampleInvalid = invalidPhoneRecords.slice(0, 5);
+      const sampleText = sampleInvalid
+        .map(r => `행 ${r.rowIndex}: ${r.phone}`)
+        .join(', ');
+
+      toast.error(
+        '전화번호 형식 오류',
+        `${invalidPhoneRecords.length}개의 전화번호가 010-0000-0000 형식이 아닙니다. (예: ${sampleText}${invalidPhoneRecords.length > 5 ? ' 외 ' + (invalidPhoneRecords.length - 5) + '개' : ''})`,
+        { duration: 0 }
+      );
+      return;
+    }
+
     // 중복 검사 시작 토스트
     toast.info(
       '중복 검사 시작',
@@ -392,7 +420,7 @@ function CustomerUploadContent() {
 
     try {
       console.log('=== v6 패턴 중복 검사 시작 ===');
-      
+
       const phoneNumbers = fileData.data
         .map(row => row[phoneField]?.toString().trim())
         .filter(phone => phone);
