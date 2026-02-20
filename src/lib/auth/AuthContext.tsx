@@ -17,13 +17,20 @@ interface UserProfile {
   is_super_admin?: boolean;
 }
 
+// IP 차단 에러 타입
+interface IpBlockedError {
+  message: string;
+  code: 'IP_NOT_APPROVED';
+  hasPendingRequest: boolean;
+}
+
 // AuthContext 타입
 interface AuthContextType {
   user: User | null;
   userProfile: UserProfile | null;
   permissions: PermissionType[];
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error?: any }>;
+  signIn: (email: string, password: string) => Promise<{ error?: any; ipBlocked?: IpBlockedError }>;
   signOut: () => Promise<void>;
   isAdmin: boolean;
   isCounselor: boolean;
@@ -135,7 +142,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email,
         password,
       });
-      return { error };
+
+      if (error) {
+        return { error };
+      }
+
+      // Supabase 인증 성공 후 IP 검증
+      if (data?.user) {
+        try {
+          const ipResponse = await fetch('/api/auth/verify-ip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: data.user.id })
+          });
+
+          const ipResult = await ipResponse.json();
+
+          if (!ipResult.allowed) {
+            // IP 차단 - 즉시 로그아웃
+            console.log('IP 검증 실패 - 로그아웃 처리:', ipResult.message);
+            await supabase.auth.signOut();
+
+            return {
+              error: null,
+              ipBlocked: {
+                message: ipResult.message,
+                code: 'IP_NOT_APPROVED' as const,
+                hasPendingRequest: ipResult.has_pending_request
+              }
+            };
+          }
+
+          console.log('IP 검증 성공:', ipResult.message);
+        } catch (ipError) {
+          console.error('IP 검증 API 호출 실패:', ipError);
+          // IP 검증 실패 시에도 로그아웃 (보안을 위해)
+          await supabase.auth.signOut();
+          return {
+            error: { message: 'IP 검증 중 오류가 발생했습니다. 다시 시도해주세요.' }
+          };
+        }
+      }
+
+      return { error: null };
     } catch (error) {
       return { error };
     }

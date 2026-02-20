@@ -18,14 +18,60 @@ import {
 } from '@/lib/services/permissions';
 import { departmentPermissionService } from '@/lib/services/departmentPermissions';
 import { supabase } from '@/lib/supabase';
-import { 
-  Shield, Users, Settings, Eye, EyeOff, Save, 
+import {
+  Shield, Users, Settings, Eye, EyeOff, Save,
   RefreshCw, UserPlus, Edit2, Trash2, CheckCircle, XCircle,
-  AlertTriangle, Check, X
+  AlertTriangle, Check, X, Globe, MapPin, Clock
 } from 'lucide-react';
 
 interface DepartmentPermissions {
   [userId: string]: string[];
+}
+
+// IP 승인 요청 타입
+interface IpApprovalRequest {
+  id: string;
+  user_id: string;
+  ip_address: string;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  user: {
+    id: string;
+    email: string;
+    full_name: string;
+    role: string;
+    department: string | null;
+  };
+  reviewer: {
+    id: string;
+    full_name: string;
+  } | null;
+}
+
+// 승인된 IP 타입
+interface ApprovedIp {
+  id: string;
+  user_id: string;
+  ip_address: string;
+  description: string | null;
+  approved_by: string | null;
+  approved_at: string;
+  is_active: boolean;
+  last_used_at: string | null;
+  user: {
+    id: string;
+    email: string;
+    full_name: string;
+    role: string;
+    department: string | null;
+  };
+  approver: {
+    id: string;
+    full_name: string;
+  } | null;
 }
 
 function AdminSettingsContent() {
@@ -95,6 +141,14 @@ const [loadingDepartments, setLoadingDepartments] = useState(false);
     phone: '',
     department: ''
   });
+
+  // IP 관리 상태
+  const [ipRequests, setIpRequests] = useState<IpApprovalRequest[]>([]);
+  const [approvedIps, setApprovedIps] = useState<ApprovedIp[]>([]);
+  const [loadingIpRequests, setLoadingIpRequests] = useState(false);
+  const [loadingApprovedIps, setLoadingApprovedIps] = useState(false);
+  const [ipRequestFilter, setIpRequestFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [showIpManagement, setShowIpManagement] = useState(false);
 
   // 데이터 로드
 useEffect(() => {
@@ -604,22 +658,22 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
   try {
     // 부서 권한 서비스를 사용하여 저장
     await departmentPermissionService.saveDepartmentPermissions(
-      userId, 
-      departments, 
+      userId,
+      departments,
       user?.id || ''
     );
-    
+
     // 로컬 상태 업데이트
     const newPermissions = {
       ...departmentPermissions,
       [userId]: departments
     };
     setDepartmentPermissions(newPermissions);
-    
+
     // 해당 사용자 찾기
     const targetUser = users.find(u => u.id === userId);
     const userName = targetUser?.full_name || '사용자';
-    
+
     if (departments.length === 0) {
       toast.warning('부서 권한 제거', `${userName}님의 모든 부서 접근 권한이 제거되었습니다.`);
     } else if (departments.length === availableDepartments.length) {
@@ -631,6 +685,139 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
     console.error('부서 권한 저장 실패:', error);
     toast.error('권한 저장 실패', '부서 권한 저장 중 오류가 발생했습니다.');
   }
+};
+
+// IP 승인 요청 목록 로드
+const loadIpApprovalRequests = async (status: string = 'pending') => {
+  setLoadingIpRequests(true);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('인증이 필요합니다.');
+
+    const response = await fetch(`/api/admin/ip-requests?status=${status}`, {
+      headers: { 'Authorization': `Bearer ${session.access_token}` }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'IP 승인 요청 조회 실패');
+    }
+
+    const { requests } = await response.json();
+    setIpRequests(requests || []);
+  } catch (error: any) {
+    console.error('IP 승인 요청 조회 실패:', error);
+    toast.error('조회 실패', error.message);
+  } finally {
+    setLoadingIpRequests(false);
+  }
+};
+
+// 승인된 IP 목록 로드
+const loadApprovedIps = async () => {
+  setLoadingApprovedIps(true);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('인증이 필요합니다.');
+
+    const response = await fetch('/api/admin/approved-ips', {
+      headers: { 'Authorization': `Bearer ${session.access_token}` }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || '승인된 IP 조회 실패');
+    }
+
+    const { approved_ips } = await response.json();
+    setApprovedIps(approved_ips || []);
+  } catch (error: any) {
+    console.error('승인된 IP 조회 실패:', error);
+    toast.error('조회 실패', error.message);
+  } finally {
+    setLoadingApprovedIps(false);
+  }
+};
+
+// IP 승인/거부 처리
+const handleIpRequestAction = async (requestId: string, action: 'approve' | 'reject', description?: string) => {
+  setActionLoading(true);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('인증이 필요합니다.');
+
+    const response = await fetch(`/api/admin/ip-requests/${requestId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ action, description })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'IP 처리 실패');
+    }
+
+    const result = await response.json();
+    toast.success(action === 'approve' ? 'IP 승인 완료' : 'IP 거부 완료', result.message);
+
+    // 목록 새로고침
+    await loadIpApprovalRequests(ipRequestFilter);
+    if (action === 'approve') {
+      await loadApprovedIps();
+    }
+  } catch (error: any) {
+    console.error('IP 처리 실패:', error);
+    toast.error('처리 실패', error.message);
+  } finally {
+    setActionLoading(false);
+  }
+};
+
+// 승인된 IP 삭제 (비활성화)
+const handleDeleteApprovedIp = async (ipId: string, userName: string) => {
+  if (!confirm(`${userName}님의 해당 IP를 비활성화하시겠습니까?`)) return;
+
+  setActionLoading(true);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('인증이 필요합니다.');
+
+    const response = await fetch(`/api/admin/approved-ips/${ipId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${session.access_token}` }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'IP 삭제 실패');
+    }
+
+    const result = await response.json();
+    toast.success('IP 비활성화 완료', result.message);
+
+    // 목록 새로고침
+    await loadApprovedIps();
+  } catch (error: any) {
+    console.error('IP 삭제 실패:', error);
+    toast.error('삭제 실패', error.message);
+  } finally {
+    setActionLoading(false);
+  }
+};
+
+// 날짜 포맷팅 함수
+const formatDateTime = (dateString: string | null) => {
+  if (!dateString) return '-';
+  return new Date(dateString).toLocaleDateString('ko-KR', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 };
 
   // 권한 배지 렌더링
@@ -812,6 +999,251 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
               </button>
             </div>
           </form>
+        )}
+      </div>
+
+      {/* IP 승인 관리 섹션 */}
+      <div className={designSystem.utils.cn(designSystem.components.card.base, "p-6 mb-8")}>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Globe className="w-5 h-5 text-accent" />
+            <h3 className={designSystem.components.typography.h4}>IP 승인 관리</h3>
+            <span className="text-sm text-text-secondary">(최고관리자만)</span>
+            {ipRequests.filter(r => r.status === 'pending').length > 0 && (
+              <span className="px-2 py-1 bg-warning/20 text-warning text-xs font-medium rounded-full">
+                {ipRequests.filter(r => r.status === 'pending').length}건 대기
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              setShowIpManagement(!showIpManagement);
+              if (!showIpManagement) {
+                loadIpApprovalRequests(ipRequestFilter);
+                loadApprovedIps();
+              }
+            }}
+            className={designSystem.components.button.secondary}
+          >
+            {showIpManagement ? (
+              <>
+                <EyeOff className="w-4 h-4 mr-2" />
+                숨기기
+              </>
+            ) : (
+              <>
+                <Eye className="w-4 h-4 mr-2" />
+                IP 관리 열기
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* IP 관리 안내 */}
+        {!showIpManagement && (
+          <div className="p-4 bg-bg-secondary rounded-lg">
+            <p className="text-sm text-text-secondary">
+              사용자가 새로운 IP에서 로그인을 시도하면 자동으로 승인 요청이 생성됩니다.
+              최고관리자는 IP 검증 없이 로그인할 수 있습니다.
+            </p>
+          </div>
+        )}
+
+        {showIpManagement && (
+          <div className="space-y-6">
+            {/* IP 승인 요청 섹션 */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-medium text-text-primary flex items-center gap-2">
+                  <MapPin className="w-4 h-4" />
+                  IP 승인 요청
+                </h4>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={ipRequestFilter}
+                    onChange={(e) => {
+                      const newFilter = e.target.value as typeof ipRequestFilter;
+                      setIpRequestFilter(newFilter);
+                      loadIpApprovalRequests(newFilter);
+                    }}
+                    className="px-3 py-1.5 border border-border-primary rounded-lg bg-bg-primary text-text-primary text-sm"
+                  >
+                    <option value="pending">대기중</option>
+                    <option value="approved">승인됨</option>
+                    <option value="rejected">거부됨</option>
+                    <option value="all">전체</option>
+                  </select>
+                  <button
+                    onClick={() => loadIpApprovalRequests(ipRequestFilter)}
+                    disabled={loadingIpRequests}
+                    className="p-1.5 text-text-secondary hover:text-text-primary"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingIpRequests ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
+
+              {loadingIpRequests ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="w-6 h-6 animate-spin text-accent mr-3" />
+                  <span className="text-text-secondary">IP 승인 요청 조회 중...</span>
+                </div>
+              ) : ipRequests.length === 0 ? (
+                <div className="text-center py-8 bg-bg-secondary rounded-lg">
+                  <CheckCircle className="w-12 h-12 text-success mx-auto mb-3" />
+                  <p className="text-text-secondary">
+                    {ipRequestFilter === 'pending' ? '대기 중인 IP 승인 요청이 없습니다.' : 'IP 승인 요청이 없습니다.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {ipRequests.map((request) => (
+                    <div
+                      key={request.id}
+                      className="p-4 bg-bg-secondary rounded-lg border border-border-primary"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className="font-medium text-text-primary">
+                              {request.user?.full_name || '알 수 없음'}
+                            </span>
+                            <span className="text-sm text-text-secondary">
+                              {request.user?.email}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              request.status === 'pending'
+                                ? 'bg-warning/20 text-warning'
+                                : request.status === 'approved'
+                                ? 'bg-success/20 text-success'
+                                : 'bg-red-100 text-red-600'
+                            }`}>
+                              {request.status === 'pending' ? '대기중' : request.status === 'approved' ? '승인됨' : '거부됨'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm text-text-secondary">
+                            <span className="flex items-center gap-1">
+                              <Globe className="w-3.5 h-3.5" />
+                              {request.ip_address}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3.5 h-3.5" />
+                              {formatDateTime(request.created_at)}
+                            </span>
+                            {request.user?.department && (
+                              <span>부서: {request.user.department}</span>
+                            )}
+                          </div>
+                          {request.reviewer && request.reviewed_at && (
+                            <p className="text-xs text-text-tertiary mt-2">
+                              처리: {request.reviewer.full_name} ({formatDateTime(request.reviewed_at)})
+                            </p>
+                          )}
+                        </div>
+
+                        {request.status === 'pending' && (
+                          <div className="flex gap-2 ml-4">
+                            <button
+                              onClick={() => handleIpRequestAction(request.id, 'approve')}
+                              disabled={actionLoading}
+                              className="px-3 py-1.5 bg-success/10 text-success border border-success/30 rounded-lg hover:bg-success/20 transition-colors text-sm font-medium disabled:opacity-50"
+                            >
+                              승인
+                            </button>
+                            <button
+                              onClick={() => handleIpRequestAction(request.id, 'reject')}
+                              disabled={actionLoading}
+                              className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium disabled:opacity-50"
+                            >
+                              거부
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 승인된 IP 목록 섹션 */}
+            <div className="border-t border-border-primary pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-medium text-text-primary flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-success" />
+                  승인된 IP 목록
+                </h4>
+                <button
+                  onClick={loadApprovedIps}
+                  disabled={loadingApprovedIps}
+                  className="p-1.5 text-text-secondary hover:text-text-primary"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingApprovedIps ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+
+              {loadingApprovedIps ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="w-6 h-6 animate-spin text-accent mr-3" />
+                  <span className="text-text-secondary">승인된 IP 조회 중...</span>
+                </div>
+              ) : approvedIps.length === 0 ? (
+                <div className="text-center py-8 bg-bg-secondary rounded-lg">
+                  <Globe className="w-12 h-12 text-text-tertiary mx-auto mb-3" />
+                  <p className="text-text-secondary">승인된 IP가 없습니다.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border-primary">
+                        <th className="px-4 py-3 text-left text-sm font-medium text-text-secondary">사용자</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-text-secondary">IP 주소</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-text-secondary">설명</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-text-secondary">승인일</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-text-secondary">마지막 사용</th>
+                        <th className="px-4 py-3 text-right text-sm font-medium text-text-secondary">작업</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {approvedIps.map((ip) => (
+                        <tr key={ip.id} className="border-b border-border-primary hover:bg-bg-secondary/50">
+                          <td className="px-4 py-3">
+                            <div>
+                              <p className="font-medium text-text-primary">{ip.user?.full_name || '알 수 없음'}</p>
+                              <p className="text-xs text-text-tertiary">{ip.user?.email}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <code className="px-2 py-1 bg-bg-tertiary rounded text-sm">{ip.ip_address}</code>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-text-secondary">
+                            {ip.description || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-text-secondary">
+                            {formatDateTime(ip.approved_at)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-text-secondary">
+                            {ip.last_used_at ? formatDateTime(ip.last_used_at) : '사용 기록 없음'}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => handleDeleteApprovedIp(ip.id, ip.user?.full_name || '사용자')}
+                              disabled={actionLoading}
+                              className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                              title="IP 비활성화"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
 

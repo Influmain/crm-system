@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useAuth } from '@/lib/auth/AuthContext'
 import { useToastHelpers } from '@/components/ui/Toast'
 import { designSystem } from '@/lib/design-system'
-import { RefreshCw, X, LogIn, AtSign } from 'lucide-react'
+import { RefreshCw, X, LogIn, AtSign, ShieldAlert } from 'lucide-react'
 
 interface LoginModalProps {
   isOpen: boolean
@@ -21,6 +21,8 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
   const [customEmail, setCustomEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [ipBlocked, setIpBlocked] = useState(false)
+  const [ipBlockedMessage, setIpBlockedMessage] = useState('')
 
   // 최종 이메일 계산
   const getFinalEmail = () => {
@@ -47,22 +49,31 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
     }
 
     setLoading(true)
-    
+    setIpBlocked(false)
+    setIpBlockedMessage('')
+
     try {
-      const { error } = await signIn(finalEmail, password)
+      const { error, ipBlocked: ipBlockedResult } = await signIn(finalEmail, password)
+
+      // IP 차단 처리
+      if (ipBlockedResult) {
+        setIpBlocked(true)
+        setIpBlockedMessage(ipBlockedResult.message)
+        return
+      }
 
       if (error) {
         throw error
       }
 
       toast.success('로그인 성공', '환영합니다!')
-      
+
       onClose()
       onSuccess?.()
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('로그인 실패:', error)
-      
+
       let errorMessage = '로그인 중 오류가 발생했습니다.'
       if (error.message?.includes('Invalid login credentials')) {
         errorMessage = '이메일 또는 비밀번호가 올바르지 않습니다.'
@@ -71,13 +82,13 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
       } else if (error.message) {
         errorMessage = error.message
       }
-      
+
       toast.error(
         '로그인 실패',
         errorMessage,
         {
-          action: { 
-            label: '다시 시도', 
+          action: {
+            label: '다시 시도',
             onClick: () => {
               setPassword('')
               document.querySelector('input[type="password"]')?.focus()
@@ -96,6 +107,8 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
       setCustomEmail('')
       setPassword('')
       setUseCustomEmail(false)
+      setIpBlocked(false)
+      setIpBlockedMessage('')
       onClose()
     }
   }
@@ -127,6 +140,24 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
 
         {/* 로그인 폼 */}
         <div className="p-6">
+          {/* IP 차단 경고 메시지 */}
+          {ipBlocked && (
+            <div className="mb-4 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-medium text-amber-800 dark:text-amber-300">IP 승인 필요</h3>
+                  <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
+                    {ipBlockedMessage || '현재 접속 IP가 승인되지 않았습니다.'}
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-500 mt-2">
+                    관리자에게 IP 승인을 요청했습니다. 승인 후 다시 로그인해주세요.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleLogin} className="space-y-4">
             {/* 이메일 입력 영역 */}
             <div>
