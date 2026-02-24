@@ -135,7 +135,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email,
         password,
       });
-      return { error };
+
+      if (error || !data.session) return { error };
+
+      // IP 접근 제한 확인 (최고관리자는 자동 통과)
+      try {
+        const ipResponse = await fetch('/api/auth/check-ip', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${data.session.access_token}` },
+        });
+        const ipResult = await ipResponse.json();
+        if (!ipResult.allowed) {
+          await supabase.auth.signOut();
+          return { error: new Error(ipResult.error || 'IP 주소가 허용되지 않습니다.') };
+        }
+      } catch (ipCheckError) {
+        // IP 확인 실패 시 로그인 허용 (서버 오류로 인한 잠금 방지)
+        console.warn('IP 확인 실패, 로그인 허용:', ipCheckError);
+      }
+
+      return { error: null };
     } catch (error) {
       return { error };
     }

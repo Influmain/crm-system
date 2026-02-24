@@ -18,14 +18,26 @@ import {
 } from '@/lib/services/permissions';
 import { departmentPermissionService } from '@/lib/services/departmentPermissions';
 import { supabase } from '@/lib/supabase';
-import { 
-  Shield, Users, Settings, Eye, EyeOff, Save, 
+import {
+  Shield, Users, Settings, Eye, EyeOff, Save,
   RefreshCw, UserPlus, Edit2, Trash2, CheckCircle, XCircle,
-  AlertTriangle, Check, X
+  AlertTriangle, Check, X, Globe, Plus
 } from 'lucide-react';
 
 interface DepartmentPermissions {
   [userId: string]: string[];
+}
+
+interface ApprovedIP {
+  id: string;
+  ip_address: string;
+  description: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  is_active: boolean;
+  last_used_at: string | null;
+  created_at: string;
+  approver?: { id: string; full_name: string };
 }
 
 function AdminSettingsContent() {
@@ -95,6 +107,13 @@ const [loadingDepartments, setLoadingDepartments] = useState(false);
     phone: '',
     department: ''
   });
+
+  // IP 관리 상태
+  const [approvedIPs, setApprovedIPs] = useState<ApprovedIP[]>([]);
+  const [loadingIPs, setLoadingIPs] = useState(false);
+  const [showIPForm, setShowIPForm] = useState(false);
+  const [ipForm, setIpForm] = useState({ ip_address: '', description: '' });
+  const [ipActionLoading, setIpActionLoading] = useState(false);
 
   // 데이터 로드
 useEffect(() => {
@@ -633,6 +652,128 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
   }
 };
 
+  // IP 목록 로드
+  const loadApprovedIPs = async () => {
+    setLoadingIPs(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/approved-ips?include_inactive=true', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'IP 목록 조회 실패');
+      }
+
+      const { approved_ips } = await response.json();
+      setApprovedIPs(approved_ips || []);
+    } catch (error: any) {
+      console.error('IP 목록 로드 실패:', error);
+      toast.error('조회 실패', error.message);
+    } finally {
+      setLoadingIPs(false);
+    }
+  };
+
+  // IP 추가
+  const handleAddIP = async () => {
+    if (!ipForm.ip_address) {
+      toast.warning('입력 오류', 'IP 주소를 입력해주세요.');
+      return;
+    }
+
+    setIpActionLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/approved-ips', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(ipForm),
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'IP 추가 실패');
+
+      toast.success('IP 추가 완료', result.message);
+      setIpForm({ ip_address: '', description: '' });
+      setShowIPForm(false);
+      await loadApprovedIPs();
+    } catch (error: any) {
+      console.error('IP 추가 실패:', error);
+      toast.error('IP 추가 실패', error.message);
+    } finally {
+      setIpActionLoading(false);
+    }
+  };
+
+  // IP 활성/비활성 토글
+  const handleToggleIP = async (id: string, is_active: boolean) => {
+    setIpActionLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/approved-ips', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ id, is_active }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || '상태 변경 실패');
+      }
+
+      toast.success('변경 완료', is_active ? 'IP가 활성화되었습니다.' : 'IP가 비활성화되었습니다.');
+      await loadApprovedIPs();
+    } catch (error: any) {
+      toast.error('변경 실패', error.message);
+    } finally {
+      setIpActionLoading(false);
+    }
+  };
+
+  // IP 삭제
+  const handleDeleteIP = async (id: string, ip_address: string) => {
+    if (!confirm(`IP ${ip_address}을(를) 삭제하시겠습니까?`)) return;
+
+    setIpActionLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('인증이 필요합니다.');
+
+      const response = await fetch('/api/admin/approved-ips', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ id }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '삭제 실패');
+
+      toast.success('삭제 완료', result.message);
+      await loadApprovedIPs();
+    } catch (error: any) {
+      toast.error('삭제 실패', error.message);
+    } finally {
+      setIpActionLoading(false);
+    }
+  };
+
   // 권한 배지 렌더링
   const renderPermissionBadge = (permission: PermissionType) => (
     <span
@@ -1101,6 +1242,170 @@ const saveDepartmentPermissions = async (userId: string, departments: string[]) 
                 </div>
               ))
             )}
+          </div>
+        )}
+      </div>
+
+      {/* IP 접근 관리 섹션 */}
+      <div className={designSystem.utils.cn(designSystem.components.card.base, "p-6 mb-8")}>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Globe className="w-5 h-5 text-accent" />
+            <h3 className={designSystem.components.typography.h4}>IP 접근 관리</h3>
+            <span className="text-sm text-text-secondary">(최고관리자만)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={loadApprovedIPs}
+              disabled={loadingIPs}
+              className={designSystem.components.button.secondary}
+            >
+              <RefreshCw className={designSystem.utils.cn('w-4 h-4 mr-2', loadingIPs && 'animate-spin')} />
+              새로고침
+            </button>
+            <button
+              onClick={() => { setShowIPForm(!showIPForm); loadApprovedIPs(); }}
+              className={designSystem.components.button.primary}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              IP 추가
+            </button>
+          </div>
+        </div>
+
+        {/* 안내 */}
+        <div className="p-4 bg-bg-secondary rounded-lg border border-border-primary mb-6 space-y-1">
+          <p className="text-sm text-text-primary font-medium flex items-center gap-2">
+            <Shield className="w-4 h-4 text-accent" />
+            IP 접근 제한 정책
+          </p>
+          <ul className="text-sm text-text-secondary space-y-1 pl-6 list-disc">
+            <li><strong>최고관리자</strong>: IP 제한 없이 항상 접속 가능</li>
+            <li>목록에 IP가 있으면 → 등록된 IP에서만 로그인 가능 (전체 사용자 적용)</li>
+            <li>목록이 비어있으면 → 모든 IP에서 접속 가능 (제한 없음)</li>
+          </ul>
+        </div>
+
+        {/* IP 추가 폼 */}
+        {showIPForm && (
+          <div className="p-4 bg-bg-secondary rounded-lg border border-border-primary mb-6">
+            <h4 className="font-medium text-text-primary mb-4">새 IP 주소 추가</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-text-primary">IP 주소 *</label>
+                <input
+                  type="text"
+                  value={ipForm.ip_address}
+                  onChange={(e) => setIpForm(prev => ({ ...prev, ip_address: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                  placeholder="192.168.1.1"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2 text-text-primary">설명 (선택)</label>
+                <input
+                  type="text"
+                  value={ipForm.description}
+                  onChange={(e) => setIpForm(prev => ({ ...prev, description: e.target.value }))}
+                  className="w-full px-3 py-2 border border-border-primary rounded-lg bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+                  placeholder="사무실 IP"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={handleAddIP}
+                disabled={ipActionLoading}
+                className={designSystem.components.button.primary}
+              >
+                {ipActionLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" />
+                )}
+                추가
+              </button>
+              <button
+                onClick={() => { setShowIPForm(false); setIpForm({ ip_address: '', description: '' }); }}
+                className={designSystem.components.button.secondary}
+              >
+                <X className="w-4 h-4 mr-2" />
+                취소
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* IP 목록 */}
+        {loadingIPs ? (
+          <div className="flex items-center justify-center py-8">
+            <RefreshCw className="w-6 h-6 animate-spin text-accent mr-3" />
+            <span className="text-text-secondary">IP 목록 조회 중...</span>
+          </div>
+        ) : approvedIPs.length === 0 ? (
+          <div className="text-center py-8">
+            <Globe className="w-12 h-12 text-text-tertiary mx-auto mb-3" />
+            <p className="text-text-secondary">등록된 IP가 없습니다.</p>
+            <p className="text-sm text-text-tertiary mt-1">
+              IP를 추가하면 해당 사용자는 등록된 IP에서만 로그인할 수 있습니다.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {approvedIPs.map((ip) => (
+              <div
+                key={ip.id}
+                className={designSystem.utils.cn(
+                  'flex items-center justify-between p-4 rounded-lg border',
+                  ip.is_active
+                    ? 'bg-bg-secondary border-border-primary'
+                    : 'bg-bg-tertiary border-border-secondary opacity-60'
+                )}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-1">
+                    <Globe className="w-4 h-4 text-text-secondary" />
+                    <span className="font-mono font-medium text-text-primary">{ip.ip_address}</span>
+                    {ip.is_active ? (
+                      <span className="px-2 py-0.5 text-xs bg-success/10 text-success rounded-full">활성</span>
+                    ) : (
+                      <span className="px-2 py-0.5 text-xs bg-warning/10 text-warning rounded-full">비활성</span>
+                    )}
+                  </div>
+                  <div className="text-sm text-text-secondary pl-7 space-y-0.5">
+                    {ip.description && <div>설명: {ip.description}</div>}
+                    {ip.last_used_at && (
+                      <div>마지막 접속: {new Date(ip.last_used_at).toLocaleString('ko-KR')}</div>
+                    )}
+                    <div className="text-text-tertiary">
+                      등록일: {new Date(ip.created_at).toLocaleString('ko-KR')}
+                      {ip.approver && ` · 등록자: ${ip.approver.full_name}`}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 ml-4">
+                  <button
+                    onClick={() => handleToggleIP(ip.id, !ip.is_active)}
+                    disabled={ipActionLoading}
+                    className={designSystem.utils.cn(
+                      'px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors disabled:opacity-50',
+                      ip.is_active
+                        ? 'bg-warning/10 hover:bg-warning/20 text-warning border-warning/30'
+                        : 'bg-success/10 hover:bg-success/20 text-success border-success/30'
+                    )}
+                  >
+                    {ip.is_active ? '비활성화' : '활성화'}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteIP(ip.id, ip.ip_address)}
+                    disabled={ipActionLoading}
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg border bg-red-50 hover:bg-red-100 text-red-600 border-red-200 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
