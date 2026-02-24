@@ -285,7 +285,8 @@ function AdminLeadsPageContent() {
         let query = supabase
           .from('admin_leads_view')
           .select('*')
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false }); // 동일 created_at 레코드 간 안정 정렬 보장
 
         // 부서 권한이 있는 경우 필터링 적용
         if (!isSuperAdmin && accessibleDepartments.length > 0 && allowedCounselorIds.length > 0) {
@@ -359,8 +360,13 @@ function AdminLeadsPageContent() {
         }
       }
 
-      console.log(`전체 데이터 로드 완료: ${allData.length}개`);
-      setAllLeads(allData);
+      // 배치 경계에서 발생할 수 있는 중복 제거 (id 기준)
+      const uniqueLeads = Array.from(new Map(allData.map(l => [l.id, l])).values());
+      if (uniqueLeads.length !== allData.length) {
+        console.warn(`중복 제거: ${allData.length}개 → ${uniqueLeads.length}개`);
+      }
+      console.log(`전체 데이터 로드 완료: ${uniqueLeads.length}개`);
+      setAllLeads(uniqueLeads);
 
     } catch (error) {
       console.error('전체 데이터 로드 실패:', error);
