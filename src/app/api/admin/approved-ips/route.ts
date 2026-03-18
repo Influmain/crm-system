@@ -77,7 +77,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '올바른 IP 주소 형식이 아닙니다. (예: 192.168.1.1)' }, { status: 400 });
   }
 
-  // user_id는 기존 스키마 호환을 위해 슈퍼어드민 ID 사용
   const { error } = await supabaseAdmin.from('approved_ips').upsert(
     {
       user_id: auth.userId,
