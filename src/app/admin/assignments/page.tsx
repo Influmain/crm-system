@@ -560,24 +560,18 @@ function AssignmentsPageContent() {
     setLoadingCounselorData(true);
     try {
       console.log(`=== 영업사원 ${counselorId}의 배정 목록 로드 (뷰 기반) ===`);
-      
-      const startRange = (page - 1) * reassignItemsPerPage;
-      const endRange = startRange + reassignItemsPerPage - 1;
+
+      const gradeFilterActive = reassignFilters.contractStatus !== 'all';
 
       let query = supabase
         .from('admin_leads_view')
-        .select('*', { count: 'exact' })
+        .select('*', gradeFilterActive ? { count: 'planned' } : { count: 'exact' })
         .eq('counselor_id', counselorId)
         .not('assignment_id', 'is', null)
         .order('assigned_at', { ascending: false });
 
-      if (reassignFilters.contractStatus !== 'all') {
-        if (reassignFilters.contractStatus === '미분류') {
-          query = query.or('additional_data.is.null,additional_data.not.cs.{"grade"}');
-        } else {
-          query = query.filter('additional_data->>grade', 'eq', reassignFilters.contractStatus);
-        }
-      }
+      // 등급 필터는 JSONB 인덱스 문제로 타임아웃 발생하므로 클라이언트에서 처리
+      // (서버 쿼리에서 제외)
 
       if (searchQuery.trim()) {
         query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%,actual_customer_name.ilike.%${searchQuery}%`);
@@ -595,15 +589,18 @@ function AssignmentsPageContent() {
         query = query.lte('data_date', end.toISOString());
       }
 
-      query = query.range(startRange, endRange);
+      // 등급 필터 활성화 시 전체 데이터를 가져와서 클라이언트에서 필터링 + 페이지네이션
+      if (!gradeFilterActive) {
+        const startRange = (page - 1) * reassignItemsPerPage;
+        const endRange = startRange + reassignItemsPerPage - 1;
+        query = query.range(startRange, endRange);
+      }
 
       const { data: viewData, error, count } = await query;
 
       if (error) throw error;
 
-      console.log(`영업사원 배정 뷰: ${viewData?.length || 0}개 (페이지 ${page})`);
-
-      const enrichedAssignments = (viewData || []).map(lead => ({
+      const enrichAll = (data: typeof viewData) => (data || []).map(lead => ({
         id: lead.assignment_id || lead.id,
         lead_id: lead.id,
         counselor_id: lead.counselor_id,
@@ -639,9 +636,39 @@ function AssignmentsPageContent() {
         }
       }));
 
-      setCounselorAssignments(enrichedAssignments);
-      setReassignTotalCount(count || 0);
-      setReassignTotalPages(Math.ceil((count || 0) / reassignItemsPerPage));
+      if (gradeFilterActive) {
+        // 클라이언트 사이드 등급 필터링
+        const allEnriched = enrichAll(viewData);
+        const filtered = allEnriched.filter(item => {
+          const additionalData = item.lead.additional_data
+            ? (typeof item.lead.additional_data === 'string'
+              ? JSON.parse(item.lead.additional_data)
+              : item.lead.additional_data)
+            : null;
+
+          if (reassignFilters.contractStatus === '미분류') {
+            return !additionalData || !additionalData.grade;
+          }
+          return additionalData?.grade === reassignFilters.contractStatus;
+        });
+
+        const filteredTotal = filtered.length;
+        const startIdx = (page - 1) * reassignItemsPerPage;
+        const paged = filtered.slice(startIdx, startIdx + reassignItemsPerPage);
+
+        console.log(`영업사원 배정 뷰: 전체 ${viewData?.length || 0}개 → 등급 필터 후 ${filteredTotal}개 (페이지 ${page})`);
+
+        setCounselorAssignments(paged);
+        setReassignTotalCount(filteredTotal);
+        setReassignTotalPages(Math.ceil(filteredTotal / reassignItemsPerPage));
+      } else {
+        console.log(`영업사원 배정 뷰: ${viewData?.length || 0}개 (페이지 ${page})`);
+
+        setCounselorAssignments(enrichAll(viewData));
+        setReassignTotalCount(count || 0);
+        setReassignTotalPages(Math.ceil((count || 0) / reassignItemsPerPage));
+      }
+
       setReassignPage(page);
       setSelectedAssignments([]);
 

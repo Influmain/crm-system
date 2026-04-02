@@ -389,40 +389,35 @@ function CounselingMonitorContent() {
   const loadCounselorLeads = async (counselorId: string, page: number = 1) => {
     setLeadsLoading(true)
     try {
-      const startRange = (page - 1) * itemsPerPage
-      const endRange = startRange + itemsPerPage - 1
+      const gradeFilterActive = contractFilter !== 'all';
 
       let query = supabase
         .from('admin_leads_view')
-        .select('*', { count: 'exact' })
+        .select('*', gradeFilterActive ? { count: 'planned' } : { count: 'exact' })
         .eq('counselor_id', counselorId)
         .not('assignment_id', 'is', null)
         .order('assigned_at', { ascending: false });
 
-      // 계약상태(등급) 필터 적용
-      if (contractFilter !== 'all') {
-        if (contractFilter === '미분류') {
-          query = query.or('additional_data.is.null,additional_data.not.cs.{"grade"}');
-        } else {
-          query = query.filter('additional_data->>grade', 'eq', contractFilter);
-        }
-      }
+      // 등급 필터는 JSONB 인덱스 문제로 타임아웃 발생하므로 클라이언트에서 처리
 
       // 검색어 적용
       if (debouncedSearchTerm.trim()) {
         query = query.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
       }
 
-      // 페이지네이션 적용
-      query = query.range(startRange, endRange);
+      // 등급 필터 활성화 시 전체 데이터를 가져와서 클라이언트에서 필터링
+      if (!gradeFilterActive) {
+        const startRange = (page - 1) * itemsPerPage
+        const endRange = startRange + itemsPerPage - 1
+        query = query.range(startRange, endRange);
+      }
 
       const { data: leadsData, error: leadsError, count } = await query;
 
       if (leadsError) throw leadsError
 
       // admin_leads_view 데이터를 CounselorLead 형태로 변환
-      const enrichedLeads: CounselorLead[] = (leadsData || []).map(lead => {
-        // 상태 계산
+      const enrichLead = (lead: any): CounselorLead => {
         let status: CounselorLead['status'] = 'not_contacted'
         if (lead.contract_status === 'contracted') {
           status = 'contracted'
@@ -432,7 +427,6 @@ function CounselingMonitorContent() {
           status = 'in_progress'
         }
 
-        // 등급 정보 추출
         let customer_grade = undefined;
         if (lead.additional_data) {
           const additionalData = typeof lead.additional_data === 'string'
@@ -468,11 +462,31 @@ function CounselingMonitorContent() {
           customer_reaction: lead.customer_reaction,
           customer_grade
         }
-      });
+      };
 
-      setCounselorLeads(enrichedLeads)
-      setTotalCount(count || 0)
-      setTotalPages(Math.ceil((count || 0) / itemsPerPage))
+      if (gradeFilterActive) {
+        // 클라이언트 사이드 등급 필터링
+        const allEnriched = (leadsData || []).map(enrichLead);
+        const filtered = allEnriched.filter(item => {
+          const additionalData = item.customer_grade;
+          if (contractFilter === '미분류') {
+            return !additionalData || !additionalData.grade;
+          }
+          return additionalData?.grade === contractFilter;
+        });
+
+        const filteredTotal = filtered.length;
+        const startIdx = (page - 1) * itemsPerPage;
+        const paged = filtered.slice(startIdx, startIdx + itemsPerPage);
+
+        setCounselorLeads(paged)
+        setTotalCount(filteredTotal)
+        setTotalPages(Math.ceil(filteredTotal / itemsPerPage))
+      } else {
+        setCounselorLeads((leadsData || []).map(enrichLead))
+        setTotalCount(count || 0)
+        setTotalPages(Math.ceil((count || 0) / itemsPerPage))
+      }
       setCurrentPage(page)
 
     } catch (error: any) {
