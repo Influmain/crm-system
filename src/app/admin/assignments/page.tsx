@@ -575,7 +575,7 @@ function AssignmentsPageContent() {
         if (reassignFilters.contractStatus === '미분류') {
           query = query.or('additional_data.is.null,additional_data.not.cs.{"grade"}');
         } else {
-          query = query.contains('additional_data', { grade: reassignFilters.contractStatus });
+          query = query.filter('additional_data->>grade', 'eq', reassignFilters.contractStatus);
         }
       }
 
