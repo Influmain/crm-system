@@ -389,68 +389,62 @@ function CounselingMonitorContent() {
   const loadCounselorLeads = async (counselorId: string, page: number = 1) => {
     setLeadsLoading(true)
     try {
-      const gradeFilterActive = contractFilter !== 'all';
+      // 리드 목록 페이지와 동일한 패턴: 배치로 전체 데이터 로드 → 클라이언트 필터/페이지네이션
+      const batchSize = 500;
+      let allData: any[] = [];
+      let from = 0;
+      let hasMore = true;
 
-      // 등급 필터는 JSONB 인덱스 문제로 타임아웃 발생하므로 클라이언트에서 처리
-      // 등급 필터 활성화 시 배치(500건씩)로 가져와 클라이언트 필터링 + 페이지네이션
-      const buildBaseQuery = (withCount: boolean) => {
-        let q = supabase
+      while (hasMore) {
+        let query = supabase
           .from('admin_leads_view')
-          .select('*', withCount ? { count: 'exact' } : { count: 'planned' })
+          .select('*')
           .eq('counselor_id', counselorId)
           .not('assignment_id', 'is', null)
           .order('assigned_at', { ascending: false });
 
         if (debouncedSearchTerm.trim()) {
-          q = q.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
+          query = query.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
         }
-        return q;
-      };
 
-      let leadsData: any[] = [];
-      let count: number | null = 0;
+        const { data: batch, error } = await query.range(from, from + batchSize - 1);
 
-      if (gradeFilterActive) {
-        const batchSize = 500;
-        const targetEnd = page * itemsPerPage;
-        let filtered: any[] = [];
-        let offset = 0;
-        let hasMore = true;
-
-        while (filtered.length < targetEnd && hasMore) {
-          const { data: batch, error: batchError } = await buildBaseQuery(false)
-            .range(offset, offset + batchSize - 1);
-
-          if (batchError) throw batchError;
-          if (!batch || batch.length === 0) { hasMore = false; break; }
-
-          for (const lead of batch) {
-            const ad = lead.additional_data
-              ? (typeof lead.additional_data === 'string' ? JSON.parse(lead.additional_data) : lead.additional_data)
-              : null;
-
-            const match = contractFilter === '미분류'
-              ? (!ad || !ad.grade)
-              : (ad?.grade === contractFilter);
-
-            if (match) filtered.push(lead);
+        if (error) {
+          if (error.code === 'PGRST103' || error.message?.includes('timeout')) {
+            console.warn(`${allData.length}개까지 로드 완료. 추가 로드 중단: ${error.message}`);
+            break;
           }
-
-          offset += batchSize;
-          if (batch.length < batchSize) hasMore = false;
+          throw error;
         }
 
-        leadsData = filtered;
-        count = filtered.length;
-      } else {
-        const startRange = (page - 1) * itemsPerPage;
-        const endRange = startRange + itemsPerPage - 1;
-        const result = await buildBaseQuery(true).range(startRange, endRange);
-
-        if (result.error) throw result.error;
-        leadsData = result.data || [];
-        count = result.count;
+        if (batch && batch.length > 0) {
+          allData = allData.concat(batch);
+          from += batchSize;
+          if (batch.length < batchSize) hasMore = false;
+        } else {
+          hasMore = false;
+        }
       }
+
+      // 클라이언트 사이드 등급 필터링
+      let filtered = allData;
+      if (contractFilter !== 'all') {
+        filtered = allData.filter(lead => {
+          const ad = lead.additional_data
+            ? (typeof lead.additional_data === 'string' ? JSON.parse(lead.additional_data) : lead.additional_data)
+            : null;
+
+          if (contractFilter === '미분류') {
+            return !ad || !ad.grade;
+          }
+          return ad?.grade === contractFilter;
+        });
+      }
+
+      // 클라이언트 사이드 페이지네이션
+      const filteredTotal = filtered.length;
+      const startIdx = (page - 1) * itemsPerPage;
+      const paged = filtered.slice(startIdx, startIdx + itemsPerPage);
 
       // admin_leads_view 데이터를 CounselorLead 형태로 변환
       const enrichLead = (lead: any): CounselorLead => {
@@ -500,19 +494,9 @@ function CounselingMonitorContent() {
         }
       };
 
-      if (gradeFilterActive) {
-        const filteredTotal = leadsData.length;
-        const startIdx = (page - 1) * itemsPerPage;
-        const paged = leadsData.slice(startIdx, startIdx + itemsPerPage).map(enrichLead);
-
-        setCounselorLeads(paged)
-        setTotalCount(filteredTotal)
-        setTotalPages(Math.ceil(filteredTotal / itemsPerPage))
-      } else {
-        setCounselorLeads(leadsData.map(enrichLead))
-        setTotalCount(count || 0)
-        setTotalPages(Math.ceil((count || 0) / itemsPerPage))
-      }
+      setCounselorLeads(paged.map(enrichLead))
+      setTotalCount(filteredTotal)
+      setTotalPages(Math.ceil(filteredTotal / itemsPerPage))
       setCurrentPage(page)
 
     } catch (error: any) {
