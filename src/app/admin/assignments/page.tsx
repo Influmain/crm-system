@@ -563,42 +563,79 @@ function AssignmentsPageContent() {
 
       const gradeFilterActive = reassignFilters.contractStatus !== 'all';
 
-      let query = supabase
-        .from('admin_leads_view')
-        .select('*', gradeFilterActive ? { count: 'planned' } : { count: 'exact' })
-        .eq('counselor_id', counselorId)
-        .not('assignment_id', 'is', null)
-        .order('assigned_at', { ascending: false });
-
       // 등급 필터는 JSONB 인덱스 문제로 타임아웃 발생하므로 클라이언트에서 처리
-      // (서버 쿼리에서 제외)
+      // 등급 필터 활성화 시 여러 페이지를 가져와 클라이언트에서 필터링 + 페이지네이션
+      const buildBaseQuery = (withCount: boolean) => {
+        let q = supabase
+          .from('admin_leads_view')
+          .select('*', withCount ? { count: 'exact' } : { count: 'planned' })
+          .eq('counselor_id', counselorId)
+          .not('assignment_id', 'is', null)
+          .order('assigned_at', { ascending: false });
 
-      if (searchQuery.trim()) {
-        query = query.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%,actual_customer_name.ilike.%${searchQuery}%`);
-      }
+        if (searchQuery.trim()) {
+          q = q.or(`phone.ilike.%${searchQuery}%,contact_name.ilike.%${searchQuery}%,real_name.ilike.%${searchQuery}%,actual_customer_name.ilike.%${searchQuery}%`);
+        }
+        if (reassignStartDate) {
+          const start = new Date(reassignStartDate);
+          start.setHours(0, 0, 0, 0);
+          q = q.gte('data_date', start.toISOString());
+        }
+        if (reassignEndDate) {
+          const end = new Date(reassignEndDate);
+          end.setHours(23, 59, 59, 999);
+          q = q.lte('data_date', end.toISOString());
+        }
+        return q;
+      };
 
-      // 날짜 필터 적용 (데이터 생성일 기준)
-      if (reassignStartDate) {
-        const start = new Date(reassignStartDate);
-        start.setHours(0, 0, 0, 0);
-        query = query.gte('data_date', start.toISOString());
-      }
-      if (reassignEndDate) {
-        const end = new Date(reassignEndDate);
-        end.setHours(23, 59, 59, 999);
-        query = query.lte('data_date', end.toISOString());
-      }
+      let viewData: any[] = [];
+      let count: number | null = 0;
 
-      // 등급 필터 활성화 시 전체 데이터를 가져와서 클라이언트에서 필터링 + 페이지네이션
-      if (!gradeFilterActive) {
+      if (gradeFilterActive) {
+        // 등급 필터 시: 서버 페이지네이션 배치(500건씩)로 가져와 클라이언트 필터링
+        const batchSize = 500;
+        const targetEnd = page * reassignItemsPerPage;
+        let filtered: any[] = [];
+        let offset = 0;
+        let hasMore = true;
+
+        while (filtered.length < targetEnd && hasMore) {
+          const { data: batch, error: batchError } = await buildBaseQuery(false)
+            .range(offset, offset + batchSize - 1);
+
+          if (batchError) throw batchError;
+          if (!batch || batch.length === 0) { hasMore = false; break; }
+
+          for (const lead of batch) {
+            const ad = lead.additional_data
+              ? (typeof lead.additional_data === 'string' ? JSON.parse(lead.additional_data) : lead.additional_data)
+              : null;
+
+            const match = reassignFilters.contractStatus === '미분류'
+              ? (!ad || !ad.grade)
+              : (ad?.grade === reassignFilters.contractStatus);
+
+            if (match) filtered.push(lead);
+          }
+
+          offset += batchSize;
+          if (batch.length < batchSize) hasMore = false;
+        }
+
+        // hasMore가 true면 아직 데이터가 남아있으므로 정확한 총 개수를 알 수 없음
+        // 현재까지 필터된 결과로 페이지네이션
+        viewData = filtered;
+        count = filtered.length;
+      } else {
         const startRange = (page - 1) * reassignItemsPerPage;
         const endRange = startRange + reassignItemsPerPage - 1;
-        query = query.range(startRange, endRange);
+        const result = await buildBaseQuery(true).range(startRange, endRange);
+
+        if (result.error) throw result.error;
+        viewData = result.data || [];
+        count = result.count;
       }
-
-      const { data: viewData, error, count } = await query;
-
-      if (error) throw error;
 
       const enrichAll = (data: typeof viewData) => (data || []).map(lead => ({
         id: lead.assignment_id || lead.id,
@@ -637,26 +674,12 @@ function AssignmentsPageContent() {
       }));
 
       if (gradeFilterActive) {
-        // 클라이언트 사이드 등급 필터링
-        const allEnriched = enrichAll(viewData);
-        const filtered = allEnriched.filter(item => {
-          const additionalData = item.lead.additional_data
-            ? (typeof item.lead.additional_data === 'string'
-              ? JSON.parse(item.lead.additional_data)
-              : item.lead.additional_data)
-            : null;
-
-          if (reassignFilters.contractStatus === '미분류') {
-            return !additionalData || !additionalData.grade;
-          }
-          return additionalData?.grade === reassignFilters.contractStatus;
-        });
-
-        const filteredTotal = filtered.length;
+        // 이미 배치 루프에서 필터링 완료, 페이지네이션만 적용
+        const filteredTotal = viewData.length;
         const startIdx = (page - 1) * reassignItemsPerPage;
-        const paged = filtered.slice(startIdx, startIdx + reassignItemsPerPage);
+        const paged = enrichAll(viewData.slice(startIdx, startIdx + reassignItemsPerPage));
 
-        console.log(`영업사원 배정 뷰: 전체 ${viewData?.length || 0}개 → 등급 필터 후 ${filteredTotal}개 (페이지 ${page})`);
+        console.log(`영업사원 배정 뷰: 등급 필터 후 ${filteredTotal}개 (페이지 ${page})`);
 
         setCounselorAssignments(paged);
         setReassignTotalCount(filteredTotal);

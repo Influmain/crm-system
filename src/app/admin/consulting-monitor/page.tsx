@@ -391,30 +391,66 @@ function CounselingMonitorContent() {
     try {
       const gradeFilterActive = contractFilter !== 'all';
 
-      let query = supabase
-        .from('admin_leads_view')
-        .select('*', gradeFilterActive ? { count: 'planned' } : { count: 'exact' })
-        .eq('counselor_id', counselorId)
-        .not('assignment_id', 'is', null)
-        .order('assigned_at', { ascending: false });
-
       // 등급 필터는 JSONB 인덱스 문제로 타임아웃 발생하므로 클라이언트에서 처리
+      // 등급 필터 활성화 시 배치(500건씩)로 가져와 클라이언트 필터링 + 페이지네이션
+      const buildBaseQuery = (withCount: boolean) => {
+        let q = supabase
+          .from('admin_leads_view')
+          .select('*', withCount ? { count: 'exact' } : { count: 'planned' })
+          .eq('counselor_id', counselorId)
+          .not('assignment_id', 'is', null)
+          .order('assigned_at', { ascending: false });
 
-      // 검색어 적용
-      if (debouncedSearchTerm.trim()) {
-        query = query.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
+        if (debouncedSearchTerm.trim()) {
+          q = q.or(`phone.ilike.%${debouncedSearchTerm}%,contact_name.ilike.%${debouncedSearchTerm}%,real_name.ilike.%${debouncedSearchTerm}%,actual_customer_name.ilike.%${debouncedSearchTerm}%`);
+        }
+        return q;
+      };
+
+      let leadsData: any[] = [];
+      let count: number | null = 0;
+
+      if (gradeFilterActive) {
+        const batchSize = 500;
+        const targetEnd = page * itemsPerPage;
+        let filtered: any[] = [];
+        let offset = 0;
+        let hasMore = true;
+
+        while (filtered.length < targetEnd && hasMore) {
+          const { data: batch, error: batchError } = await buildBaseQuery(false)
+            .range(offset, offset + batchSize - 1);
+
+          if (batchError) throw batchError;
+          if (!batch || batch.length === 0) { hasMore = false; break; }
+
+          for (const lead of batch) {
+            const ad = lead.additional_data
+              ? (typeof lead.additional_data === 'string' ? JSON.parse(lead.additional_data) : lead.additional_data)
+              : null;
+
+            const match = contractFilter === '미분류'
+              ? (!ad || !ad.grade)
+              : (ad?.grade === contractFilter);
+
+            if (match) filtered.push(lead);
+          }
+
+          offset += batchSize;
+          if (batch.length < batchSize) hasMore = false;
+        }
+
+        leadsData = filtered;
+        count = filtered.length;
+      } else {
+        const startRange = (page - 1) * itemsPerPage;
+        const endRange = startRange + itemsPerPage - 1;
+        const result = await buildBaseQuery(true).range(startRange, endRange);
+
+        if (result.error) throw result.error;
+        leadsData = result.data || [];
+        count = result.count;
       }
-
-      // 등급 필터 활성화 시 전체 데이터를 가져와서 클라이언트에서 필터링
-      if (!gradeFilterActive) {
-        const startRange = (page - 1) * itemsPerPage
-        const endRange = startRange + itemsPerPage - 1
-        query = query.range(startRange, endRange);
-      }
-
-      const { data: leadsData, error: leadsError, count } = await query;
-
-      if (leadsError) throw leadsError
 
       // admin_leads_view 데이터를 CounselorLead 형태로 변환
       const enrichLead = (lead: any): CounselorLead => {
@@ -465,25 +501,15 @@ function CounselingMonitorContent() {
       };
 
       if (gradeFilterActive) {
-        // 클라이언트 사이드 등급 필터링
-        const allEnriched = (leadsData || []).map(enrichLead);
-        const filtered = allEnriched.filter(item => {
-          const additionalData = item.customer_grade;
-          if (contractFilter === '미분류') {
-            return !additionalData || !additionalData.grade;
-          }
-          return additionalData?.grade === contractFilter;
-        });
-
-        const filteredTotal = filtered.length;
+        const filteredTotal = leadsData.length;
         const startIdx = (page - 1) * itemsPerPage;
-        const paged = filtered.slice(startIdx, startIdx + itemsPerPage);
+        const paged = leadsData.slice(startIdx, startIdx + itemsPerPage).map(enrichLead);
 
         setCounselorLeads(paged)
         setTotalCount(filteredTotal)
         setTotalPages(Math.ceil(filteredTotal / itemsPerPage))
       } else {
-        setCounselorLeads((leadsData || []).map(enrichLead))
+        setCounselorLeads(leadsData.map(enrichLead))
         setTotalCount(count || 0)
         setTotalPages(Math.ceil((count || 0) / itemsPerPage))
       }
