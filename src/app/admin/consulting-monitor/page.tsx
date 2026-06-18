@@ -997,6 +997,7 @@ function CounselingMonitorContent() {
                           <td className="py-1 px-1 text-center">
                             <span className="text-text-secondary text-xs whitespace-nowrap">
                               {new Date(lead.assigned_at).toLocaleDateString('ko-KR', {
+                                year: '2-digit',
                                 month: '2-digit',
                                 day: '2-digit'
                               })}
@@ -1090,6 +1091,7 @@ function CounselingMonitorContent() {
                               <span className="text-text-secondary whitespace-nowrap">
                                 {lead.last_contact_date 
                                   ? new Date(lead.last_contact_date).toLocaleDateString('ko-KR', {
+                                      year: '2-digit',
                                       month: '2-digit',
                                       day: '2-digit'
                                     })
@@ -1248,6 +1250,7 @@ function CounselingMonitorContent() {
                           <span className="text-text-tertiary text-sm">
                             {new Date(memo.created_at).toLocaleString('ko-KR', {
                               year: 'numeric',
+                              year: '2-digit',
                               month: '2-digit',
                               day: '2-digit',
                               hour: '2-digit',

@@ -1660,6 +1660,7 @@ function CounselorsPageContent() {
                         <td className="py-1 px-1 text-center">
                           <span className="text-text-secondary text-xs whitespace-nowrap">
                             {new Date(counselor.created_at).toLocaleDateString('ko-KR', {
+                              year: '2-digit',
                               month: '2-digit',
                               day: '2-digit'
                             })}

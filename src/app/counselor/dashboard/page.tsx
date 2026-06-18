@@ -727,6 +727,7 @@ function CounselorDashboardContent() {
                         <span className="text-text-secondary text-xs whitespace-nowrap">
                           {lead.last_contact_date 
                             ? new Date(lead.last_contact_date).toLocaleDateString('ko-KR', {
+                                year: '2-digit',
                                 month: '2-digit',
                                 day: '2-digit'
                               })
@@ -739,6 +740,7 @@ function CounselorDashboardContent() {
                       <td className="py-1 px-1 text-center">
                         <span className="text-text-secondary text-xs whitespace-nowrap">
                           {new Date(lead.assigned_at).toLocaleDateString('ko-KR', {
+                            year: '2-digit',
                             month: '2-digit',
                             day: '2-digit'
                           })}

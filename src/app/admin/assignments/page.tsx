@@ -1342,6 +1342,7 @@ function AssignmentsPageContent() {
                             <td className="py-1 px-1 text-center">
                               <span className="text-text-secondary text-xs whitespace-nowrap">
                                 {lead.data_date ? new Date(lead.data_date).toLocaleDateString('ko-KR', { 
+                                  year: '2-digit', 
                                   month: '2-digit', 
                                   day: '2-digit' 
                                 }) : '-'}
@@ -1738,10 +1739,12 @@ function AssignmentsPageContent() {
                                     <span className="text-text-secondary text-xs whitespace-nowrap">
                                       {assignment.assigned_at ?
                                         new Date(assignment.assigned_at).toLocaleDateString('ko-KR', {
+                                          year: '2-digit',
                                           month: '2-digit',
                                           day: '2-digit'
                                         }) :
                                         new Date(assignment.lead.created_at).toLocaleDateString('ko-KR', {
+                                          year: '2-digit',
                                           month: '2-digit',
                                           day: '2-digit'
                                         })
@@ -1752,6 +1755,7 @@ function AssignmentsPageContent() {
                                   <td className="py-1 px-1 text-center">
                                     <span className="text-text-secondary text-xs whitespace-nowrap">
                                       {assignment.lead.data_date ? new Date(assignment.lead.data_date).toLocaleDateString('ko-KR', {
+                                        year: '2-digit',
                                         month: '2-digit',
                                         day: '2-digit'
                                       }) : '-'}
@@ -1826,6 +1830,7 @@ function AssignmentsPageContent() {
                                     <span className="text-text-secondary text-xs whitespace-nowrap">
                                       {assignment.lead.last_contact_date 
                                         ? new Date(assignment.lead.last_contact_date).toLocaleDateString('ko-KR', {
+                                            year: '2-digit',
                                             month: '2-digit',
                                             day: '2-digit'
                                           })

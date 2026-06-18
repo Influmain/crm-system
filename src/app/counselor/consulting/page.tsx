@@ -1290,6 +1290,7 @@ function CounselorConsultingContent() {
                           <span className="text-text-secondary text-xs whitespace-nowrap">
                             {lead.last_contact_date 
                               ? new Date(lead.last_contact_date).toLocaleDateString('ko-KR', {
+                                  year: '2-digit',
                                   month: '2-digit',
                                   day: '2-digit'
                                 })
@@ -1302,6 +1303,7 @@ function CounselorConsultingContent() {
                         <td className="py-1 px-1 text-center">
                           <span className="text-text-secondary text-xs whitespace-nowrap">
                             {new Date(lead.assigned_at).toLocaleDateString('ko-KR', {
+                              year: '2-digit',
                               month: '2-digit',
                               day: '2-digit'
                             })}
@@ -1312,9 +1314,11 @@ function CounselorConsultingContent() {
                         <td className="py-1 px-1 text-center">
                           <span className="text-text-secondary text-xs whitespace-nowrap">
                             {lead.data_date ? new Date(lead.data_date).toLocaleDateString('ko-KR', {
+                              year: '2-digit',
                               month: '2-digit',
                               day: '2-digit'
                             }) : lead.created_at ? new Date(lead.created_at).toLocaleDateString('ko-KR', {
+                              year: '2-digit',
                               month: '2-digit',
                               day: '2-digit'
                             }) : '-'}
@@ -1619,6 +1623,7 @@ function CounselorConsultingContent() {
                                 <span className="text-text-secondary text-xs">#{memoHistory.length - index}</span>
                                 <span className="text-text-tertiary text-xs">
                                   {new Date(memo.created_at).toLocaleString('ko-KR', {
+                                    year: '2-digit',
                                     month: '2-digit',
                                     day: '2-digit',
                                     hour: '2-digit',
@@ -1738,6 +1743,7 @@ function CounselorConsultingContent() {
                           <span className="text-text-tertiary text-sm">
                             {new Date(memo.created_at).toLocaleString('ko-KR', {
                               year: 'numeric',
+                              year: '2-digit',
                               month: '2-digit',
                               day: '2-digit',
                               hour: '2-digit',
