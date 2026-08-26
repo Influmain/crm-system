@@ -322,11 +322,12 @@ function AssignmentsPageContent() {
 
       const counselorsWithStats = await Promise.all(
         (counselorsData || []).map(async (counselor) => {
+          // 목록(admin_leads_view)과 동일 소스에서 카운트 → 중복/고아 배정으로 인한 화면 숫자 불일치 방지
           const { count: activeCount } = await supabase
-            .from('lead_assignments')
+            .from('admin_leads_view')
             .select('*', { count: 'exact', head: true })
             .eq('counselor_id', counselor.id)
-            .eq('status', 'active');
+            .not('assignment_id', 'is', null);
 
           return {
             ...counselor,
