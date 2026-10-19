@@ -13,6 +13,7 @@ import { Upload, FileText, CheckCircle, AlertCircle, X, Eye, EyeOff, ArrowRight,
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { normalizeUploadDate } from '@/lib/upload-date';
 
 // 업로드 단계 타입
 type UploadStep = 'upload' | 'preview' | 'mapping' | 'validation' | 'processing' | 'complete';
@@ -24,6 +25,7 @@ interface FileData {
   headers: string[];
   data: Record<string, any>[];
   totalRows: number;
+  date1904?: boolean;
 }
 
 // 칼럼 매핑 타입
@@ -125,7 +127,7 @@ function CustomerUploadContent() {
 
   // v6 패턴 적용한 파일 업로드 핸들러
   const handleFileUpload = async (file: File) => {
-    const fileType = file.name.endsWith('.xlsx') ? 'xlsx' : 'csv';
+    const fileType = file.name.toLowerCase().endsWith('.xlsx') ? 'xlsx' : 'csv';
     
     // 파일 형식 검증 토스트
     if (!file.name.match(/\.(xlsx|csv)$/i)) {
@@ -156,12 +158,12 @@ function CustomerUploadContent() {
         
         const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
         const headers = rawData[0] || [];
-        const dataRows = rawData.slice(1);
+        const dataRows = rawData.slice(1).filter(row => row.some(value => value != null && String(value).trim() !== ''));
         
         const jsonData = dataRows.map(row => {
           const obj: Record<string, any> = {};
           headers.forEach((header, index) => {
-            obj[header] = row[index] || '';
+            obj[header] = row[index] ?? '';
           });
           return obj;
         });
@@ -171,12 +173,13 @@ function CustomerUploadContent() {
           fileType,
           headers,
           data: jsonData,
-          totalRows: dataRows.length
+          totalRows: dataRows.length,
+          date1904: !!workbook.Workbook?.WBProps?.date1904
         };
       } else {
         const text = await file.text();
         const Papa = await import('papaparse');
-        const result = Papa.parse(text, {
+        const result = Papa.parse<Record<string, string>>(text, {
           header: true,
           skipEmptyLines: true,
           dynamicTyping: false
@@ -401,7 +404,7 @@ function CustomerUploadContent() {
 
       // 파일 내 중복 검사
       const phoneFirstOccurrence: Record<string, number> = {};
-      const internalDuplicates = [];
+      const internalDuplicates: Record<string, any>[] = [];
       
       fileData.data.forEach((row, index) => {
         const phone = row[phoneField]?.toString().trim();
@@ -419,7 +422,7 @@ function CustomerUploadContent() {
       console.log('파일 내 중복:', internalDuplicates.length);
 
       // v6 패턴: DB 중복 검사 - 배치 처리로 최적화
-      let dbDuplicates = [];
+      let dbDuplicates: Record<string, any>[] = [];
       
       if (phoneNumbers.length > 0) {
         console.log('v6 패턴 DB 중복 검사 시작...');
@@ -440,10 +443,12 @@ function CustomerUploadContent() {
             console.log(`DB 중복 검사 진행: ${chunkNum}/${totalChunks}`);
 
             // v6 패턴: .in() 사용하여 배치 조회
-            const { data: chunkResults } = await supabase
+            const { data: chunkResults, error: duplicateError } = await supabase
               .from('lead_pool')
               .select('phone')
               .in('phone', chunk);
+
+            if (duplicateError) throw duplicateError;
 
             // v6 패턴: 중복 집계 방지를 위한 Set 사용
             chunkResults?.forEach(result => {
@@ -485,7 +490,7 @@ function CustomerUploadContent() {
             action: { label: '다시 시도', onClick: () => handleMappingComplete() }
           });
           
-          throw new Error(`DB 중복 검사 필수: ${dbError.message}`);
+          return;
         }
       }
 
@@ -580,6 +585,15 @@ function CustomerUploadContent() {
 
     try {
       console.log('=== v6 패턴 업로드 시작 ===');
+
+      const dataDateField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_date');
+      const normalizedDates = duplicateResult.uniqueRecords.map((record, index) => {
+        try {
+          return normalizeUploadDate(dataDateField ? record[dataDateField] : defaultDataDate, fileData.date1904);
+        } catch (error) {
+          throw new Error(`업로드 대상 ${index + 1}번째 데이터 생성일: ${error instanceof Error ? error.message : '잘못된 날짜'}`);
+        }
+      });
       
       // 1. 업로드 배치 생성
       const batchId = crypto.randomUUID();
@@ -607,13 +621,12 @@ function CustomerUploadContent() {
       setUploadProgress(10);
 
       // 2. v6 패턴: 데이터 변환 및 검증 - data_date 매핑 처리
-      const recordsToInsert = duplicateResult.uniqueRecords.map(record => {
+      const recordsToInsert = duplicateResult.uniqueRecords.map((record, index) => {
         const phoneField = Object.keys(columnMapping).find(key => columnMapping[key] === 'phone');
         const contactNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_name');
         const realNameField = Object.keys(columnMapping).find(key => columnMapping[key] === 'real_name');
         const dataSourceField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_source');
         const contactScriptField = Object.keys(columnMapping).find(key => columnMapping[key] === 'contact_script');
-        const dataDateField = Object.keys(columnMapping).find(key => columnMapping[key] === 'data_date');
         const extraInfoField = Object.keys(columnMapping).find(key => columnMapping[key] === 'extra_info');
 
         return {
@@ -623,7 +636,7 @@ function CustomerUploadContent() {
           real_name: realNameField ? (record[realNameField]?.toString().trim() || null) : null,
           data_source: dataSourceField ? (record[dataSourceField]?.toString().trim() || null) : null,
           contact_script: contactScriptField ? (record[contactScriptField]?.toString().trim() || null) : null,
-          data_date: dataDateField ? (record[dataDateField]?.toString().trim() || null) : defaultDataDate, // 매핑된 필드가 있으면 사용, 없으면 직접 설정한 날짜 사용
+          data_date: normalizedDates[index],
           extra_info: extraInfoField ? (record[extraInfoField]?.toString().trim() || null) : null,
           status: 'available',
           upload_batch_id: batchId,
@@ -637,6 +650,7 @@ function CustomerUploadContent() {
       const BATCH_SIZE = 50;
       let uploadedCount = 0;
       let errorCount = 0;
+      let firstUploadError = '';
 
       for (let i = 0; i < recordsToInsert.length; i += BATCH_SIZE) {
         const chunk = recordsToInsert.slice(i, i + BATCH_SIZE);
@@ -648,6 +662,7 @@ function CustomerUploadContent() {
 
           if (insertError) {
             console.error('청크 업로드 실패:', insertError);
+            firstUploadError ||= `${insertError.code}: ${insertError.message}`;
             errorCount += chunk.length;
           } else {
             uploadedCount += chunk.length;
@@ -655,6 +670,7 @@ function CustomerUploadContent() {
 
         } catch (chunkError) {
           console.error('청크 처리 실패:', chunkError);
+          firstUploadError ||= chunkError instanceof Error ? chunkError.message : '요청 처리 실패';
           errorCount += chunk.length;
         }
 
@@ -676,7 +692,7 @@ function CustomerUploadContent() {
         .update({
           processed_rows: uploadedCount,
           error_rows: errorCount,
-          upload_status: 'completed',
+          upload_status: errorCount === 0 ? 'completed' : uploadedCount === 0 ? 'failed' : 'completed_with_errors',
           completed_at: new Date().toISOString()
         })
         .eq('id', batchId);
@@ -713,8 +729,8 @@ function CustomerUploadContent() {
         setTimeout(() => {
           setCurrentStep('complete');
           toast.warning(
-            '부분 업로드 완료',
-            `성공: ${uploadedCount}개 고객, 실패: ${errorCount}개`,
+            uploadedCount === 0 ? '업로드 실패' : '부분 업로드 완료',
+            `성공: ${uploadedCount}개 고객, 실패: ${errorCount}개. ${firstUploadError}`,
             { duration: 0 }
           );
         }, 500);
@@ -1114,11 +1130,11 @@ function CustomerUploadContent() {
               </div>
               
               <h3 className={designSystem.utils.cn(designSystem.components.typography.h4, 'mb-4')}>
-                업로드 완료!
+                {duplicateResult?.uploadedCount === 0 ? '업로드 실패' : duplicateResult?.errorCount ? '부분 업로드 완료' : '업로드 완료!'}
               </h3>
               
               <p className={designSystem.utils.cn(designSystem.components.typography.bodySm, 'mb-6')}>
-                {duplicateResult?.uploadedCount || duplicateResult?.uniqueRecords.length || 0}개의 고객이 성공적으로 업로드되었습니다.
+                {duplicateResult?.uploadedCount ?? 0}개의 고객이 성공적으로 업로드되었습니다.
                 {duplicateResult?.errorCount && duplicateResult.errorCount > 0 && (
                   <span className="text-error"> ({duplicateResult.errorCount}개 오류 발생)</span>
                 )}
